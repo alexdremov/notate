@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:padding="16dp">
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Export Format"
+        android:textSize="14sp"
+        android:textColor="#666666"
+        android:textAllCaps="true"
+        android:textStyle="bold"
+        android:layout_marginBottom="8dp" />
+
+    <RadioGroup
+        android:id="@+id/rg_export_mode"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical">
+
+        <RadioButton
+            android:id="@+id/rb_bitmap"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Bitmap (Raster)"
+            android:textSize="16sp"
+            android:padding="8dp"
+            android:checked="true" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Recommended for complex brushes (Charcoal, Pencil)."
+            android:textSize="12sp"
+            android:textColor="#888888"
+            android:layout_marginStart="32dp"
+            android:layout_marginBottom="8dp" />
+
+        <RadioButton
+            android:id="@+id/rb_vector"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Vector"
+            android:textSize="16sp"
+            android:padding="8dp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Best for Fountain Pen. Small file size, infinite zoom."
+            android:textSize="12sp"
+            android:textColor="#888888"
+            android:layout_marginStart="32dp"
+            android:layout_marginBottom="16dp" />
+
+    </RadioGroup>
+
+    <Button
+        android:id="@+id/btn_export_action"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Choose Location &amp; Export"
+        android:backgroundTint="#000000"
+        android:textColor="#FFFFFF"
+        android:layout_marginTop="16dp" />
+
+    <Button
+        android:id="@+id/btn_share_action"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Share / Send"
+        android:backgroundTint="#FFFFFF"
+        android:textColor="#000000"
+        android:stateListAnimator="@null"
+        android:elevation="0dp"
+        style="?attr/materialButtonOutlinedStyle"
+        android:layout_marginTop="8dp" />
+
+</LinearLayout>

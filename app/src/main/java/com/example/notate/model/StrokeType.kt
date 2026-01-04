@@ -1,0 +1,32 @@
+package com.example.notate.model
+
+import com.example.notate.config.CanvasConfig
+import com.onyx.android.sdk.pen.TouchHelper
+import kotlinx.serialization.Serializable
+
+@Serializable
+enum class StrokeType(
+    val touchHelperStyle: Int,
+    val displayName: String,
+    val maxWidthMm: Float = CanvasConfig.TOOLS_MAX_STROKE_MM,
+    val alphaMultiplier: Float = 1.0f,
+    val defaultZIndex: Float = 0.0f,
+) {
+    FOUNTAIN(TouchHelper.STROKE_STYLE_FOUNTAIN, "Fountain"),
+    PENCIL(TouchHelper.STROKE_STYLE_PENCIL, "Pencil"),
+    HIGHLIGHTER(
+        TouchHelper.STROKE_STYLE_MARKER,
+        "Highlighter",
+        maxWidthMm = 10.0f,
+        alphaMultiplier = 0.5f,
+        defaultZIndex = -1.0f,
+    ),
+    BRUSH(TouchHelper.STROKE_STYLE_NEO_BRUSH, "Brush"),
+    CHARCOAL(TouchHelper.STROKE_STYLE_CHARCOAL, "Charcoal"),
+    DASH(TouchHelper.STROKE_STYLE_DASH, "Dash"),
+    ;
+
+    companion object {
+        fun fromTouchHelperStyle(style: Int): StrokeType = values().find { it.touchHelperStyle == style } ?: FOUNTAIN
+    }
+}

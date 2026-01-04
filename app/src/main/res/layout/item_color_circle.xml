@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="48dp"
+    android:layout_height="48dp"
+    android:padding="4dp">
+
+    <View
+        android:id="@+id/viewColorCircle"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="@drawable/bg_tool_selected" /> 
+        <!-- Background will be set programmatically to a circle drawable -->
+
+    <ImageView
+        android:id="@+id/ivAddIcon"
+        android:layout_width="24dp"
+        android:layout_height="24dp"
+        android:src="@drawable/ic_add"
+        android:layout_gravity="center"
+        android:visibility="gone"
+        app:tint="#000000"
+        xmlns:app="http://schemas.android.com/apk/res-auto"/>
+</FrameLayout>

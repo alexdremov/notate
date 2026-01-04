@@ -1,0 +1,84 @@
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+
+plugins {
+    id("com.android.application")
+    id("org.jetbrains.kotlin.android")
+    id("org.jetbrains.kotlin.plugin.serialization")
+    id("org.jetbrains.kotlin.plugin.compose")
+}
+
+android {
+    namespace = "com.example.notate"
+    compileSdk = 36
+
+    defaultConfig {
+        applicationId = "com.example.notate"
+        minSdk = 26
+        targetSdk = 36
+        versionCode = 1
+        versionName = "1.0"
+        vectorDrawables {
+            useSupportLibrary = true
+        }
+    }
+
+    buildFeatures {
+        viewBinding = true
+        compose = true
+    }
+
+    lint {
+        disable += "MutableCollectionMutableState"
+        disable += "AutoboxingStateCreation"
+    }
+
+    kotlin {
+        jvmToolchain(21)
+    }
+
+    packaging {
+        jniLibs {
+            pickFirsts.add("lib/**/libc++_shared.so")
+        }
+        resources {
+            excludes += "/META-INF/{AL2.0,LGPL2.1}"
+        }
+    }
+}
+
+dependencies {
+    implementation("androidx.core:core-ktx:1.12.0")
+    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.6.2")
+    implementation("androidx.activity:activity-compose:1.8.0")
+    implementation(platform("androidx.compose:compose-bom:2023.08.00"))
+    implementation("androidx.compose.ui:ui")
+    implementation("androidx.compose.ui:ui-graphics")
+    implementation("androidx.compose.ui:ui-tooling-preview")
+    implementation("androidx.compose.material3:material3")
+    implementation("androidx.compose.material:material-icons-extended")
+    implementation("androidx.navigation:navigation-compose:2.7.5")
+
+    // File System
+    implementation("androidx.documentfile:documentfile:1.0.1")
+
+    // Existing View-based dependencies
+    implementation("androidx.appcompat:appcompat:1.6.1")
+    implementation("com.google.android.material:material:1.11.0")
+    implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:2.6.2")
+    implementation("androidx.fragment:fragment-ktx:1.6.2")
+
+    // Serialization
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.0")
+
+    // Color Picker
+    implementation("com.github.skydoves:colorpickerview:2.3.0")
+
+    // Onyx SDK
+    implementation("com.onyx.android.sdk:onyxsdk-pen:1.5.0.4")
+    implementation("com.onyx.android.sdk:onyxsdk-base:1.5.8")
+    implementation("org.lsposed.hiddenapibypass:hiddenapibypass:4.3")
+
+    debugImplementation("androidx.compose.ui:ui-tooling")
+    debugImplementation("androidx.compose.ui:ui-test-manifest")
+    implementation(kotlin("stdlib-jdk8"))
+}

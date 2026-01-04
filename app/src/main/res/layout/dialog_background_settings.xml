@@ -1,0 +1,92 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="300dp"
+    android:layout_height="wrap_content"
+    android:background="@android:color/white"
+    android:orientation="vertical"
+    android:padding="16dp">
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Background"
+        android:textSize="18sp"
+        android:textStyle="bold"
+        android:paddingBottom="8dp"/>
+
+    <RadioGroup
+        android:id="@+id/rg_pattern_type"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical">
+
+        <RadioButton
+            android:id="@+id/rb_blank"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Blank" />
+
+        <RadioButton
+            android:id="@+id/rb_dots"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Dots" />
+
+        <RadioButton
+            android:id="@+id/rb_lines"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Lines (Ruled)" />
+
+        <RadioButton
+            android:id="@+id/rb_grid"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Grid" />
+    </RadioGroup>
+
+    <!-- Spacing Slider -->
+    <LinearLayout
+        android:id="@+id/layout_spacing"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:paddingTop="16dp">
+
+        <TextView
+            android:id="@+id/tv_spacing_label"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Spacing: 5 mm" />
+
+        <SeekBar
+            android:id="@+id/seekbar_spacing"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:max="500"
+            android:progress="50" />
+    </LinearLayout>
+
+    <!-- Size Slider (Radius / Thickness) -->
+    <LinearLayout
+        android:id="@+id/layout_size"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:paddingTop="16dp">
+
+        <TextView
+            android:id="@+id/tv_size_label"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Size: 1 mm" />
+
+        <SeekBar
+            android:id="@+id/seekbar_size"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:max="100"
+            android:progress="10" />
+    </LinearLayout>
+
+</LinearLayout>

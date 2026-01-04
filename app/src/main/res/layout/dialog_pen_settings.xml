@@ -1,0 +1,345 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.cardview.widget.CardView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="340dp"
+    android:layout_height="wrap_content"
+    app:cardCornerRadius="16dp"
+    app:cardElevation="8dp"
+    app:cardBackgroundColor="@android:color/white">
+
+    <ViewFlipper
+        android:id="@+id/viewFlipper"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:clipChildren="false">
+
+        <!-- PAGE 1: MAIN SETTINGS -->
+        <ScrollView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:clipChildren="false"
+            android:clipToPadding="false">
+
+            <LinearLayout
+                android:id="@+id/layoutMain"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="20dp"
+                android:clipChildren="false"
+                android:clipToPadding="false">
+
+                <TextView
+                    android:id="@+id/tvTitle"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Pen Style"
+                    android:textSize="18sp"
+                    android:textStyle="bold"
+                    android:textColor="#000000" />
+
+                <!-- Tool Options Container -->
+                <FrameLayout
+                    android:id="@+id/toolOptionsContainer"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="16dp"
+                    android:clipChildren="false"
+                    android:clipToPadding="false">
+
+                    <!-- Style Grid -->
+                    <GridLayout
+                        android:id="@+id/gridStyles"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_gravity="center_horizontal"
+                        android:columnCount="4"
+                        android:rowCount="2"
+                        android:useDefaultMargins="true"
+                        android:alignmentMode="alignMargins"
+                        android:clipChildren="false"
+                        android:clipToPadding="false">
+
+                        <ImageView android:id="@+id/styleFountain" android:layout_width="60dp" android:layout_height="60dp" android:src="@drawable/stylus_fountain_pen_24" android:background="@drawable/bg_tool_selected" android:padding="12dp" android:clickable="true" android:focusable="true"/>
+                        <ImageView android:id="@+id/stylePencil" android:layout_width="60dp" android:layout_height="60dp" android:src="@drawable/stylus_pencil_24" android:background="@drawable/bg_tool_selected" android:padding="12dp" android:clickable="true" android:focusable="true"/>
+                        <ImageView android:id="@+id/styleHighlighter" android:layout_width="60dp" android:layout_height="60dp" android:src="@drawable/stylus_highlighter_24" android:background="@drawable/bg_tool_selected" android:padding="12dp" android:clickable="true" android:focusable="true"/>
+                        <ImageView android:id="@+id/styleBrush" android:layout_width="60dp" android:layout_height="60dp" android:src="@drawable/stylus_brush_24" android:background="@drawable/bg_tool_selected" android:padding="12dp" android:clickable="true" android:focusable="true"/>
+                        <ImageView android:id="@+id/styleCharcoal" android:layout_width="60dp" android:layout_height="60dp" android:src="@drawable/stylus_pen_24" android:background="@drawable/bg_tool_selected" android:padding="12dp" android:clickable="true" android:focusable="true"/>
+                        <ImageView android:id="@+id/styleDash" android:layout_width="60dp" android:layout_height="60dp" android:src="@drawable/stylus_dash_24" android:background="@drawable/bg_tool_selected" android:padding="12dp" android:clickable="true" android:focusable="true"/>
+
+                    </GridLayout>
+
+                    <!-- Eraser Types (Visible only for Eraser) -->
+                    <RadioGroup
+                        android:id="@+id/rgEraserTypes"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="vertical"
+                        android:visibility="gone">
+
+                        <RadioButton
+                            android:id="@+id/rbEraserStandard"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:text="Standard Eraser"
+                            android:textSize="16sp"/>
+
+                        <RadioButton
+                            android:id="@+id/rbEraserStroke"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:text="Stroke Eraser"
+                            android:textSize="16sp"/>
+
+                        <RadioButton
+                            android:id="@+id/rbEraserLasso"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:text="Lasso Eraser"
+                            android:textSize="16sp"/>
+
+                    </RadioGroup>
+                </FrameLayout>
+
+                <View
+                    android:id="@+id/divider1"
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:background="#EEEEEE"
+                    android:layout_marginTop="16dp" />
+
+                <!-- Width -->
+                <RelativeLayout
+                    android:id="@+id/layoutWidthLabels"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="16dp">
+                    <TextView
+                        android:id="@+id/tvWidthLabel"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Thickness"
+                        android:textSize="14sp"
+                        android:textColor="#666666" />
+
+                    <TextView
+                        android:id="@+id/tvWidthValue"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_alignParentEnd="true"
+                        android:text="0.5 mm"
+                        android:textSize="14sp"
+                        android:textStyle="bold"
+                        android:textColor="#000000" />
+                </RelativeLayout>
+
+                <com.google.android.material.slider.Slider
+                    android:id="@+id/sliderWidth"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:valueFrom="0.1"
+                    android:valueTo="3.0"
+                    android:stepSize="0.1"
+                    app:thumbColor="#000000"
+                    app:trackColorActive="#000000"
+                    app:trackColorInactive="#E0E0E0" />
+
+                <View
+                    android:id="@+id/divider2"
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:background="#EEEEEE"
+                    android:layout_marginTop="8dp" />
+
+                <!-- Color Palette -->
+                <TextView
+                    android:id="@+id/tvColorLabel"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Color"
+                    android:textSize="14sp"
+                    android:textColor="#666666"
+                    android:layout_marginTop="16dp" />
+
+                <androidx.recyclerview.widget.RecyclerView
+                    android:id="@+id/recyclerColors"
+                    android:layout_width="match_parent"
+                    android:layout_height="120dp"
+                    android:layout_marginTop="8dp"
+                    android:orientation="horizontal"
+                    android:clipChildren="false"
+                    android:clipToPadding="false" />
+
+                <Button
+                    android:id="@+id/btnRemove"
+                    style="@style/Widget.MaterialComponents.Button.TextButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Remove Tool"
+                    android:textColor="#FF3B30"
+                    android:layout_marginTop="16dp" />
+
+            </LinearLayout>
+        </ScrollView>
+
+        <!-- PAGE 2: PRESETS -->
+        <ScrollView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="20dp">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical">
+
+                    <ImageView
+                        android:id="@+id/btnBackFromPresets"
+                        android:layout_width="24dp"
+                        android:layout_height="24dp"
+                        android:src="?attr/actionModeCloseDrawable"
+                        app:tint="#000000"/>
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Select Color"
+                        android:textSize="18sp"
+                        android:textStyle="bold"
+                        android:layout_marginStart="16dp"
+                        android:textColor="#000000"/>
+                </LinearLayout>
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Presets"
+                    android:textSize="14sp"
+                    android:textColor="#666666"
+                    android:layout_marginTop="20dp"/>
+
+                <GridLayout
+                    android:id="@+id/gridColorPresets"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_gravity="center_horizontal"
+                    android:columnCount="5"
+                    android:layout_marginTop="12dp">
+                    <!-- Added programmatically -->
+                </GridLayout>
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:background="#EEEEEE"
+                    android:layout_marginTop="20dp"/>
+
+                <Button
+                    android:id="@+id/btnGoToCustomColor"
+                    style="@style/Widget.MaterialComponents.Button.TextButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Custom Color >"
+                    android:layout_marginTop="10dp"
+                    android:textAlignment="viewStart"/>
+
+            </LinearLayout>
+        </ScrollView>
+
+        <!-- PAGE 3: CUSTOM PICKER -->
+        <ScrollView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content">
+
+            <LinearLayout
+                android:id="@+id/layoutCustomPicker"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="20dp">
+
+                <RelativeLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginBottom="16dp">
+
+                    <ImageView
+                        android:id="@+id/btnBackFromCustom"
+                        android:layout_width="24dp"
+                        android:layout_height="24dp"
+                        android:layout_centerVertical="true"
+                        android:src="?attr/actionModeCloseDrawable"
+                        app:tint="#000000"/>
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Custom Color"
+                        android:textSize="18sp"
+                        android:textStyle="bold"
+                        android:layout_toEndOf="@id/btnBackFromCustom"
+                        android:layout_marginStart="16dp"
+                        android:layout_centerVertical="true"
+                        android:textColor="#000000"/>
+
+                    <View
+                        android:id="@+id/viewCurrentColorPreview"
+                        android:layout_width="40dp"
+                        android:layout_height="40dp"
+                        android:layout_alignParentEnd="true"
+                        android:layout_centerVertical="true"
+                        android:background="@drawable/bg_tool_selected" />
+                </RelativeLayout>
+
+                <com.skydoves.colorpickerview.ColorPickerView
+                    android:id="@+id/colorPickerView"
+                    android:layout_width="250dp"
+                    android:layout_height="250dp"
+                    android:layout_gravity="center_horizontal" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Brightness"
+                    android:textSize="12sp"
+                    android:textColor="#666666"
+                    android:layout_marginTop="16dp"/>
+
+                <com.skydoves.colorpickerview.sliders.BrightnessSlideBar
+                    android:id="@+id/brightnessSlideBar"
+                    android:layout_width="match_parent"
+                    android:layout_height="24dp"
+                    android:layout_marginTop="4dp" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Transparency"
+                    android:textSize="12sp"
+                    android:textColor="#666666"
+                    android:layout_marginTop="12dp"/>
+
+                <com.skydoves.colorpickerview.sliders.AlphaSlideBar
+                    android:id="@+id/alphaSlideBar"
+                    android:layout_width="match_parent"
+                    android:layout_height="24dp"
+                    android:layout_marginTop="4dp" />
+
+                <Button
+                    android:id="@+id/btnAddCustomColor"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Add Color"
+                    android:layout_marginTop="20dp"/>
+
+            </LinearLayout>
+        </ScrollView>
+
+    </ViewFlipper>
+</androidx.cardview.widget.CardView>

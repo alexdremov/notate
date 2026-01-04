@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:id="@+id/root_container"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#FFFFFF"
+    tools:context=".CanvasActivity">
+
+    <!-- 1. Canvas (Bottom Layer) -->
+    <com.example.notate.ui.OnyxCanvasView
+        android:id="@+id/canvasView"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent" />
+
+    <!-- 1.5 Cursor Overlay -->
+    <com.example.notate.ui.CursorView
+        android:id="@+id/cursorView"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent" />
+
+    <!-- 2. Toolbar (Middle Layer) -->
+    <!-- Initial margins handled by Coordinator -->
+    <com.example.notate.ui.DraggableLinearLayout
+        android:id="@+id/toolbar_container"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:background="@drawable/bg_floating_toolbar"
+        android:elevation="6dp"
+        android:padding="8dp" />
+
+    <!-- 3. Scrim (Overlay Layer) -->
+    <View
+        android:id="@+id/sidebar_scrim"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="#80000000"
+        android:visibility="gone"
+        android:elevation="10dp"
+        android:clickable="true"
+        android:focusable="true" />
+
+    <!-- 4. Sidebar (Top Layer) -->
+    <FrameLayout
+        android:id="@+id/settings_sidebar_container"
+        android:layout_width="320dp"
+        android:layout_height="match_parent"
+        android:layout_gravity="end"
+        android:background="#FFFFFF"
+        android:elevation="16dp"
+        android:clickable="true"
+        android:focusable="true" />
+
+</FrameLayout>

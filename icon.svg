@@ -1,0 +1,31 @@
+<svg width="512" height="512" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <title>Notate App Icon</title>
+
+    <!-- Definitions for Gradients -->
+    <defs>
+        <linearGradient id="bgGradient" x1="0" y1="100" x2="100" y2="0" gradientUnits="userSpaceOnUse">
+            <stop offset="0" stop-color="#111827"/> <!-- Gray 900 -->
+            <stop offset="1" stop-color="#1F2937"/> <!-- Gray 800 -->
+        </linearGradient>
+    </defs>
+
+    <!-- Background Squircle -->
+    <!-- Using rx="22" to approximate the Apple icon shape on a 100x100 grid -->
+    <rect x="0" y="0" width="100" height="100" rx="22" fill="url(#bgGradient)"/>
+
+    <!-- The Logo Mark -->
+    <!-- Alignment Logic:
+         Stroke Width: 14px (Radius 7px)
+         Path Top Point: y=20. Visual Top Edge = 20 - 7 = 13px.
+         Dot Radius: 8px.
+         Dot Center Y: 21px. Visual Top Edge = 21 - 8 = 13px.
+         Result: Perfectly aligned top edges. -->
+
+    <g transform="translate(0, 0)">
+        <!-- The 'N' Stroke (Left Pillar + Diagonal) -->
+        <path d="M28 80V20L72 80" stroke="white" stroke-width="14" stroke-linecap="round" stroke-linejoin="round"/>
+
+        <!-- The Active Dot -->
+        <circle cx="70" cy="23" r="10" fill="#F97316"/>
+    </g>
+</svg>
