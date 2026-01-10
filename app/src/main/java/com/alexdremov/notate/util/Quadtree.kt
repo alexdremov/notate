@@ -193,6 +193,27 @@ class Quadtree(
         }
     }
 
+    fun hitTest(x: Float, y: Float, tolerance: Float): Stroke? {
+        val searchRect = RectF(x - tolerance, y - tolerance, x + tolerance, y + tolerance)
+        val potentialStrokes = ArrayList<Stroke>()
+        retrieve(potentialStrokes, searchRect)
+
+        var closestStroke: Stroke? = null
+        var minDistance = Float.MAX_VALUE
+
+        for (stroke in potentialStrokes) {
+            val dist = StrokeGeometry.distPointToStroke(x, y, stroke)
+            // effective tolerance considers stroke width + touch fuzziness
+            val effectiveTolerance = tolerance + (stroke.width / 2f)
+            
+            if (dist <= effectiveTolerance && dist < minDistance) {
+                minDistance = dist
+                closestStroke = stroke
+            }
+        }
+        return closestStroke
+    }
+
     /**
      * Removes a stroke from the Quadtree.
      * @return true if the stroke was found and removed, false otherwise.

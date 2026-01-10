@@ -46,6 +46,9 @@ class PenInputHandler(
 
     @Volatile
     private var isStrokeInProgress = false
+    
+    // --- Selection State ---
+    private var isSelecting = false // True if drawing selection lasso/rect
 
     private var touchHelper: TouchHelper? = null
     private val strokeBuilder = StrokeBuilder()
@@ -75,7 +78,8 @@ class PenInputHandler(
             DwellDetector(view.context, strokeBuilder) { pts ->
                 // On Dwell Detected
                 if (!isStrokeInProgress) return@DwellDetector
-
+                
+                // Shape Perfection Logic (Stylus Dwell)
                 val result = ShapeRecognizer.recognize(pts)
                 if (result != null && result.shape != ShapeRecognizer.RecognizedShape.NONE) {
                     pendingPerfectShape = result
@@ -226,6 +230,8 @@ class PenInputHandler(
         }
     }
 
+    private var selectionStartPoint: TouchPoint? = null
+
     /**
      * Configures the Onyx TouchHelper based on the current tool and scale.
      * Calculates the physical stroke width to determine if hardware rendering should be disabled.
@@ -237,28 +243,46 @@ class PenInputHandler(
         isLargeStrokeMode = physicalMm > CanvasConfig.EINK_RENDER_THRESHOLD_MM
 
         touchHelper?.apply {
-            if (currentTool.type == ToolType.ERASER) {
-                // For Lasso Eraser, we want the hardware dashed line feedback (Recipe 3)
-                if (currentTool.eraserType == EraserType.LASSO) {
-                    setRawDrawingRenderEnabled(true)
-                    Device.currentDevice().setEraserRawDrawingEnabled(true)
-                    setStrokeStyle(TouchHelper.STROKE_STYLE_DASH)
-                    setStrokeColor(android.graphics.Color.BLACK) // Force Black for visibility
-                    setStrokeWidth(5.0f) // Native app uses 5.0f
-                    Device.currentDevice().setStrokeParameters(TouchHelper.STROKE_STYLE_DASH, floatArrayOf(5.0f))
-                } else {
-                    // For Standard/Stroke eraser, we use software cursor
-                    setRawDrawingRenderEnabled(false)
-                    Device.currentDevice().setEraserRawDrawingEnabled(false)
+            when (currentTool.type) {
+                ToolType.ERASER -> {
+                    // For Lasso Eraser, we want the hardware dashed line feedback (Recipe 3)
+                    if (currentTool.eraserType == EraserType.LASSO) {
+                        setRawDrawingRenderEnabled(true)
+                        Device.currentDevice().setEraserRawDrawingEnabled(true)
+                        setStrokeStyle(TouchHelper.STROKE_STYLE_DASH)
+                        setStrokeColor(android.graphics.Color.BLACK) // Force Black for visibility
+                        setStrokeWidth(5.0f) // Native app uses 5.0f
+                        Device.currentDevice().setStrokeParameters(TouchHelper.STROKE_STYLE_DASH, floatArrayOf(5.0f))
+                    } else {
+                        // For Standard/Stroke eraser, we use software cursor
+                        setRawDrawingRenderEnabled(false)
+                        Device.currentDevice().setEraserRawDrawingEnabled(false)
+                    }
                 }
-            } else {
-                setStrokeColor(ColorUtils.adjustColorForHardware(currentTool.displayColor))
-                setStrokeStyle(currentTool.strokeType.touchHelperStyle)
-                setStrokeWidth(pixelWidth)
+                ToolType.SELECT -> {
+                    if (currentTool.selectionType == com.alexdremov.notate.model.SelectionType.LASSO) {
+                        // Lasso: HW Render
+                        setRawDrawingRenderEnabled(true)
+                        Device.currentDevice().setEraserRawDrawingEnabled(true) 
+                        setStrokeStyle(TouchHelper.STROKE_STYLE_DASH)
+                        setStrokeColor(android.graphics.Color.BLACK)
+                        setStrokeWidth(2.0f)
+                        Device.currentDevice().setStrokeParameters(TouchHelper.STROKE_STYLE_DASH, floatArrayOf(5.0f, 5.0f))
+                    } else {
+                        // Rectangle: Software Render (CursorView)
+                        setRawDrawingRenderEnabled(false)
+                        Device.currentDevice().setEraserRawDrawingEnabled(false)
+                    }
+                }
+                else -> {
+                    setStrokeColor(ColorUtils.adjustColorForHardware(currentTool.displayColor))
+                    setStrokeStyle(currentTool.strokeType.touchHelperStyle)
+                    setStrokeWidth(pixelWidth)
 
-                // Disable hardware render if stroke is too large (E-Ink struggle)
-                val enableHardware = !isLargeStrokeMode
-                setRawDrawingRenderEnabled(enableHardware)
+                    // Disable hardware render if stroke is too large (E-Ink struggle)
+                    val enableHardware = !isLargeStrokeMode
+                    setRawDrawingRenderEnabled(enableHardware)
+                }
             }
         }
     }
@@ -290,12 +314,19 @@ class PenInputHandler(
         refreshHandler.removeCallbacks(refreshRunnable)
 
         isStrokeInProgress = true
+        isSelecting = false
+        isIgnoringCurrentStroke = false
+        
+        if (currentTool.type == ToolType.SELECT) {
+            isSelecting = true
+            lassoPath.reset()
+            lassoPath.moveTo(touchPoint.x, touchPoint.y)
+            // Continue to standard logic to enable HW drawing for the Lasso line
+        }
 
         if (dwellDetector.consumeIgnoreNextStroke()) {
             isIgnoringCurrentStroke = true
             return
-        } else {
-            isIgnoringCurrentStroke = false
         }
 
         if (b || currentTool.type == ToolType.ERASER) {
@@ -314,12 +345,14 @@ class PenInputHandler(
 
         // Logic for specialized modes (Eraser or Large Stroke)
         // If we are erasing (but not lasso) or drawing a large stroke, we need High Speed Mode (Animation)
-        if (currentTool.type == ToolType.ERASER) {
+        if (currentTool.type == ToolType.ERASER || currentTool.type == ToolType.SELECT) {
             com.onyx.android.sdk.api.device.EpdDeviceManager
                 .enterAnimationUpdate(true)
 
-            controller.startBatchSession()
-            eraserHandler.reset()
+            if (currentTool.type == ToolType.ERASER) {
+                controller.startBatchSession()
+                eraserHandler.reset()
+            }
         } else {
             // Standard Pen Start: Ensure Eraser Channel is DEAD (User Fix)
             Device.currentDevice().setEraserRawDrawingEnabled(false)
@@ -361,7 +394,9 @@ class PenInputHandler(
             lassoPath.reset()
             lassoPath.moveTo(touchPoint.x, touchPoint.y)
         }
-        eraserHandler.start(startPoint)
+        if (currentTool.type == ToolType.ERASER) {
+            eraserHandler.start(startPoint)
+        }
         updateCursor(touchPoint)
     }
 
@@ -380,7 +415,7 @@ class PenInputHandler(
 
         dwellDetector.onStop()
         val isSpecialMode =
-            currentTool.type == ToolType.ERASER || (currentTool.type != ToolType.ERASER && isLargeStrokeMode)
+            currentTool.type == ToolType.ERASER || currentTool.type == ToolType.SELECT || (currentTool.type != ToolType.ERASER && isLargeStrokeMode)
 
         if (isSpecialMode) {
             com.onyx.android.sdk.api.device.EpdDeviceManager
@@ -388,7 +423,56 @@ class PenInputHandler(
         }
 
         cursorView?.hide()
-        lassoPath.reset()
+        
+        // Handle Select Tool Finalization
+        if (currentTool.type == ToolType.SELECT && isSelecting) {
+            
+            if (currentTool.selectionType == com.alexdremov.notate.model.SelectionType.LASSO) {
+                lassoPath.lineTo(touchPoint.x, touchPoint.y)
+                lassoPath.close()
+                // Transform path to World
+                val worldPath = Path()
+                lassoPath.transform(inverseMatrix, worldPath)
+                val strokes = controller.getStrokesInPath(worldPath)
+                controller.selectStrokes(strokes)
+                
+                // Trigger refresh to clear the HW drawn dashed line
+                refreshHandler.post(refreshRunnable)
+            } else {
+                // Rectangle Select Finalize
+                val start = selectionStartPoint ?: touchPoint
+                val left = minOf(start.x, touchPoint.x)
+                val top = minOf(start.y, touchPoint.y)
+                val right = maxOf(start.x, touchPoint.x)
+                val bottom = maxOf(start.y, touchPoint.y)
+                
+                val screenRect = RectF(left, top, right, bottom)
+                // Map to World
+                val worldRect = RectF()
+                val pts = floatArrayOf(screenRect.left, screenRect.top, screenRect.right, screenRect.bottom)
+                inverseMatrix.mapPoints(pts)
+                
+                // Note: mapPoints maps [x0,y0, x1,y1]. 
+                // Since matrix might have rotation (though unlikely in this app), simple mapping might be unsafe if rotated.
+                // But we only support scale/pan.
+                // However, mapRect is safer.
+                val m = Matrix()
+                inverseMatrix.invert(m) // Wait, inverseMatrix IS Screen->World. No, matrix is World->Screen.
+                // matrix: World -> Screen.
+                // inverseMatrix: Screen -> World.
+                inverseMatrix.mapRect(worldRect, screenRect)
+                
+                val strokes = controller.getStrokesInRect(worldRect)
+                controller.selectStrokes(strokes)
+                
+                selectionStartPoint = null
+                cursorView?.hideSelectionRect()
+            }
+            
+            lassoPath.reset()
+            isSelecting = false
+            return
+        }
 
         val worldPts = mapPoint(touchPoint.x, touchPoint.y)
         // Track bounds
@@ -627,8 +711,22 @@ class PenInputHandler(
         currentStrokeScreenBounds.union(touchPoint.x, touchPoint.y)
 
         // Realtime Eraser Logic / Lasso Path Update
-        if (currentTool.type == ToolType.ERASER) {
-            if (currentTool.eraserType == EraserType.LASSO) {
+        if (currentTool.type == ToolType.ERASER || currentTool.type == ToolType.SELECT) {
+            if (currentTool.type == ToolType.SELECT) {
+                if (currentTool.selectionType == com.alexdremov.notate.model.SelectionType.LASSO) {
+                    lassoPath.lineTo(touchPoint.x, touchPoint.y)
+                } else {
+                    // Update Rectangle Preview
+                    val start = selectionStartPoint
+                    if (start != null) {
+                        val left = minOf(start.x, touchPoint.x)
+                        val top = minOf(start.y, touchPoint.y)
+                        val right = maxOf(start.x, touchPoint.x)
+                        val bottom = maxOf(start.y, touchPoint.y)
+                        cursorView?.showSelectionRect(RectF(left, top, right, bottom))
+                    }
+                }
+            } else if (currentTool.eraserType == EraserType.LASSO) {
                 lassoPath.lineTo(touchPoint.x, touchPoint.y)
             } else {
                 eraserHandler.processMove(newPoint, currentTool.width, currentTool.eraserType)

@@ -9,6 +9,8 @@ import android.graphics.Path
 import android.util.AttributeSet
 import android.view.View
 
+import android.graphics.RectF
+
 class CursorView
     @JvmOverloads
     constructor(
@@ -22,38 +24,34 @@ class CursorView
         private var isCursorVisible = false
         private var isLassoMode = false
         private val lassoPath = Path()
+        
+        private var shapePath: Path? = null
+        private var selectionRect: RectF? = null
 
-        private val circlePaint =
-            Paint().apply {
-                color = Color.BLACK
-                style = Paint.Style.STROKE
-                strokeWidth = 4f
-                isAntiAlias = true
-            }
+        private val cursorPaint = Paint().apply {
+            style = Paint.Style.STROKE
+            color = Color.BLACK
+            strokeWidth = 2f
+            isAntiAlias = true
+        }
 
-        private val dashedPaint =
-            Paint().apply {
-                color = Color.BLACK
-                style = Paint.Style.STROKE
-                strokeWidth = 3f
-                isAntiAlias = true
-                pathEffect = DashPathEffect(floatArrayOf(15f, 10f), 0f)
-            }
+        private val shapePaint = Paint().apply {
+            style = Paint.Style.STROKE
+            color = Color.BLACK
+            strokeWidth = 3f
+            pathEffect = DashPathEffect(floatArrayOf(10f, 10f), 0f)
+            isAntiAlias = true
+        }
+        
+        private val selectionPaint = Paint().apply {
+            style = Paint.Style.STROKE
+            color = Color.BLACK
+            strokeWidth = 2f
+            pathEffect = DashPathEffect(floatArrayOf(10f, 10f), 0f)
+            isAntiAlias = true
+        }
 
-        private var previewShapePath: Path? = null
-        private val previewShapePaint =
-            Paint().apply {
-                color = Color.DKGRAY
-                style = Paint.Style.STROKE
-                strokeWidth = 3f
-                isAntiAlias = true
-            }
-
-        fun update(
-            x: Float,
-            y: Float,
-            radius: Float,
-        ) {
+        fun update(x: Float, y: Float, radius: Float) {
             cursorX = x
             cursorY = y
             cursorRadius = radius
@@ -61,7 +59,7 @@ class CursorView
             isCursorVisible = true
             postInvalidate()
         }
-
+        
         fun updateLassoPath(path: Path) {
             lassoPath.set(path)
             isLassoMode = true
@@ -70,39 +68,53 @@ class CursorView
         }
 
         fun showShapePreview(path: Path) {
-            previewShapePath = Path(path)
+            shapePath = path
+            isCursorVisible = true
+            postInvalidate()
+        }
+        
+        fun showSelectionRect(rect: RectF) {
+            selectionRect = rect
+            isCursorVisible = true
             postInvalidate()
         }
 
         fun hideShapePreview() {
-            previewShapePath = null
+            shapePath = null
+            if (cursorRadius <= 0 && selectionRect == null && !isLassoMode) isCursorVisible = false
+            postInvalidate()
+        }
+        
+        fun hideSelectionRect() {
+            selectionRect = null
+            if (cursorRadius <= 0 && shapePath == null && !isLassoMode) isCursorVisible = false
             postInvalidate()
         }
 
         fun hide() {
-            if (isCursorVisible || previewShapePath != null) {
-                isCursorVisible = false
-                previewShapePath = null
-                lassoPath.reset()
-                postInvalidate()
-            }
+            isCursorVisible = false
+            shapePath = null
+            selectionRect = null
+            lassoPath.reset()
+            postInvalidate()
         }
 
         override fun onDraw(canvas: Canvas) {
             super.onDraw(canvas)
-
-            // Draw preview shape first (bottom layer) or last (top layer).
-            // Top layer ensures visibility over the cursor if they overlap.
-            previewShapePath?.let {
-                canvas.drawPath(it, previewShapePaint)
-            }
-
             if (!isCursorVisible) return
 
+            shapePath?.let {
+                canvas.drawPath(it, shapePaint)
+            }
+            
+            selectionRect?.let {
+                canvas.drawRect(it, selectionPaint)
+            }
+
             if (isLassoMode) {
-                canvas.drawPath(lassoPath, dashedPaint)
-            } else if (cursorX >= 0 && cursorY >= 0) {
-                canvas.drawCircle(cursorX, cursorY, cursorRadius, circlePaint)
+                canvas.drawPath(lassoPath, shapePaint)
+            } else if (cursorRadius > 0) {
+                canvas.drawCircle(cursorX, cursorY, cursorRadius, cursorPaint)
             }
         }
     }

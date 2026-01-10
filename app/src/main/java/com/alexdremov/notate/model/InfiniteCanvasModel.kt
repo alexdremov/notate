@@ -103,19 +103,21 @@ class InfiniteCanvasModel {
      * @param stroke The stroke to add.
      * @return True if the stroke was added, false if it was rejected (e.g., out of bounds).
      */
-    fun addStroke(stroke: Stroke): Boolean {
+    fun addStroke(stroke: Stroke): Stroke? {
         // Enforce Fixed Page horizontal bounds
         if (canvasType == CanvasType.FIXED_PAGES) {
             if (stroke.bounds.right < 0 || stroke.bounds.left > pageWidth) {
-                return false
+                return null
             }
         }
 
+        var addedStroke: Stroke? = null
         rwLock.write {
             val orderedStroke = stroke.copy(strokeOrder = nextStrokeOrder++)
             historyManager.applyAction(HistoryAction.Add(listOf(orderedStroke)))
+            addedStroke = orderedStroke
         }
-        return true
+        return addedStroke
     }
 
     /**
@@ -226,6 +228,13 @@ class InfiniteCanvasModel {
         }
 
         return invalidatedBounds
+    }
+
+    fun deleteStrokes(strokes: List<Stroke>) {
+        if (strokes.isEmpty()) return
+        rwLock.write {
+            historyManager.applyAction(HistoryAction.Remove(strokes))
+        }
     }
 
     private fun executeAction(
@@ -588,5 +597,11 @@ class InfiniteCanvasModel {
         val pageFullHeight = pageHeight + CanvasConfig.PAGE_SPACING
         val top = pageIndex * pageFullHeight
         return RectF(0f, top, pageWidth, top + pageHeight)
+    }
+
+    fun hitTest(x: Float, y: Float, tolerance: Float = 10f): Stroke? {
+        return rwLock.read {
+            quadtree.hitTest(x, y, tolerance)
+        }
     }
 }

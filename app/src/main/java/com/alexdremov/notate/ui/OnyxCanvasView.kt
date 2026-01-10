@@ -58,6 +58,8 @@ class OnyxCanvasView
         private var lastTouchY = 0f
         private var activePointerId = MotionEvent.INVALID_POINTER_ID
         private var isInteracting = false
+        private var isPanning = false
+        private val touchSlop = android.view.ViewConfiguration.get(context).scaledTouchSlop
 
         // --- Two Finger Tap State ---
         private var isPotentialTwoFingerTap = false
@@ -65,17 +67,106 @@ class OnyxCanvasView
         private var totalPanDistance = 0f
         private val TWO_FINGER_TAP_TIMEOUT = 300L
         private val TWO_FINGER_TAP_SLOP = 50f
-
+        
+        // --- Long Press & Drag State ---
+        private var isDraggingSelection = false
+        private var lastDragX = 0f
+        private var lastDragY = 0f
+        private lateinit var gestureDetector: android.view.GestureDetector
+        private var actionPopup: com.alexdremov.notate.ui.dialog.SelectionActionPopup? = null
+        
         // --- Drawing Configuration ---
         private var currentTool: PenTool = PenTool.defaultPens()[0]
         private val exclusionRects = ArrayList<Rect>()
         var onStrokeStarted: (() -> Unit)? = null
         var onContentChanged: (() -> Unit)? = null
 
+        // --- Auto Scroll ---
+        private val autoScrollHandler = Handler(Looper.getMainLooper())
+        private val scrollEdgeZone = 100 // px
+        private val scrollStep = 15f
+        private var scrollDirectionX = 0
+        private var scrollDirectionY = 0
+        
+        private val autoScrollRunnable = object : Runnable {
+            override fun run() {
+                if (!isDraggingSelection || (scrollDirectionX == 0 && scrollDirectionY == 0)) return
+                
+                // 1. Scroll Canvas
+                matrix.postTranslate(-scrollDirectionX * scrollStep, -scrollDirectionY * scrollStep)
+                
+                // 2. Adjust Selection (Keep under finger)
+                // Viewport moved (dx, dy). World under finger moved (-dx/scale, -dy/scale).
+                // We need to move selection by same amount in World to stay "static" relative to screen finger.
+                val dxWorld = (scrollDirectionX * scrollStep) / currentScale
+                val dyWorld = (scrollDirectionY * scrollStep) / currentScale
+                
+                canvasController.moveSelection(dxWorld, dyWorld)
+                
+                // 3. Render
+                minimapDrawer.show()
+                invalidateCanvas()
+                
+                autoScrollHandler.postDelayed(this, 16)
+            }
+        }
+
         init {
             holder.addCallback(this)
             setZOrderOnTop(false)
             holder.setFormat(android.graphics.PixelFormat.OPAQUE)
+            
+            gestureDetector = android.view.GestureDetector(context, object : android.view.GestureDetector.SimpleOnGestureListener() {
+                override fun onLongPress(e: MotionEvent) {
+                    if (isPanning || hasPerformedScale) return // Don't trigger if actively panning/zooming
+
+                    // If we were preparing to pan, cancel it
+                    if (isInteracting) {
+                        endTouchInteraction()
+                    }
+
+                    val x = e.x
+                    val y = e.y
+                    
+                    // Convert to World Coordinates
+                    val pts = floatArrayOf(x, y)
+                    inverseMatrix.mapPoints(pts)
+                    val worldX = pts[0]
+                    val worldY = pts[1]
+                    
+                    val stroke = canvasController.getStrokeAt(worldX, worldY)
+                    
+                    if (stroke != null) {
+                        // Select Stroke and Enter Drag Mode
+                        canvasController.clearSelection() // Clear previous selection? Usually yes.
+                        canvasController.selectStroke(stroke)
+                        
+                        // We do NOT enter drag mode immediately on Long Press unless user keeps moving.
+                        // But standard UX is: Long Press -> Selects. Then subsequent move drags.
+                        // If user lifts after long press, item is selected.
+                        // If user moves after long press (without lifting), item drags.
+                        
+                        // Set state to dragging, but we need to check if user lifts.
+                        // Since this is a callback, the gesture might be ongoing.
+                        // We set flag so onTouchEvent (MOVE) picks it up.
+                        isDraggingSelection = true
+                        lastDragX = x
+                        lastDragY = y
+                        // Enable Fast Mode for dragging
+                        com.alexdremov.notate.util.EpdFastModeController.enterFastMode()
+                        canvasController.startMoveSelection()
+                        
+                        // Show Actions
+                        showActionPopup()
+                        
+                        performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
+                    } else if (com.alexdremov.notate.util.ClipboardManager.hasContent()) {
+                        // Paste
+                        canvasController.paste(worldX, worldY)
+                        performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
+                    }
+                }
+            })
 
             // Initialize Renderer & Drawer
             canvasRenderer =
@@ -361,9 +452,11 @@ class OnyxCanvasView
             if (isStylus) {
                 return false // Let PenInputHandler handle stylus via RawInputCallback
             }
+            
+            gestureDetector.onTouchEvent(event)
 
             val action = event.actionMasked
-
+            
             // Calculate Multitouch Focus Point
             val pointerUp = action == MotionEvent.ACTION_POINTER_UP
             val skipIndex = if (pointerUp) event.actionIndex else -1
@@ -385,7 +478,42 @@ class OnyxCanvasView
 
             when (action) {
                 MotionEvent.ACTION_DOWN -> {
-                    startTouchInteraction(event, focusX, focusY)
+                    // Check if touching inside existing selection
+                    var hitSelection = false
+                    val selectionManager = canvasController.getSelectionManager()
+                    if (selectionManager.hasSelection()) {
+                        val bounds = selectionManager.getTransformedBounds()
+                        // Convert touch to world
+                        val pts = floatArrayOf(focusX, focusY)
+                        inverseMatrix.mapPoints(pts)
+                        
+                        // Expand hit area slightly for finger
+                        val hitRect = RectF(bounds)
+                        hitRect.inset(-20f / currentScale, -20f / currentScale)
+                        
+                        if (hitRect.contains(pts[0], pts[1])) {
+                            hitSelection = true
+                            isDraggingSelection = true
+                            lastDragX = focusX
+                            lastDragY = focusY
+                            canvasController.startMoveSelection()
+                            actionPopup?.dismiss() // Hide popup while dragging
+                        } else {
+                            // Touch outside selection -> Clear it
+                            canvasController.clearSelection()
+                            actionPopup?.dismiss()
+                        }
+                    }
+
+                    if (!hitSelection) {
+                        // Prepare for interaction but don't start yet (wait for move > slop)
+                        lastTouchX = focusX
+                        lastTouchY = focusY
+                        activePointerId = event.getPointerId(0)
+                        isInteracting = true // Track that we are "touching"
+                        isPanning = false // But not yet "panning"
+                    }
+                    
                     // Reset Tap State
                     isPotentialTwoFingerTap = false
                     totalPanDistance = 0f
@@ -418,33 +546,107 @@ class OnyxCanvasView
                 }
 
                 MotionEvent.ACTION_MOVE -> {
-                    if (isInteracting) {
+                    if (isDraggingSelection) {
+                        // Handle Drag
+                        val dx = focusX - lastDragX
+                        val dy = focusY - lastDragY
+                        
+                        val dxWorld = dx / currentScale
+                        val dyWorld = dy / currentScale
+                        
+                        canvasController.moveSelection(dxWorld, dyWorld)
+                        
+                        lastDragX = focusX
+                        lastDragY = focusY
+                        
+                        // Auto Scroll Detection
+                        scrollDirectionX = 0
+                        scrollDirectionY = 0
+                        if (focusX < scrollEdgeZone) scrollDirectionX = -1
+                        else if (focusX > width - scrollEdgeZone) scrollDirectionX = 1
+                        
+                        if (focusY < scrollEdgeZone) scrollDirectionY = -1
+                        else if (focusY > height - scrollEdgeZone) scrollDirectionY = 1
+                        
+                        if (scrollDirectionX != 0 || scrollDirectionY != 0) {
+                            if (!autoScrollHandler.hasCallbacks(autoScrollRunnable)) {
+                                autoScrollHandler.post(autoScrollRunnable)
+                            }
+                        } else {
+                            autoScrollHandler.removeCallbacks(autoScrollRunnable)
+                        }
+                        
+                    } else if (isInteracting) {
                         val dx = focusX - lastTouchX
                         val dy = focusY - lastTouchY
-
-                        if (isPotentialTwoFingerTap) {
-                            totalPanDistance += kotlin.math.hypot(dx, dy)
-                            if (totalPanDistance > TWO_FINGER_TAP_SLOP) {
-                                isPotentialTwoFingerTap = false
+                        
+                        // Check Slop for Panning
+                        if (!isPanning) {
+                            val dist = kotlin.math.hypot(dx, dy)
+                            if (dist > touchSlop) {
+                                isPanning = true
+                                startTouchInteraction(event, focusX, focusY) // Actually enable fast mode
                             }
                         }
 
-                        matrix.postTranslate(dx, dy)
-                        minimapDrawer.show()
-                        invalidateCanvas()
-                        lastTouchX = focusX
-                        lastTouchY = focusY
+                        if (isPanning) {
+                            if (isPotentialTwoFingerTap) {
+                                totalPanDistance += kotlin.math.hypot(dx, dy)
+                                if (totalPanDistance > TWO_FINGER_TAP_SLOP) {
+                                    isPotentialTwoFingerTap = false
+                                }
+                            }
+
+                            matrix.postTranslate(dx, dy)
+                            minimapDrawer.show()
+                            invalidateCanvas()
+                            lastTouchX = focusX
+                            lastTouchY = focusY
+                        }
                     }
                 }
 
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                    endTouchInteraction()
+                    autoScrollHandler.removeCallbacks(autoScrollRunnable)
+                    if (isDraggingSelection) {
+                        canvasController.commitMoveSelection()
+                        isDraggingSelection = false
+                        com.alexdremov.notate.util.EpdFastModeController.exitFastMode()
+                        showActionPopup() // Show popup after drag/select
+                    }
+                    if (isPanning) {
+                        endTouchInteraction()
+                    }
+                    isInteracting = false
+                    isPanning = false
                 }
             }
             return true
         }
 
         // --- Helpers ---
+        
+        private fun showActionPopup() {
+            val selectionManager = canvasController.getSelectionManager()
+            if (selectionManager.hasSelection()) {
+                if (actionPopup == null) {
+                    actionPopup = com.alexdremov.notate.ui.dialog.SelectionActionPopup(
+                        context,
+                        onCopy = { canvasController.copySelection() },
+                        onDelete = { canvasController.deleteSelection() },
+                        onDismiss = { /* handled by outside touch */ }
+                    )
+                }
+                // Don't show if already dragging
+                if (!isDraggingSelection) {
+                    val bounds = selectionManager.getTransformedBounds()
+                    // Check if bounds valid
+                    if (!bounds.isEmpty) {
+                        actionPopup?.show(this, bounds, matrix)
+                    }
+                }
+            }
+        }
 
         private fun updateModelViewport() {
             val values = FloatArray(9)
@@ -517,6 +719,38 @@ class OnyxCanvasView
 
                 // Render Tiles
                 canvasRenderer.render(cv, matrix, visibleRect, quality, currentScale)
+
+                // Draw Selection Overlay
+                val selectionManager = canvasController.getSelectionManager()
+                if (selectionManager.hasSelection()) {
+                    // 1. Draw Transformed Strokes (Lifted)
+                    if (selectionManager.selectedStrokes.isNotEmpty()) {
+                        cv.save()
+                        // Apply View Matrix (World -> Screen)
+                        cv.concat(matrix)
+                        // Apply Selection Transform (Original -> Current)
+                        cv.concat(selectionManager.transformMatrix)
+                        
+                        selectionManager.selectedStrokes.forEach { stroke ->
+                            canvasRenderer.drawStrokeToCanvas(cv, stroke)
+                        }
+                        cv.restore()
+                    }
+
+                    // 2. Draw Selection Box
+                    val paint = android.graphics.Paint().apply {
+                        color = Color.BLUE // Apple-like selection color
+                        style = android.graphics.Paint.Style.STROKE
+                        strokeWidth = 2f * currentScale
+                        pathEffect = android.graphics.DashPathEffect(floatArrayOf(10f, 10f), 0f)
+                    }
+                    
+                    val bounds = selectionManager.getTransformedBounds()
+                    // Transform bounds to Screen Coordinates
+                    val screenBounds = RectF(bounds)
+                    matrix.mapRect(screenBounds)
+                    cv.drawRect(screenBounds, paint)
+                }
 
                 // Draw Minimap
                 minimapDrawer.draw(cv, matrix, inverseMatrix, currentScale)

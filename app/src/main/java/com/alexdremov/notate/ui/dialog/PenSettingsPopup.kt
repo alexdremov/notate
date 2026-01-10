@@ -89,6 +89,8 @@ class PenSettingsPopup(
         // Layout is wrapped in ScrollView in XML to prevent clipping on smaller screens
         if (currentTool.type == com.alexdremov.notate.model.ToolType.ERASER) {
             setupEraserUI()
+        } else if (currentTool.type == com.alexdremov.notate.model.ToolType.SELECT) {
+            setupSelectUI()
         } else {
             setupPenUI()
         }
@@ -127,6 +129,40 @@ class PenSettingsPopup(
         binding.btnRemove.setOnClickListener {
             onRemove(currentTool)
             dismiss()
+        }
+    }
+
+    private fun setupSelectUI() {
+        binding.tvTitle.text = "Select Tool"
+        binding.gridStyles.visibility = View.GONE
+        binding.rgEraserTypes.visibility = View.VISIBLE
+        binding.divider2.visibility = View.GONE
+        binding.tvColorLabel.visibility = View.GONE
+        binding.recyclerColors.visibility = View.GONE
+        binding.btnRemove.visibility = View.GONE
+        binding.layoutWidthLabels.visibility = View.GONE
+        binding.sliderWidth.visibility = View.GONE
+        binding.divider1.visibility = View.GONE
+
+        // Reuse Eraser Radio Buttons but change text
+        binding.rbEraserStandard.text = "Rectangle"
+        binding.rbEraserStroke.text = "Lasso"
+        binding.rbEraserLasso.visibility = View.GONE // Only need 2 options
+
+        // Bind Selection Type
+        when (currentTool.selectionType) {
+            com.alexdremov.notate.model.SelectionType.RECTANGLE -> binding.rbEraserStandard.isChecked = true
+            com.alexdremov.notate.model.SelectionType.LASSO -> binding.rbEraserStroke.isChecked = true
+        }
+
+        binding.rgEraserTypes.setOnCheckedChangeListener { _, checkedId ->
+            val type =
+                when (checkedId) {
+                    R.id.rbEraserStandard -> com.alexdremov.notate.model.SelectionType.RECTANGLE
+                    R.id.rbEraserStroke -> com.alexdremov.notate.model.SelectionType.LASSO
+                    else -> com.alexdremov.notate.model.SelectionType.RECTANGLE
+                }
+            updateTool { it.copy(selectionType = type) }
         }
     }
 

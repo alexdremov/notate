@@ -13,13 +13,13 @@ import kotlinx.coroutines.flow.asStateFlow
 class DrawingViewModel(
     application: Application,
 ) : AndroidViewModel(application) {
-    private val _tools = MutableStateFlow(PreferencesManager.getTools(application).ifEmpty { PenTool.defaultPens() })
+    private val _tools = MutableStateFlow<List<PenTool>>(emptyList())
     val tools: StateFlow<List<PenTool>> = _tools.asStateFlow()
 
-    private val _activeToolId = MutableStateFlow(if (_tools.value.isNotEmpty()) _tools.value[0].id else "")
+    private val _activeToolId = MutableStateFlow("")
     val activeToolId: StateFlow<String> = _activeToolId.asStateFlow()
 
-    private val _activeTool = MutableStateFlow(if (_tools.value.isNotEmpty()) _tools.value[0] else PenTool.defaultPens()[0])
+    private val _activeTool = MutableStateFlow(PenTool.defaultPens()[0])
     val activeTool: StateFlow<PenTool> = _activeTool.asStateFlow()
 
     // Canvas State
@@ -28,6 +28,52 @@ class DrawingViewModel(
 
     private val _isDrawingEnabled = MutableStateFlow(true)
     val isDrawingEnabled: StateFlow<Boolean> = _isDrawingEnabled.asStateFlow()
+
+    init {
+        loadTools()
+    }
+
+    private fun loadTools() {
+        val savedTools = PreferencesManager.getTools(getApplication())
+        val toolsToUse: MutableList<PenTool> = if (savedTools.isEmpty()) {
+            PenTool.defaultPens().toMutableList()
+        } else {
+            savedTools.toMutableList()
+        }
+        
+        // Enforce Eraser
+        if (toolsToUse.none { it.type == ToolType.ERASER }) {
+            toolsToUse.add(
+                PenTool("eraser_std", "Standard Eraser", ToolType.ERASER, android.graphics.Color.WHITE, 30f, com.alexdremov.notate.model.StrokeType.PENCIL, com.alexdremov.notate.model.EraserType.STANDARD)
+            )
+        }
+        
+        // Enforce Select
+        if (toolsToUse.none { it.type == ToolType.SELECT }) {
+            toolsToUse.add(
+                PenTool("select_tool", "Select", ToolType.SELECT, android.graphics.Color.BLACK, 2f, com.alexdremov.notate.model.StrokeType.DASH, com.alexdremov.notate.model.EraserType.STANDARD, com.alexdremov.notate.model.SelectionType.RECTANGLE)
+            )
+        }
+        
+        // Ensure only one Select tool exists (remove duplicates if any)
+        val selectTools = toolsToUse.filter { it.type == ToolType.SELECT }
+        if (selectTools.size > 1) {
+            // Keep the first one, remove others
+            toolsToUse.removeAll(selectTools.drop(1))
+        }
+        
+        // Ensure only one Eraser exists
+        val eraserTools = toolsToUse.filter { it.type == ToolType.ERASER }
+        if (eraserTools.size > 1) {
+            toolsToUse.removeAll(eraserTools.drop(1))
+        }
+
+        _tools.value = toolsToUse
+        if (_activeToolId.value.isEmpty() && toolsToUse.isNotEmpty()) {
+            _activeToolId.value = toolsToUse[0].id
+            _activeTool.value = toolsToUse[0]
+        }
+    }
 
     fun setDrawingEnabled(enabled: Boolean) {
         _isDrawingEnabled.value = enabled

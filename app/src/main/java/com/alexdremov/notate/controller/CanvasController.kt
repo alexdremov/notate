@@ -74,6 +74,25 @@ interface CanvasController {
     fun nextPage()
 
     fun prevPage()
+
+    // --- Selection & Clipboard ---
+    fun getStrokeAt(x: Float, y: Float): Stroke?
+    fun getStrokesInRect(rect: android.graphics.RectF): List<Stroke>
+    // Simplified Lasso: check if stroke center or bounds are substantially inside path
+    fun getStrokesInPath(path: android.graphics.Path): List<Stroke>
+
+    fun selectStroke(stroke: Stroke)
+    fun selectStrokes(strokes: List<Stroke>)
+    fun clearSelection()
+    fun deleteSelection()
+    fun copySelection()
+    fun paste(x: Float, y: Float)
+
+    fun startMoveSelection()
+    fun moveSelection(dx: Float, dy: Float)
+    fun commitMoveSelection()
+    
+    fun getSelectionManager(): SelectionManager
 }
 
 interface ViewportController {

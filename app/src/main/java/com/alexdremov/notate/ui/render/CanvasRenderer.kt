@@ -95,6 +95,13 @@ class CanvasRenderer(
     }
 
     /**
+     * Triggers a view invalidation to redraw overlays or UI components.
+     */
+    fun invalidate() {
+        onTileReady()
+    }
+
+    /**
      * Forces a refresh of all tiles currently visible in the viewport.
      * useful after zooming or significant layout changes.
      */

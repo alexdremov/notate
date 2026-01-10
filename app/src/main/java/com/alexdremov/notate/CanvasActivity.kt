@@ -357,6 +357,7 @@ class CanvasActivity : AppCompatActivity() {
                                     else -> R.drawable.stylus_fountain_pen_24
                                 }
                             }
+                            ToolType.SELECT -> R.drawable.ic_crop_square // Placeholder or existing icon
                         }
                     setImageResource(iconRes)
                     imageTintList = ColorStateList.valueOf(Color.BLACK)

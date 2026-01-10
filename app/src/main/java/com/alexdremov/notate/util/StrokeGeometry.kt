@@ -117,6 +117,37 @@ object StrokeGeometry {
         return false
     }
 
+    fun distPointToStroke(
+        x: Float,
+        y: Float,
+        stroke: Stroke,
+    ): Float {
+        if (!stroke.bounds.contains(x, y)) {
+            // Optimization: If outside expanded bounds, return closest distance to bounds (approx)
+            // or just a large number if we only care about hits.
+            // Check bounding box distance first
+            val dX = maxOf(stroke.bounds.left - x, 0f, x - stroke.bounds.right)
+            val dY = maxOf(stroke.bounds.top - y, 0f, y - stroke.bounds.bottom)
+            val boundDist = hypot(dX, dY)
+            // If bounding box is far, we can return that. But stroke might be diagonal inside box.
+            // So this is a lower bound. If lower bound > threshold, we can skip.
+            // For now, let's just return boundDist if it is large, but to be precise we need segments.
+        }
+
+        var minDist = Float.MAX_VALUE
+        val points = stroke.points
+        if (points.isEmpty()) return Float.MAX_VALUE
+        if (points.size == 1) return hypot(x - points[0].x, y - points[0].y)
+
+        for (i in 0 until points.size - 1) {
+            val p1 = points[i]
+            val p2 = points[i + 1]
+            val d = distPointToSegment(x, y, p1.x, p1.y, p2.x, p2.y)
+            if (d < minDist) minDist = d
+        }
+        return minDist
+    }
+
     private fun distPointToSegment(
         px: Float,
         py: Float,
