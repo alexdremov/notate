@@ -1,4 +1,6 @@
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import java.util.Properties
+import java.io.FileInputStream
 
 plugins {
     id("com.android.application")
@@ -8,17 +10,39 @@ plugins {
 }
 
 android {
-    namespace = "com.example.notate"
+    namespace = "com.alexdremov.notate"
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "com.example.notate"
+        applicationId = "com.alexdremov.notate"
         minSdk = 26
         targetSdk = 36
         versionCode = 1
         versionName = "1.0"
         vectorDrawables {
             useSupportLibrary = true
+        }
+    }
+
+    signingConfigs {
+        create("release") {
+            val keystoreFile = rootProject.file("keystore.properties")
+            if (keystoreFile.exists()) {
+                val properties = Properties()
+                properties.load(FileInputStream(keystoreFile))
+                storeFile = file(properties["storeFile"] as String)
+                storePassword = properties["storePassword"] as String
+                keyAlias = properties["keyAlias"] as String
+                keyPassword = properties["keyPassword"] as String
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            isMinifyEnabled = true
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            signingConfig = signingConfigs.getByName("release")
         }
     }
 

@@ -8,20 +8,20 @@
     tools:context=".CanvasActivity">
 
     <!-- 1. Canvas (Bottom Layer) -->
-    <com.example.notate.ui.OnyxCanvasView
+    <com.alexdremov.notate.ui.OnyxCanvasView
         android:id="@+id/canvasView"
         android:layout_width="match_parent"
         android:layout_height="match_parent" />
 
     <!-- 1.5 Cursor Overlay -->
-    <com.example.notate.ui.CursorView
+    <com.alexdremov.notate.ui.CursorView
         android:id="@+id/cursorView"
         android:layout_width="match_parent"
         android:layout_height="match_parent" />
 
     <!-- 2. Toolbar (Middle Layer) -->
     <!-- Initial margins handled by Coordinator -->
-    <com.example.notate.ui.DraggableLinearLayout
+    <com.alexdremov.notate.ui.DraggableLinearLayout
         android:id="@+id/toolbar_container"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
