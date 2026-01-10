@@ -349,7 +349,6 @@ class PenSettingsPopup(
                 },
             )
         itemTouchHelper.attachToRecyclerView(binding.recyclerColors)
-        refreshHighQuality(binding.recyclerColors)
     }
 
     private fun setupPresetsPage() {
@@ -531,6 +530,8 @@ class PenSettingsPopup(
             // Show BELOW
             popupWindow.showAsDropDown(anchor, xOffset, context.dpToPx(10))
         }
+
+        refreshHighQuality(binding.root)
     }
 
     fun dismiss() {
