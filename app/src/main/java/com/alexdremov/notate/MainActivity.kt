@@ -40,7 +40,7 @@ import com.alexdremov.notate.ui.home.DialogType
 import com.alexdremov.notate.ui.home.FileBrowserScreen
 import com.alexdremov.notate.ui.home.ProjectListScreen
 import com.alexdremov.notate.ui.home.TextInputDialog
-import com.alexdremov.notate.ui.theme.BooxVibesTheme
+import com.alexdremov.notate.ui.theme.NotateTheme
 import com.alexdremov.notate.vm.HomeViewModel
 import com.onyx.android.sdk.api.device.EpdDeviceManager
 import com.onyx.android.sdk.api.device.epd.EpdController
@@ -56,7 +56,7 @@ class MainActivity : ComponentActivity() {
         EpdDeviceManager.enterAnimationUpdate(true)
 
         setContent {
-            BooxVibesTheme {
+            NotateTheme {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background,

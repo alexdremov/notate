@@ -3,7 +3,7 @@
 **Device Target:** NoteAir 4C (Android 11+)
 **SDK Version:** `onyxsdk-pen:1.5.0.4`
 
-This document serves as the authoritative reference for implementing high-performance stylus input on Onyx Boox devices, distilling findings from reverse-engineering the native `reversenote` app and successful integration into `BooxVibes`.
+This document serves as the authoritative reference for implementing high-performance stylus input on Onyx Boox devices, distilling findings from reverse-engineering the native app and successful integration into `Notate`.
 
 ---
 
@@ -76,9 +76,9 @@ dirtyRect.inset(-10f, -10f) // Add safety padding
 
 // Execute Partial GC Refresh
 EpdController.invalidate(
-    view, 
-    dirtyRect.left.toInt(), dirtyRect.top.toInt(), 
-    dirtyRect.right.toInt(), dirtyRect.bottom.toInt(), 
+    view,
+    dirtyRect.left.toInt(), dirtyRect.top.toInt(),
+    dirtyRect.right.toInt(), dirtyRect.bottom.toInt(),
     UpdateMode.GC // GC removes all ghosting without full-screen flash
 )
 ```
@@ -120,12 +120,12 @@ The 1.5.x SDK refactored the pen rendering classes. Direct instantiation of `Neo
 ```kotlin
 // Render a stroke to software canvas (Persistence)
 NeoFountainPenWrapper.drawStroke(
-    canvas, 
-    paint, 
-    touchPoints, 
-    width, 
-    pressure, 
-    limit, 
+    canvas,
+    paint,
+    touchPoints,
+    width,
+    pressure,
+    limit,
     true // useNative = true for hardware-aligned smoothing
 )
 ```
