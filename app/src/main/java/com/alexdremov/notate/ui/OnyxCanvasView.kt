@@ -83,23 +83,25 @@ class OnyxCanvasView
 
         // --- Auto Scroll ---
         private val autoScrollHandler = Handler(Looper.getMainLooper())
-        private val scrollEdgeZone = 100 // px
-        private val scrollStep = 15f
-        private var scrollDirectionX = 0
-        private var scrollDirectionY = 0
+        private val scrollEdgeZone = 200 // Larger zone (px)
+        private val baseScrollStep = 15f
+        private val maxScrollStep = 150f // Accelerate faster!
+        private var scrollDirectionX = 0f
+        private var scrollDirectionY = 0f
         
         private val autoScrollRunnable = object : Runnable {
             override fun run() {
-                if (!isDraggingSelection || (scrollDirectionX == 0 && scrollDirectionY == 0)) return
+                if (!isDraggingSelection || (scrollDirectionX == 0f && scrollDirectionY == 0f)) return
+                
+                val stepX = scrollDirectionX * baseScrollStep
+                val stepY = scrollDirectionY * baseScrollStep
                 
                 // 1. Scroll Canvas
-                matrix.postTranslate(-scrollDirectionX * scrollStep, -scrollDirectionY * scrollStep)
+                matrix.postTranslate(-stepX, -stepY)
                 
                 // 2. Adjust Selection (Keep under finger)
-                // Viewport moved (dx, dy). World under finger moved (-dx/scale, -dy/scale).
-                // We need to move selection by same amount in World to stay "static" relative to screen finger.
-                val dxWorld = (scrollDirectionX * scrollStep) / currentScale
-                val dyWorld = (scrollDirectionY * scrollStep) / currentScale
+                val dxWorld = stepX / currentScale
+                val dyWorld = stepY / currentScale
                 
                 canvasController.moveSelection(dxWorld, dyWorld)
                 
@@ -560,15 +562,37 @@ class OnyxCanvasView
                         lastDragY = focusY
                         
                         // Auto Scroll Detection
-                        scrollDirectionX = 0
-                        scrollDirectionY = 0
-                        if (focusX < scrollEdgeZone) scrollDirectionX = -1
-                        else if (focusX > width - scrollEdgeZone) scrollDirectionX = 1
+                        scrollDirectionX = 0f
+                        scrollDirectionY = 0f
                         
-                        if (focusY < scrollEdgeZone) scrollDirectionY = -1
-                        else if (focusY > height - scrollEdgeZone) scrollDirectionY = 1
+                        // Left Edge
+                        if (focusX < scrollEdgeZone) {
+                            // factor 0 (inner) -> 1 (edge)
+                            val factor = (scrollEdgeZone - focusX) / scrollEdgeZone
+                            val accel = factor * factor // Quadratic curve
+                            scrollDirectionX = -(1f + accel * (maxScrollStep/baseScrollStep - 1))
+                        } 
+                        // Right Edge
+                        else if (focusX > width - scrollEdgeZone) {
+                            val factor = (focusX - (width - scrollEdgeZone)) / scrollEdgeZone
+                            val accel = factor * factor
+                            scrollDirectionX = (1f + accel * (maxScrollStep/baseScrollStep - 1))
+                        }
                         
-                        if (scrollDirectionX != 0 || scrollDirectionY != 0) {
+                        // Top Edge
+                        if (focusY < scrollEdgeZone) {
+                            val factor = (scrollEdgeZone - focusY) / scrollEdgeZone
+                            val accel = factor * factor
+                            scrollDirectionY = -(1f + accel * (maxScrollStep/baseScrollStep - 1))
+                        }
+                        // Bottom Edge
+                        else if (focusY > height - scrollEdgeZone) {
+                            val factor = (focusY - (height - scrollEdgeZone)) / scrollEdgeZone
+                            val accel = factor * factor
+                            scrollDirectionY = (1f + accel * (maxScrollStep/baseScrollStep - 1))
+                        }
+                        
+                        if (scrollDirectionX != 0f || scrollDirectionY != 0f) {
                             if (!autoScrollHandler.hasCallbacks(autoScrollRunnable)) {
                                 autoScrollHandler.post(autoScrollRunnable)
                             }
