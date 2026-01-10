@@ -1,9 +1,12 @@
 package com.alexdremov.notate.util
 
+import android.graphics.Matrix
 import android.graphics.Path
+import android.graphics.PathMeasure
 import android.graphics.RectF
 import com.alexdremov.notate.model.Stroke
 import com.alexdremov.notate.model.StrokeType
+import com.onyx.android.sdk.api.device.epd.EpdController
 import com.onyx.android.sdk.data.note.TouchPoint
 import kotlin.math.hypot
 
@@ -188,6 +191,35 @@ object StrokeGeometry {
             j = i
         }
         return inside
+    }
+    
+    /**
+     * Flattens a Path into a list of TouchPoints approximating the curve.
+     * Useful for polygon containment checks.
+     */
+    fun flattenPath(path: Path, step: Float = 10f): List<TouchPoint> {
+        val points = ArrayList<TouchPoint>()
+        val pm = PathMeasure(path, false)
+        val length = pm.length
+        val coords = floatArrayOf(0f, 0f)
+        var d = 0f
+        while (d <= length) {
+            pm.getPosTan(d, coords, null)
+            points.add(TouchPoint(coords[0], coords[1], 0f, 0f, 0))
+            d += step
+        }
+        // Ensure closed loop for polygon logic if start/end match
+        if (points.isNotEmpty()) {
+            val first = points.first()
+            val last = points.last()
+            if (hypot(first.x - last.x, first.y - last.y) > 1f) {
+                // If path was supposed to be closed but isn't perfectly, close it?
+                // For Lasso, we usually close it manually in the Path object.
+                // But having the last point match the first is good for the loop.
+                // We'll leave it as is, isPointInPolygon handles loose ends by closing implicitly (j=size-1).
+            }
+        }
+        return points
     }
 
     fun computeStrokeBounds(

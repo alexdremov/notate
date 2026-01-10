@@ -5,11 +5,16 @@ import android.graphics.RectF
 import com.alexdremov.notate.model.Stroke
 import java.util.concurrent.ConcurrentHashMap
 
+/**
+ * Manages the state of the active selection.
+ * Holds the selected strokes and the transient transformation matrix.
+ * Thread-safe.
+ */
 class SelectionManager {
     private val _selectedStrokes = ConcurrentHashMap.newKeySet<Stroke>()
     val selectedStrokes: Set<Stroke> get() = _selectedStrokes
 
-    // Current transformation applied to the selection (delta)
+    // Current transformation applied to the selection (transient)
     val transformMatrix = Matrix()
 
     // Bounding box of the original selection (before transform)
@@ -54,19 +59,47 @@ class SelectionManager {
         }
     }
     
+    /**
+     * Returns the bounding box of the selection with the current transform applied.
+     * Note: This is an AABB (Axis Aligned Bounding Box) of the transformed shape.
+     */
     fun getTransformedBounds(): RectF {
         val r = RectF(selectionBounds)
         transformMatrix.mapRect(r)
         return r
     }
     
+    /**
+     * Returns the 4 corners of the selection box in World coordinates, 
+     * with the current transform applied.
+     * Order: Top-Left, Top-Right, Bottom-Right, Bottom-Left.
+     */
+    fun getTransformedCorners(): FloatArray {
+        val pts = floatArrayOf(
+            selectionBounds.left, selectionBounds.top,     // TL
+            selectionBounds.right, selectionBounds.top,    // TR
+            selectionBounds.right, selectionBounds.bottom, // BR
+            selectionBounds.left, selectionBounds.bottom   // BL
+        )
+        transformMatrix.mapPoints(pts)
+        return pts
+    }
+    
+    /**
+     * Returns the center of the selection in World coordinates,
+     * with the current transform applied.
+     */
+    fun getSelectionCenter(): FloatArray {
+        val pts = floatArrayOf(selectionBounds.centerX(), selectionBounds.centerY())
+        transformMatrix.mapPoints(pts)
+        return pts
+    }
+    
     fun translate(dx: Float, dy: Float) {
         transformMatrix.postTranslate(dx, dy)
     }
-
-    fun applyTransformToStrokes(commit: (original: Stroke, transformed: Stroke) -> Unit) {
-        // Apply the transform to all selected strokes and commit them
-        // This usually involves creating new Stroke objects
-        // We will need logic to transform Path and Points
+    
+    fun applyTransform(matrix: Matrix) {
+        transformMatrix.postConcat(matrix)
     }
 }

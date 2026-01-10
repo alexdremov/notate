@@ -115,6 +115,15 @@ class CanvasActivity : AppCompatActivity() {
             renderToolbar(viewModel.tools.value, viewModel.activeToolId.value)
         }
         toolbarCoordinator.setup()
+        
+        // Ensure clicking/tapping anywhere on the toolbar clears selection
+        binding.toolbarContainer.setOnTouchListener { _, event ->
+            if (event.action == android.view.MotionEvent.ACTION_DOWN) {
+                binding.canvasView.getController().clearSelection()
+                binding.canvasView.dismissActionPopup()
+            }
+            false // Don't consume, allow DraggableLinearLayout to handle dragging
+        }
 
         // Initialize Sidebar Content Controller
         sidebarController =
@@ -399,7 +408,11 @@ class CanvasActivity : AppCompatActivity() {
                     setImageResource(R.drawable.ic_add)
                     background = null
                     imageTintList = ColorStateList.valueOf(Color.GRAY)
-                    setOnClickListener { viewModel.addPen() }
+                    setOnClickListener { 
+                        binding.canvasView.getController().clearSelection()
+                        binding.canvasView.dismissActionPopup()
+                        viewModel.addPen() 
+                    }
                 }
             binding.toolbarContainer.addView(addBtn)
         }
@@ -413,7 +426,11 @@ class CanvasActivity : AppCompatActivity() {
                 setImageResource(R.drawable.ic_undo)
                 background = null
                 imageTintList = ColorStateList.valueOf(Color.BLACK)
-                setOnClickListener { binding.canvasView.undo() }
+                setOnClickListener { 
+                    binding.canvasView.getController().clearSelection()
+                    binding.canvasView.dismissActionPopup()
+                    binding.canvasView.undo() 
+                }
             }
         binding.toolbarContainer.addView(undoBtn)
 
@@ -424,7 +441,11 @@ class CanvasActivity : AppCompatActivity() {
                 setImageResource(R.drawable.ic_redo)
                 background = null
                 imageTintList = ColorStateList.valueOf(Color.BLACK)
-                setOnClickListener { binding.canvasView.redo() }
+                setOnClickListener { 
+                    binding.canvasView.getController().clearSelection()
+                    binding.canvasView.dismissActionPopup()
+                    binding.canvasView.redo() 
+                }
             }
         binding.toolbarContainer.addView(redoBtn)
 
@@ -442,6 +463,8 @@ class CanvasActivity : AppCompatActivity() {
                             isVertical = !isHorizontal,
                             onGridOpenChanged = { isOpen ->
                                 isGridOpen = isOpen
+                                binding.canvasView.getController().clearSelection()
+                                binding.canvasView.dismissActionPopup()
                                 updateDrawingEnabledState()
                             },
                         )
@@ -459,6 +482,8 @@ class CanvasActivity : AppCompatActivity() {
                 background = null
                 imageTintList = ColorStateList.valueOf(Color.BLACK)
                 setOnClickListener {
+                    binding.canvasView.getController().clearSelection()
+                    binding.canvasView.dismissActionPopup()
                     sidebarCoordinator.open()
                     sidebarController.showMainMenu()
                 }
@@ -472,6 +497,8 @@ class CanvasActivity : AppCompatActivity() {
         toolId: String,
         anchor: View,
     ) {
+        binding.canvasView.getController().clearSelection()
+        binding.canvasView.dismissActionPopup()
         if (viewModel.activeToolId.value == toolId) {
             val tool = viewModel.tools.value.find { it.id == toolId } ?: return
 

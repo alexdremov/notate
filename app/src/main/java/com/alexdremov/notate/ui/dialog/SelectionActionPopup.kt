@@ -46,12 +46,15 @@ class SelectionActionPopup(
     fun show(parent: View, selectionBounds: RectF, matrix: android.graphics.Matrix) {
         if (popupWindow.isShowing) return
 
-        // Calculate screen coordinates of selection center
-        val center = floatArrayOf(selectionBounds.centerX(), selectionBounds.top)
-        matrix.mapPoints(center)
+        // Calculate screen coordinates of selection points
+        val topCenter = floatArrayOf(selectionBounds.centerX(), selectionBounds.top)
+        val bottomCenter = floatArrayOf(selectionBounds.centerX(), selectionBounds.bottom)
+        matrix.mapPoints(topCenter)
+        matrix.mapPoints(bottomCenter)
         
-        val screenX = center[0].toInt()
-        val screenY = center[1].toInt()
+        val screenX = topCenter[0].toInt()
+        val screenYTop = topCenter[1].toInt()
+        val screenYBottom = bottomCenter[1].toInt()
 
         binding.root.measure(
             View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
@@ -63,13 +66,21 @@ class SelectionActionPopup(
         // Bounds check
         val displayMetrics = context.resources.displayMetrics
         
-        // Show above selection
+        // Default: Show above selection with clearance for Rotation Handle (approx 70px)
+        // 50px handle + 15px radius + 25px padding = 90px
+        val handleClearance = 90
         var x = screenX - (popupWidth / 2)
-        var y = screenY - popupHeight - 20 // padding
+        var y = screenYTop - popupHeight - handleClearance
 
+        // If no space on top, flip to bottom
+        if (y < 0) {
+             // Below selection + Handle radius clearance (20px) + Padding
+             y = screenYBottom + 40
+        }
+
+        // Horizontal Clamping
         if (x < 0) x = 0
         if (x + popupWidth > displayMetrics.widthPixels) x = displayMetrics.widthPixels - popupWidth
-        if (y < 0) y = screenY + 20 // Show below if no space on top
 
         popupWindow.showAtLocation(parent, Gravity.NO_GRAVITY, x, y)
         

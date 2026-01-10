@@ -230,61 +230,20 @@ class PenInputHandler(
         }
     }
 
-    private var selectionStartPoint: TouchPoint? = null
+    private var selectionStartX: Float? = null
+    private var selectionStartY: Float? = null
 
     /**
      * Configures the Onyx TouchHelper based on the current tool and scale.
-     * Calculates the physical stroke width to determine if hardware rendering should be disabled.
      */
     private fun updateTouchHelperTool() {
-        val pixelWidth = currentTool.width * currentScale
-        val dm = view.context.resources.displayMetrics
-        val physicalMm = (pixelWidth * 25.4f) / dm.xdpi
-        isLargeStrokeMode = physicalMm > CanvasConfig.EINK_RENDER_THRESHOLD_MM
-
-        touchHelper?.apply {
-            when (currentTool.type) {
-                ToolType.ERASER -> {
-                    // For Lasso Eraser, we want the hardware dashed line feedback (Recipe 3)
-                    if (currentTool.eraserType == EraserType.LASSO) {
-                        setRawDrawingRenderEnabled(true)
-                        Device.currentDevice().setEraserRawDrawingEnabled(true)
-                        setStrokeStyle(TouchHelper.STROKE_STYLE_DASH)
-                        setStrokeColor(android.graphics.Color.BLACK) // Force Black for visibility
-                        setStrokeWidth(5.0f) // Native app uses 5.0f
-                        Device.currentDevice().setStrokeParameters(TouchHelper.STROKE_STYLE_DASH, floatArrayOf(5.0f))
-                    } else {
-                        // For Standard/Stroke eraser, we use software cursor
-                        setRawDrawingRenderEnabled(false)
-                        Device.currentDevice().setEraserRawDrawingEnabled(false)
-                    }
-                }
-                ToolType.SELECT -> {
-                    if (currentTool.selectionType == com.alexdremov.notate.model.SelectionType.LASSO) {
-                        // Lasso: HW Render
-                        setRawDrawingRenderEnabled(true)
-                        Device.currentDevice().setEraserRawDrawingEnabled(true) 
-                        setStrokeStyle(TouchHelper.STROKE_STYLE_DASH)
-                        setStrokeColor(android.graphics.Color.BLACK)
-                        setStrokeWidth(2.0f)
-                        Device.currentDevice().setStrokeParameters(TouchHelper.STROKE_STYLE_DASH, floatArrayOf(5.0f, 5.0f))
-                    } else {
-                        // Rectangle: Software Render (CursorView)
-                        setRawDrawingRenderEnabled(false)
-                        Device.currentDevice().setEraserRawDrawingEnabled(false)
-                    }
-                }
-                else -> {
-                    setStrokeColor(ColorUtils.adjustColorForHardware(currentTool.displayColor))
-                    setStrokeStyle(currentTool.strokeType.touchHelperStyle)
-                    setStrokeWidth(pixelWidth)
-
-                    // Disable hardware render if stroke is too large (E-Ink struggle)
-                    val enableHardware = !isLargeStrokeMode
-                    setRawDrawingRenderEnabled(enableHardware)
-                }
-            }
-        }
+        val helper = touchHelper ?: return
+        isLargeStrokeMode = PenToolConfigurator.configure(
+            helper,
+            currentTool,
+            currentScale,
+            view.context
+        )
     }
 
     // Deprecated: Use setScale instead
@@ -317,11 +276,20 @@ class PenInputHandler(
         isSelecting = false
         isIgnoringCurrentStroke = false
         
+        // Always clear previous selection when starting a new stylus interaction
+        // This ensures "Tap anywhere outside" deselects, and prevents multiple selections confusion.
+        controller.clearSelection()
+        view.post { (view as? com.alexdremov.notate.ui.OnyxCanvasView)?.dismissActionPopup() }
+        
         if (currentTool.type == ToolType.SELECT) {
             isSelecting = true
-            lassoPath.reset()
-            lassoPath.moveTo(touchPoint.x, touchPoint.y)
-            // Continue to standard logic to enable HW drawing for the Lasso line
+            if (currentTool.selectionType == com.alexdremov.notate.model.SelectionType.LASSO) {
+                lassoPath.reset()
+                lassoPath.moveTo(touchPoint.x, touchPoint.y)
+            } else {
+                selectionStartX = touchPoint.x
+                selectionStartY = touchPoint.y
+            }
         }
 
         if (dwellDetector.consumeIgnoreNextStroke()) {
@@ -440,11 +408,13 @@ class PenInputHandler(
                 refreshHandler.post(refreshRunnable)
             } else {
                 // Rectangle Select Finalize
-                val start = selectionStartPoint ?: touchPoint
-                val left = minOf(start.x, touchPoint.x)
-                val top = minOf(start.y, touchPoint.y)
-                val right = maxOf(start.x, touchPoint.x)
-                val bottom = maxOf(start.y, touchPoint.y)
+                val startX = selectionStartX ?: touchPoint.x
+                val startY = selectionStartY ?: touchPoint.y
+                
+                val left = minOf(startX, touchPoint.x)
+                val top = minOf(startY, touchPoint.y)
+                val right = maxOf(startX, touchPoint.x)
+                val bottom = maxOf(startY, touchPoint.y)
                 
                 val screenRect = RectF(left, top, right, bottom)
                 // Map to World
@@ -465,12 +435,20 @@ class PenInputHandler(
                 val strokes = controller.getStrokesInRect(worldRect)
                 controller.selectStrokes(strokes)
                 
-                selectionStartPoint = null
+                selectionStartX = null
+                selectionStartY = null
                 cursorView?.hideSelectionRect()
             }
             
             lassoPath.reset()
             isSelecting = false
+            
+            // Show Actions for the new selection
+            view.post {
+                if (view is com.alexdremov.notate.ui.OnyxCanvasView) {
+                    view.showActionPopup()
+                }
+            }
             return
         }
 
@@ -717,12 +695,13 @@ class PenInputHandler(
                     lassoPath.lineTo(touchPoint.x, touchPoint.y)
                 } else {
                     // Update Rectangle Preview
-                    val start = selectionStartPoint
-                    if (start != null) {
-                        val left = minOf(start.x, touchPoint.x)
-                        val top = minOf(start.y, touchPoint.y)
-                        val right = maxOf(start.x, touchPoint.x)
-                        val bottom = maxOf(start.y, touchPoint.y)
+                    val startX = selectionStartX
+                    val startY = selectionStartY
+                    if (startX != null && startY != null) {
+                        val left = minOf(startX, touchPoint.x)
+                        val top = minOf(startY, touchPoint.y)
+                        val right = maxOf(startX, touchPoint.x)
+                        val bottom = maxOf(startY, touchPoint.y)
                         cursorView?.showSelectionRect(RectF(left, top, right, bottom))
                     }
                 }

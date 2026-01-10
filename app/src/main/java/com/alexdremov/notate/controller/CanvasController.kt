@@ -90,6 +90,7 @@ interface CanvasController {
 
     fun startMoveSelection()
     fun moveSelection(dx: Float, dy: Float)
+    fun transformSelection(matrix: android.graphics.Matrix)
     fun commitMoveSelection()
     
     fun getSelectionManager(): SelectionManager
