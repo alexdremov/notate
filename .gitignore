@@ -3,9 +3,10 @@
 tools/android-sdk
 app/build
 build
-.gitignore
 reversenote
 *.apk
 .gemini
 GEMINI.md
 .kotlin
+keystore.properties
+release.keystore
