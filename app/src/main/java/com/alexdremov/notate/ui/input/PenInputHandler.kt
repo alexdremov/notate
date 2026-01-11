@@ -417,6 +417,7 @@ class PenInputHandler(
 
         // Handle Select Tool Finalization
         if (currentTool.type == ToolType.SELECT && isSelecting) {
+            isStrokeInProgress = false
             if (currentTool.selectionType == com.alexdremov.notate.model.SelectionType.LASSO) {
                 lassoPath.lineTo(touchPoint.x, touchPoint.y)
                 lassoPath.close()
