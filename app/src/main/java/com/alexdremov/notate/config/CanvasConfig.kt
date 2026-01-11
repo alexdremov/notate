@@ -65,8 +65,13 @@ object CanvasConfig {
 
     // Fountain Pen Rendering
     const val FOUNTAIN_PRESSURE_POWER_EXPONENT = 0.95f
-    const val FOUNTAIN_MIN_WIDTH = 0.7f
+    const val FOUNTAIN_MIN_WIDTH = 1.5f
     const val FOUNTAIN_PRESSURE_SMOOTHING_FACTOR = 0.9f
     const val FOUNTAIN_SMOOTHING_WINDOW_SIZE = 0
-    const val FOUNTAIN_TINY_SEGMENT_THRESHOLD = 0.1f
+    const val FOUNTAIN_TINY_SEGMENT_THRESHOLD = 0.3f
+    const val FOUNTAIN_VELOCITY_INFLUENCE = 0.3f
+    const val FOUNTAIN_WIDTH_SMOOTHING = 0.1f // Lower is stronger smoothing (EMA)
+    const val FOUNTAIN_MIN_WIDTH_FACTOR = 0.4f
+    const val FOUNTAIN_SPLINE_STEPS = 6
+    const val FOUNTAIN_BASE_WIDTH_MULTIPLIER = 1.2f
 }

@@ -9,15 +9,19 @@ import kotlin.math.cos
 import kotlin.math.hypot
 import kotlin.math.pow
 import kotlin.math.sin
+import kotlin.math.sqrt
 
 /**
- * Pure Kotlin implementation of a pressure-sensitive Fountain Pen renderer.
- * Generates a filled Path representing the variable-width stroke.
+ * Improved Fountain Pen Renderer using Catmull-Rom splines and Velocity-Pressure dynamics.
  *
  * Algorithm:
- * 1. Smoothing: Uses Catmull-Rom splines or similar smoothing on input points.
- * 2. Width Modulation: Interpolates width based on pressure.
- * 3. Outline Construction: Generates left/right envelope points based on normal vectors.
+ * 1. Trajectory Analysis: Calculates velocity and smoothed pressure for input points.
+ * 2. Spline Interpolation: Uses Centripetal Catmull-Rom splines to generate a dense, smooth path
+ *    that passes through the original points (essential for handwriting accuracy).
+ * 3. Dynamic Width: Modulates width based on Pressure (primary) and Velocity (secondary).
+ *    - Faster strokes -> Thinner (simulating limited ink flow).
+ *    - Harder presses -> Thicker.
+ * 4. Geometry Construction: Generates a high-fidelity envelope (outline) from the interpolated data.
  */
 object FountainPenRenderer {
     fun getPath(
@@ -29,138 +33,275 @@ object FountainPenRenderer {
             return cached
         }
 
-        val generated = createStrokePath(stroke.points, stroke.width, maxPressure)
+        if (stroke.points.size < 2) return Path()
+
+        // 1. Build Control Points (Trajectory)
+        val controlPoints = buildControlPoints(stroke.points, stroke.width, maxPressure)
+        if (controlPoints.size < 2) return Path()
+
+        // 2. Interpolate Spline
+        val splinePoints = interpolateSpline(controlPoints)
+        if (splinePoints.size < 2) return Path()
+
+        // 3. Generate Outline
+        val generated = generateOutline(splinePoints)
+
         stroke.renderCache = generated
         return generated
     }
 
-    private fun createStrokePath(
-        points: List<TouchPoint>,
+    // --- Data Structures ---
+
+    private data class ControlPoint(
+        val x: Float,
+        val y: Float,
+        val width: Float,
+    )
+
+    private data class RenderPoint(
+        val x: Float,
+        val y: Float,
+        val w: Float, // Calculated half-width at this point
+        val angle: Float, // Tangent angle
+    )
+
+    // --- Step 1: Trajectory Analysis ---
+
+    private fun buildControlPoints(
+        rawPoints: List<TouchPoint>,
         baseWidth: Float,
         maxPressure: Float,
-    ): Path {
-        if (points.size < 2) return Path()
+    ): List<ControlPoint> {
+        val result = ArrayList<ControlPoint>(rawPoints.size)
+        val adjustedBaseWidth = baseWidth * CanvasConfig.FOUNTAIN_BASE_WIDTH_MULTIPLIER
 
-        val path = Path()
-        val processedPoints = preprocessPoints(points, maxPressure)
+        // Smoothing state
+        var lastPressure = if (rawPoints.isNotEmpty()) rawPoints[0].pressure / maxPressure else 0.5f
+        // Avoid division by zero if maxPressure is 0
+        val safeMaxPressure = if (maxPressure > 0) maxPressure else 4096f
 
-        if (processedPoints.size < 2) return Path()
+        for (i in rawPoints.indices) {
+            val p = rawPoints[i]
 
-        // Left and Right envelopes
-        val rightSide = ArrayList<PointF>()
-        val leftSide = ArrayList<PointF>()
-
-        // Cap directions
-        var startDirX = 0f
-        var startDirY = 0f
-        var endDirX = 0f
-        var endDirY = 0f
-
-        // 1. Generate Envelope Points
-        for (i in 0 until processedPoints.size - 1) {
-            val p1 = processedPoints[i]
-            val p2 = processedPoints[i + 1]
-
-            val vectorX = p2.x - p1.x
-            val vectorY = p2.y - p1.y
-            val distance = hypot(vectorX, vectorY)
-
-            // Skip tiny segments to avoid artifacts
-            if (distance < CanvasConfig.FOUNTAIN_TINY_SEGMENT_THRESHOLD) continue
-
-            val dirX = (vectorX / distance)
-            val dirY = (vectorY / distance)
-
-            if (i == 0) {
-                startDirX = dirX
-                startDirY = dirY
-            }
-            if (i == processedPoints.size - 2) {
-                endDirX = dirX
-                endDirY = dirY
+            // 1. Calculate Velocity (px/ms)
+            var velocity = 0f
+            if (i > 0) {
+                val prev = rawPoints[i - 1]
+                val dist = hypot(p.x - prev.x, p.y - prev.y)
+                val dt = (p.timestamp - prev.timestamp).coerceAtLeast(1) // Avoid /0
+                velocity = dist / dt
+            } else if (rawPoints.size > 1) {
+                // Estimate start velocity from second point
+                val next = rawPoints[1]
+                val dist = hypot(next.x - p.x, next.y - p.y)
+                val dt = (next.timestamp - p.timestamp).coerceAtLeast(1)
+                velocity = dist / dt
             }
 
-            val angle = atan2(vectorY, vectorX)
-            val sinAngle = sin(angle)
-            val cosAngle = cos(angle)
+            // Clamp velocity to reasonable range (0.0 - 5.0 px/ms is typical for writing)
+            // Normalize to 0..1 for calculation (assuming max speed around 2.0 px/ms usually)
+            val normVelocity = (velocity / 2.0f).coerceIn(0f, 1f)
 
-            // Width at start and end of segment
-            // Dynamic width based on pressure with non-linear response
-            val p1Adj = p1.pressure.pow(CanvasConfig.FOUNTAIN_PRESSURE_POWER_EXPONENT)
-            val p2Adj = p2.pressure.pow(CanvasConfig.FOUNTAIN_PRESSURE_POWER_EXPONENT)
+            // 2. Smooth Pressure (EMA)
+            val rawP = p.pressure / safeMaxPressure
+            lastPressure = lastPressure * (1 - CanvasConfig.FOUNTAIN_PRESSURE_SMOOTHING_FACTOR) +
+                rawP * CanvasConfig.FOUNTAIN_PRESSURE_SMOOTHING_FACTOR
 
-            val w1 = (baseWidth * p1Adj * 0.5f).coerceAtLeast(CanvasConfig.FOUNTAIN_MIN_WIDTH)
-            val w2 = (baseWidth * p2Adj * 0.5f).coerceAtLeast(CanvasConfig.FOUNTAIN_MIN_WIDTH)
+            // 3. Calculate Target Width
+            // W = Base * Pressure^Exp * (1 - k * Velocity)
+            val pressureFactor = lastPressure.pow(CanvasConfig.FOUNTAIN_PRESSURE_POWER_EXPONENT)
 
-            // Perpendicular offsets
-            val dx1 = w1 * sinAngle
-            val dy1 = w1 * cosAngle
-            val dx2 = w2 * sinAngle
-            val dy2 = w2 * cosAngle
+            // Velocity thins the stroke: (1 - influence * normVel)
+            // We clamp the thinning so it doesn't disappear completely
+            val velocityFactor =
+                (1.0f - (normVelocity * CanvasConfig.FOUNTAIN_VELOCITY_INFLUENCE))
+                    .coerceIn(0.2f, 1.0f)
 
-            // Add points to envelopes
-            if (i == 0) {
-                leftSide.add(PointF(p1.x - dx1, p1.y + dy1))
-                rightSide.add(PointF(p1.x + dx1, p1.y - dy1))
+            var targetWidth = adjustedBaseWidth * pressureFactor * velocityFactor
+
+            // Absolute min width clamp
+            targetWidth = targetWidth.coerceAtLeast(CanvasConfig.FOUNTAIN_MIN_WIDTH)
+
+            result.add(ControlPoint(p.x, p.y, targetWidth))
+        }
+        return result
+    }
+
+    // --- Step 2: Catmull-Rom Spline Interpolation ---
+
+    private fun interpolateSpline(points: List<ControlPoint>): List<RenderPoint> {
+        val result = ArrayList<RenderPoint>()
+        if (points.isEmpty()) return result
+
+        // Duplicate start and end points to ensure the spline passes through them
+        // (Catmull-Rom requires p0, p1, p2, p3 to interpolate between p1 and p2)
+        val fullList = ArrayList<ControlPoint>()
+        fullList.add(points.first()) // p0 (dummy)
+        fullList.addAll(points)
+        fullList.add(points.last()) // pLast+1 (dummy)
+
+        val steps = CanvasConfig.FOUNTAIN_SPLINE_STEPS
+
+        // Iterate through segments
+        for (i in 0 until fullList.size - 3) {
+            val p0 = fullList[i]
+            val p1 = fullList[i + 1]
+            val p2 = fullList[i + 2]
+            val p3 = fullList[i + 3]
+
+            // Heuristic: If p1 and p2 are very close, skip interpolation to save perf
+            // unless it's a very sharp turn
+            val dist = hypot(p2.x - p1.x, p2.y - p1.y)
+            val actualSteps = if (dist < 5f) (steps / 2).coerceAtLeast(1) else steps
+
+            for (tStep in 0 until actualSteps) {
+                val t = tStep / actualSteps.toFloat()
+
+                // Centripetal Catmull-Rom Spline
+                // Here using standard Catmull-Rom basis functions for simplicity/speed
+                // x(t) = 0.5 * ( (2*P1) + (-P0 + P2)*t + (2*P0 - 5*P1 + 4*P2 - P3)*t^2 + (-P0 + 3*P1 - 3*P2 + P3)*t^3 )
+
+                val tt = t * t
+                val ttt = tt * t
+
+                val q0 = -0.5f * t + tt - 0.5f * ttt
+                val q1 = 1.0f - 2.5f * tt + 1.5f * ttt
+                val q2 = 0.5f * t + 2.0f * tt - 1.5f * ttt
+                val q3 = -0.5f * tt + 0.5f * ttt
+
+                val tx = (p0.x * q0 + p1.x * q1 + p2.x * q2 + p3.x * q3)
+                val ty = (p0.y * q0 + p1.y * q1 + p2.y * q2 + p3.y * q3)
+
+                // Linear interpolation for width
+                val tw = p1.width + (p2.width - p1.width) * t
+
+                // Calculate tangent angle for this point
+                // Derivative x'(t)
+                val dq0 = -0.5f + 2f * t - 1.5f * tt
+                val dq1 = -5f * t + 4.5f * tt
+                val dq2 = 0.5f + 4f * t - 4.5f * tt
+                val dq3 = -t + 1.5f * tt
+
+                val dx = (p0.x * dq0 + p1.x * dq1 + p2.x * dq2 + p3.x * dq3)
+                val dy = (p0.y * dq0 + p1.y * dq1 + p2.y * dq2 + p3.y * dq3)
+                val angle = atan2(dy, dx)
+
+                result.add(RenderPoint(tx, ty, tw * 0.5f, angle))
             }
-
-            leftSide.add(PointF(p2.x - dx2, p2.y + dy2))
-            rightSide.add(PointF(p2.x + dx2, p2.y - dy2))
         }
 
-        // 2. Construct Closed Path
-        if (leftSide.isEmpty()) return Path()
+        // Add the very last point
+        // Calculate the true tangent at t=1.0 for the last segment
+        if (fullList.size >= 4) {
+            val p0 = fullList[fullList.size - 4]
+            val p1 = fullList[fullList.size - 3]
+            val p2 = fullList[fullList.size - 2]
+            val p3 = fullList[fullList.size - 1]
 
+            // Derivative at t=1.0
+            val t = 1.0f
+            val tt = t * t
+
+            val dq0 = -0.5f + 2f * t - 1.5f * tt
+            val dq1 = -5f * t + 4.5f * tt
+            val dq2 = 0.5f + 4f * t - 4.5f * tt
+            val dq3 = -t + 1.5f * tt
+
+            val dx = (p0.x * dq0 + p1.x * dq1 + p2.x * dq2 + p3.x * dq3)
+            val dy = (p0.y * dq0 + p1.y * dq1 + p2.y * dq2 + p3.y * dq3)
+            val angle = atan2(dy, dx)
+
+            val last = points.last()
+            result.add(RenderPoint(last.x, last.y, last.width * 0.5f, angle))
+        } else {
+            // Fallback for tiny strokes (shouldn't happen due to checks)
+            val last = points.last()
+            val lastAngle = if (result.isNotEmpty()) result.last().angle else 0f
+            result.add(RenderPoint(last.x, last.y, last.width * 0.5f, lastAngle))
+        }
+
+        return result
+    }
+
+    // --- Step 3: Envelope Generation ---
+
+    private fun generateOutline(points: List<RenderPoint>): Path {
+        val path = Path()
+        if (points.isEmpty()) return path
+
+        val leftSide = ArrayList<PointF>(points.size)
+        val rightSide = ArrayList<PointF>(points.size)
+
+        // Generate envelope points
+        for (p in points) {
+            // Normal vector is perpendicular to tangent (-y, x)
+            val sinA = sin(p.angle)
+            val cosA = cos(p.angle)
+
+            // Offset
+            val dx = p.w * sinA
+            val dy = p.w * cosA
+
+            // Standard Ribbon Construction
+            // Left: (-dy, dx) -> actually (-sin, cos) represents normal angle + 90
+            // Let's stick to simple trig:
+            // Tangent vector T = (cosA, sinA)
+            // Normal vector N = (-sinA, cosA)
+
+            leftSide.add(PointF(p.x - dx, p.y + dy))
+            rightSide.add(PointF(p.x + dx, p.y - dy))
+        }
+
+        // Construct Path
         path.moveTo(leftSide[0].x, leftSide[0].y)
 
-        // Draw Left side forward
+        // Forward (Left Side)
         for (i in 1 until leftSide.size) {
-            val p = leftSide[i]
-            val prev = leftSide[i - 1]
-            val midX = (prev.x + p.x) / 2
-            val midY = (prev.y + p.y) / 2
-            path.quadTo(prev.x, prev.y, midX, midY)
+            // Use simple lines because points are already dense from spline
+            path.lineTo(leftSide[i].x, leftSide[i].y)
         }
-        path.lineTo(leftSide.last().x, leftSide.last().y)
 
-        // Draw End Cap (Round)
-        val pLast = processedPoints.last()
-        val wLast =
-            (
-                baseWidth *
-                    pLast.pressure.pow(
-                        CanvasConfig.FOUNTAIN_PRESSURE_POWER_EXPONENT,
-                    ) * 0.5f
-            ).coerceAtLeast(CanvasConfig.FOUNTAIN_MIN_WIDTH)
-        val capCtrlX = pLast.x + endDirX * wLast
-        val capCtrlY = pLast.y + endDirY * wLast
-        path.quadTo(capCtrlX, capCtrlY, rightSide.last().x, rightSide.last().y)
+        // Cap (End) - Round
+        val lastL = leftSide.last()
+        val lastR = rightSide.last()
+        val lastP = points.last()
 
-        // Draw Right side backward
+        // Control point for round cap
+        val capEndDx = (lastP.w) * cos(lastP.angle)
+        val capEndDy = (lastP.w) * sin(lastP.angle)
+
+        path.cubicTo(
+            lastL.x + capEndDx * 0.6f,
+            lastL.y + capEndDy * 0.6f,
+            lastR.x + capEndDx * 0.6f,
+            lastR.y + capEndDy * 0.6f,
+            lastR.x,
+            lastR.y,
+        )
+
+        // Backward (Right Side)
         for (i in rightSide.size - 2 downTo 0) {
-            val p = rightSide[i]
-            val prev = rightSide[i + 1]
-            val midX = (prev.x + p.x) / 2
-            val midY = (prev.y + p.y) / 2
-            path.quadTo(prev.x, prev.y, midX, midY)
+            path.lineTo(rightSide[i].x, rightSide[i].y)
         }
-        path.lineTo(rightSide[0].x, rightSide[0].y)
 
-        // Draw Start Cap (Round)
-        val pFirst = processedPoints.first()
-        val wFirst =
-            (
-                baseWidth *
-                    pFirst.pressure.pow(
-                        CanvasConfig.FOUNTAIN_PRESSURE_POWER_EXPONENT,
-                    ) * 0.5f
-            ).coerceAtLeast(CanvasConfig.FOUNTAIN_MIN_WIDTH)
-        val startCapCtrlX = pFirst.x - startDirX * wFirst
-        val startCapCtrlY = pFirst.y - startDirY * wFirst
-        path.quadTo(startCapCtrlX, startCapCtrlY, leftSide[0].x, leftSide[0].y)
+        // Cap (Start) - Round
+        val firstL = leftSide.first()
+        val firstR = rightSide.first()
+        val firstP = points.first()
+
+        val capStartDx = -(firstP.w) * cos(firstP.angle)
+        val capStartDy = -(firstP.w) * sin(firstP.angle)
+
+        path.cubicTo(
+            firstR.x + capStartDx * 0.6f,
+            firstR.y + capStartDy * 0.6f,
+            firstL.x + capStartDx * 0.6f,
+            firstL.y + capStartDy * 0.6f,
+            firstL.x,
+            firstL.y,
+        )
 
         path.close()
-
         return path
     }
 
@@ -168,64 +309,4 @@ object FountainPenRenderer {
         val x: Float,
         val y: Float,
     )
-
-    private data class ProcessedPoint(
-        val x: Float,
-        val y: Float,
-        val pressure: Float,
-    )
-
-    private fun preprocessPoints(
-        rawPoints: List<TouchPoint>,
-        maxPressure: Float,
-    ): List<ProcessedPoint> {
-        val result = ArrayList<ProcessedPoint>(rawPoints.size)
-
-        // Exponential Moving Average factor for pressure (0.0 = no change, 1.0 = instant)
-        // Lower value = smoother pressure but more lag
-        val pressureSmoothingFactor = CanvasConfig.FOUNTAIN_PRESSURE_SMOOTHING_FACTOR
-        var currentSmoothedPressure =
-            if (rawPoints.isNotEmpty()) {
-                if (maxPressure > 0) rawPoints[0].pressure / maxPressure else 0.5f
-            } else {
-                0.5f
-            }
-
-        // Basic smoothing window (Moving Average) for coordinates
-        val windowSize = CanvasConfig.FOUNTAIN_SMOOTHING_WINDOW_SIZE
-
-        for (i in rawPoints.indices) {
-            var sumX = 0f
-            var sumY = 0f
-            var count = 0
-
-            if (windowSize > 0) {
-                for (j in -windowSize..windowSize) {
-                    val idx = i + j
-                    if (idx in rawPoints.indices) {
-                        val p = rawPoints[idx]
-                        sumX += p.x
-                        sumY += p.y
-                        count++
-                    }
-                }
-            } else {
-                // No smoothing
-                val p = rawPoints[i]
-                sumX = p.x
-                sumY = p.y
-                count = 1
-            }
-
-            // Pressure Smoothing
-            val rawP = rawPoints[i].pressure
-            val normP = if (maxPressure > 0) rawP / maxPressure else 0.5f
-
-            // EMA
-            currentSmoothedPressure = (currentSmoothedPressure * (1 - pressureSmoothingFactor)) + (normP * pressureSmoothingFactor)
-
-            result.add(ProcessedPoint(sumX / count, sumY / count, currentSmoothedPressure))
-        }
-        return result
-    }
 }

@@ -332,6 +332,19 @@ class OnyxCanvasView
         fun setTool(tool: PenTool) {
             this.currentTool = tool
             penInputHandler.setTool(tool)
+
+            // Toggle Raw Drawing to ensure refresh works (mirrors Lasso Lift logic)
+            val wasEnabled = touchHelper?.isRawDrawingInputEnabled() == true
+            if (wasEnabled) {
+                touchHelper?.setRawDrawingEnabled(false)
+            }
+
+            EpdController.invalidate(this, UpdateMode.GC)
+
+            if (wasEnabled) {
+                touchHelper?.setRawDrawingEnabled(true)
+            }
+
             updateTouchHelperTool()
         }
 
