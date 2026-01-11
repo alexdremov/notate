@@ -130,48 +130,69 @@ class PenInputHandler(
 
     // Delayed Refresh Logic
     private val refreshHandler = Handler(Looper.getMainLooper())
-    private val REFRESH_DELAY_MS = 2000L
-    private val refreshRunnable =
-        Runnable {
-            if (!currentStrokeScreenBounds.isEmpty) {
-                val drawingBefore = touchHelper?.isRawDrawingInputEnabled() ?: false
-                touchHelper?.setRawDrawingEnabled(false)
+    private val HOVER_EXIT_REFRESH_DELAY_MS = 2000L
 
-                // Expand bounds slightly for anti-aliasing safety
-                val refreshPadding = (currentTool.width * currentScale) + 10f
-                currentStrokeScreenBounds.inset(-refreshPadding, -refreshPadding)
+    private fun performRefresh(ignoreStrokeState: Boolean = false) {
+        if (!ignoreStrokeState && isStrokeInProgress) return
+        if (!currentStrokeScreenBounds.isEmpty) {
+            val drawingBefore = touchHelper?.isRawDrawingInputEnabled() ?: false
+            touchHelper?.setRawDrawingEnabled(false)
 
-                val dirtyRect =
-                    android.graphics.Rect(
-                        currentStrokeScreenBounds.left.toInt(),
-                        currentStrokeScreenBounds.top.toInt(),
-                        currentStrokeScreenBounds.right.toInt(),
-                        currentStrokeScreenBounds.bottom.toInt(),
-                    )
+            // Expand bounds slightly for anti-aliasing safety
+            val refreshPadding = (currentTool.width * currentScale) + 10f
+            currentStrokeScreenBounds.inset(-refreshPadding, -refreshPadding)
 
-                val l = dirtyRect.left
-                val t = dirtyRect.top
-                val r = dirtyRect.right
-                val b = dirtyRect.bottom
-
-                // Perform region-specific High Quality refresh
-                EpdController.invalidate(
-                    view,
-                    l,
-                    t,
-                    r,
-                    b,
-                    UpdateMode.GC,
+            val dirtyRect =
+                android.graphics.Rect(
+                    currentStrokeScreenBounds.left.toInt(),
+                    currentStrokeScreenBounds.top.toInt(),
+                    currentStrokeScreenBounds.right.toInt(),
+                    currentStrokeScreenBounds.bottom.toInt(),
                 )
 
-                touchHelper?.setRawDrawingEnabled(drawingBefore)
-                // Restore the correct rendering state (as toggling input might reset it)
-                updateTouchHelperTool()
+            val l = dirtyRect.left
+            val t = dirtyRect.top
+            val r = dirtyRect.right
+            val b = dirtyRect.bottom
 
-                // Reset bounds after refresh
-                currentStrokeScreenBounds.setEmpty()
-            }
+            // Perform region-specific High Quality refresh
+            EpdController.invalidate(
+                view,
+                l,
+                t,
+                r,
+                b,
+                UpdateMode.GC,
+            )
+
+            touchHelper?.setRawDrawingEnabled(drawingBefore)
+            // Restore the correct rendering state (as toggling input might reset it)
+            updateTouchHelperTool()
+
+            // Reset bounds after refresh
+            currentStrokeScreenBounds.setEmpty()
         }
+    }
+
+    private val refreshRunnable = Runnable { performRefresh(false) }
+
+    fun onHoverEnter() {
+        // User started hovering, postpone any pending refresh
+        refreshHandler.removeCallbacks(refreshRunnable)
+    }
+
+    fun onHoverMove(event: android.view.MotionEvent) {
+        // Keep postponing as long as we move
+        refreshHandler.removeCallbacks(refreshRunnable)
+    }
+
+    fun onHoverExit() {
+        if (isStrokeInProgress) return
+        // User stopped hovering. If we have pending changes, refresh soon.
+        if (!currentStrokeScreenBounds.isEmpty) {
+            refreshHandler.postDelayed(refreshRunnable, HOVER_EXIT_REFRESH_DELAY_MS)
+        }
+    }
 
     fun setTool(tool: PenTool) {
         if (isTemporaryEraserActive) {
@@ -494,7 +515,7 @@ class PenInputHandler(
                     stroke?.let { s ->
                         controller.commitEraser(s, effectiveEraserType)
                         if (effectiveEraserType == EraserType.LASSO) {
-                            refreshHandler.post(refreshRunnable)
+                            refreshHandler.post { performRefresh(true) }
                         }
                     }
                 } else {
@@ -617,11 +638,6 @@ class PenInputHandler(
         isStrokeInProgress = false // Reset here
 
         onStrokeFinished()
-
-        // Schedule high-quality repaint with a delay (debounce)
-        // This ensures we only refresh when the user has paused writing,
-        // preventing flickering during rapid strokes.
-        refreshHandler.postDelayed(refreshRunnable, REFRESH_DELAY_MS)
     }
 
     /**

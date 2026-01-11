@@ -212,11 +212,16 @@ class OnyxCanvasView
         }
 
         override fun onGenericMotionEvent(event: MotionEvent): Boolean {
-            if (event.actionMasked == MotionEvent.ACTION_HOVER_MOVE) {
-                val toolType = event.getToolType(0)
-                val isEraserTail = toolType == MotionEvent.TOOL_TYPE_ERASER
-                val isStylusButton = (event.buttonState and MotionEvent.BUTTON_STYLUS_PRIMARY) != 0
-                if (isEraserTail || isStylusButton) penInputHandler.prepareEraser() else penInputHandler.finishEraser()
+            when (event.actionMasked) {
+                MotionEvent.ACTION_HOVER_MOVE -> {
+                    val toolType = event.getToolType(0)
+                    val isEraserTail = toolType == MotionEvent.TOOL_TYPE_ERASER
+                    val isStylusButton = (event.buttonState and MotionEvent.BUTTON_STYLUS_PRIMARY) != 0
+                    if (isEraserTail || isStylusButton) penInputHandler.prepareEraser() else penInputHandler.finishEraser()
+                    penInputHandler.onHoverMove(event)
+                }
+                MotionEvent.ACTION_HOVER_ENTER -> penInputHandler.onHoverEnter()
+                MotionEvent.ACTION_HOVER_EXIT -> penInputHandler.onHoverExit()
             }
             return super.onGenericMotionEvent(event)
         }
