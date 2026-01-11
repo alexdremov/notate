@@ -220,8 +220,14 @@ class OnyxCanvasView
                     if (isEraserTail || isStylusButton) penInputHandler.prepareEraser() else penInputHandler.finishEraser()
                     penInputHandler.onHoverMove(event)
                 }
-                MotionEvent.ACTION_HOVER_ENTER -> penInputHandler.onHoverEnter()
-                MotionEvent.ACTION_HOVER_EXIT -> penInputHandler.onHoverExit()
+
+                MotionEvent.ACTION_HOVER_ENTER -> {
+                    penInputHandler.onHoverEnter()
+                }
+
+                MotionEvent.ACTION_HOVER_EXIT -> {
+                    penInputHandler.onHoverExit()
+                }
             }
             return super.onGenericMotionEvent(event)
         }
