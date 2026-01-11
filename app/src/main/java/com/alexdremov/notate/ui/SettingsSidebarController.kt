@@ -71,6 +71,25 @@ class SettingsSidebarController(
                 .setScribbleToEraseEnabled(context, isChecked)
         }
 
+        // --- Snapping & Locking ---
+        val switchAngle: Switch = writingView.findViewById(R.id.switch_angle_snapping)
+        switchAngle.isChecked =
+            com.alexdremov.notate.data.PreferencesManager
+                .isAngleSnappingEnabled(context)
+        switchAngle.setOnCheckedChangeListener { _, isChecked ->
+            com.alexdremov.notate.data.PreferencesManager
+                .setAngleSnappingEnabled(context, isChecked)
+        }
+
+        val switchAxis: Switch = writingView.findViewById(R.id.switch_axis_locking)
+        switchAxis.isChecked =
+            com.alexdremov.notate.data.PreferencesManager
+                .isAxisLockingEnabled(context)
+        switchAxis.setOnCheckedChangeListener { _, isChecked ->
+            com.alexdremov.notate.data.PreferencesManager
+                .setAxisLockingEnabled(context, isChecked)
+        }
+
         // --- Shape Perfection ---
         val switchShape: Switch = writingView.findViewById(R.id.switch_shape_perfection)
         val tvShapeDelay: TextView = writingView.findViewById(R.id.tv_shape_delay_label)

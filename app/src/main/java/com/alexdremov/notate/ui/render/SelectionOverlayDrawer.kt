@@ -17,28 +17,31 @@ import com.alexdremov.notate.util.StrokeRenderer
  */
 class SelectionOverlayDrawer(
     private val selectionManager: SelectionManager,
-    private val renderer: CanvasRenderer
+    private val renderer: CanvasRenderer,
 ) {
-    private val boxPaint = Paint().apply {
-        color = Color.BLUE
-        style = Paint.Style.STROKE
-        strokeWidth = 3f
-        pathEffect = DashPathEffect(floatArrayOf(10f, 10f), 0f)
-        isAntiAlias = true
-    }
+    private val boxPaint =
+        Paint().apply {
+            color = Color.BLUE
+            style = Paint.Style.STROKE
+            strokeWidth = 3f
+            pathEffect = DashPathEffect(floatArrayOf(10f, 10f), 0f)
+            isAntiAlias = true
+        }
 
-    private val handlePaint = Paint().apply {
-        color = Color.WHITE
-        style = Paint.Style.FILL
-        isAntiAlias = true
-    }
+    private val handlePaint =
+        Paint().apply {
+            color = Color.WHITE
+            style = Paint.Style.FILL
+            isAntiAlias = true
+        }
 
-    private val handleBorderPaint = Paint().apply {
-        color = Color.BLUE
-        style = Paint.Style.STROKE
-        strokeWidth = 3f
-        isAntiAlias = true
-    }
+    private val handleBorderPaint =
+        Paint().apply {
+            color = Color.BLUE
+            style = Paint.Style.STROKE
+            strokeWidth = 3f
+            isAntiAlias = true
+        }
 
     // Reuse objects to avoid allocation
     private val screenMatrix = Matrix()
@@ -46,7 +49,11 @@ class SelectionOverlayDrawer(
     private val screenCorners = FloatArray(8)
     private val screenCenter = FloatArray(2)
 
-    fun draw(canvas: Canvas, viewMatrix: Matrix, currentScale: Float) {
+    fun draw(
+        canvas: Canvas,
+        viewMatrix: Matrix,
+        currentScale: Float,
+    ) {
         if (!selectionManager.hasSelection()) return
 
         // 1. Draw Transformed Strokes (Visual Lift)
@@ -57,7 +64,7 @@ class SelectionOverlayDrawer(
             canvas.concat(viewMatrix)
             // Apply Selection Transform (Original -> Current)
             canvas.concat(selectionManager.transformMatrix)
-            
+
             selectionManager.selectedStrokes.forEach { stroke ->
                 renderer.drawStrokeToCanvas(canvas, stroke)
             }
@@ -77,14 +84,14 @@ class SelectionOverlayDrawer(
         path.lineTo(screenCorners[4], screenCorners[5])
         path.lineTo(screenCorners[6], screenCorners[7])
         path.close()
-        
+
         // Scale stroke width relative to screen, usually fixed size is better for UI
         boxPaint.strokeWidth = 2f // Fixed screen pixels
         canvas.drawPath(path, boxPaint)
 
         // Draw Handles
         val handleRadius = 15f // Fixed screen pixels
-        
+
         for (i in 0 until 4) {
             val hx = screenCorners[i * 2]
             val hy = screenCorners[i * 2 + 1]
@@ -96,16 +103,20 @@ class SelectionOverlayDrawer(
         drawRotateHandle(canvas, screenCorners, handleRadius)
     }
 
-    private fun drawRotateHandle(canvas: Canvas, corners: FloatArray, radius: Float) {
+    private fun drawRotateHandle(
+        canvas: Canvas,
+        corners: FloatArray,
+        radius: Float,
+    ) {
         // Midpoint of Top-Left (0,1) and Top-Right (2,3)
         val mx = (corners[0] + corners[2]) / 2f
         val my = (corners[1] + corners[3]) / 2f
-        
+
         // Vector along top edge
         val dx = corners[2] - corners[0]
         val dy = corners[3] - corners[1]
         val len = kotlin.math.hypot(dx, dy)
-        
+
         if (len < 0.1f) return
 
         // Perpendicular vector (pointing "up" / away from center)
@@ -114,11 +125,11 @@ class SelectionOverlayDrawer(
         // (dy, -dx) = (0, -10). Normalized: (0, -1). Correct.
         val ux = dy / len
         val uy = -dx / len
-        
+
         val handleOffset = 50f
         val rhx = mx + ux * handleOffset
         val rhy = my + uy * handleOffset
-        
+
         // Line to handle
         canvas.drawLine(mx, my, rhx, rhy, boxPaint)
         // Handle circle

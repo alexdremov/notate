@@ -599,9 +599,12 @@ class InfiniteCanvasModel {
         return RectF(0f, top, pageWidth, top + pageHeight)
     }
 
-    fun hitTest(x: Float, y: Float, tolerance: Float = 10f): Stroke? {
-        return rwLock.read {
+    fun hitTest(
+        x: Float,
+        y: Float,
+        tolerance: Float = 10f,
+    ): Stroke? =
+        rwLock.read {
             quadtree.hitTest(x, y, tolerance)
         }
-    }
 }

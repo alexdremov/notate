@@ -192,12 +192,15 @@ object StrokeGeometry {
         }
         return inside
     }
-    
+
     /**
      * Flattens a Path into a list of TouchPoints approximating the curve.
      * Useful for polygon containment checks.
      */
-    fun flattenPath(path: Path, step: Float = 10f): List<TouchPoint> {
+    fun flattenPath(
+        path: Path,
+        step: Float = 10f,
+    ): List<TouchPoint> {
         val points = ArrayList<TouchPoint>()
         val pm = PathMeasure(path, false)
         val length = pm.length

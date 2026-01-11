@@ -22,6 +22,8 @@ object PreferencesManager {
     private const val KEY_SCRIBBLE_TO_ERASE = "scribble_to_erase"
     private const val KEY_SHAPE_PERFECTION_ENABLED = "shape_perfection_enabled"
     private const val KEY_SHAPE_PERFECTION_DELAY = "shape_perfection_delay"
+    private const val KEY_ANGLE_SNAPPING = "angle_snapping_enabled"
+    private const val KEY_AXIS_LOCKING = "axis_locking_enabled"
 
     private fun getPrefs(context: Context): SharedPreferences = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
@@ -32,6 +34,24 @@ object PreferencesManager {
         enabled: Boolean,
     ) {
         getPrefs(context).edit().putBoolean(KEY_SCRIBBLE_TO_ERASE, enabled).apply()
+    }
+
+    fun isAngleSnappingEnabled(context: Context): Boolean = getPrefs(context).getBoolean(KEY_ANGLE_SNAPPING, true)
+
+    fun setAngleSnappingEnabled(
+        context: Context,
+        enabled: Boolean,
+    ) {
+        getPrefs(context).edit().putBoolean(KEY_ANGLE_SNAPPING, enabled).apply()
+    }
+
+    fun isAxisLockingEnabled(context: Context): Boolean = getPrefs(context).getBoolean(KEY_AXIS_LOCKING, true)
+
+    fun setAxisLockingEnabled(
+        context: Context,
+        enabled: Boolean,
+    ) {
+        getPrefs(context).edit().putBoolean(KEY_AXIS_LOCKING, enabled).apply()
     }
 
     fun isShapePerfectionEnabled(context: Context): Boolean = getPrefs(context).getBoolean(KEY_SHAPE_PERFECTION_ENABLED, true)

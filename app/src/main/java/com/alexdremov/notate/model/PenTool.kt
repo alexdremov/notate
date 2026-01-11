@@ -48,7 +48,16 @@ data class PenTool(
                 PenTool("pen_2", "Pen 2", ToolType.PEN, Color.parseColor("#1A237E"), 7f, StrokeType.FOUNTAIN),
                 PenTool("pen_3", "Pen 3", ToolType.PEN, Color.parseColor("#FFF9C4"), 60f, StrokeType.HIGHLIGHTER),
                 PenTool("eraser_std", "Standard Eraser", ToolType.ERASER, Color.WHITE, 30f, StrokeType.PENCIL, EraserType.STANDARD),
-                PenTool("select_tool", "Select", ToolType.SELECT, Color.BLACK, 2f, StrokeType.DASH, EraserType.STANDARD, SelectionType.RECTANGLE),
+                PenTool(
+                    "select_tool",
+                    "Select",
+                    ToolType.SELECT,
+                    Color.BLACK,
+                    2f,
+                    StrokeType.DASH,
+                    EraserType.STANDARD,
+                    SelectionType.RECTANGLE,
+                ),
             )
     }
 }

@@ -11,9 +11,7 @@ object ClipboardManager {
         copiedStrokes.addAll(strokes)
     }
 
-    fun getStrokes(): List<Stroke> {
-        return ArrayList(copiedStrokes)
-    }
-    
+    fun getStrokes(): List<Stroke> = ArrayList(copiedStrokes)
+
     fun hasContent() = copiedStrokes.isNotEmpty()
 }

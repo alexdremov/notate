@@ -15,15 +15,14 @@ import com.onyx.android.sdk.pen.TouchHelper
  * based on the current tool state.
  */
 object PenToolConfigurator {
-    
     fun configure(
         touchHelper: TouchHelper,
         currentTool: PenTool,
         currentScale: Float,
-        context: Context
+        context: Context,
     ): Boolean {
         // Returns: isLargeStrokeMode
-        
+
         val pixelWidth = currentTool.width * currentScale
         val dm = context.resources.displayMetrics
         val physicalMm = (pixelWidth * 25.4f) / dm.xdpi
@@ -46,11 +45,12 @@ object PenToolConfigurator {
                         Device.currentDevice().setEraserRawDrawingEnabled(false)
                     }
                 }
+
                 ToolType.SELECT -> {
                     if (currentTool.selectionType == SelectionType.LASSO) {
                         // Lasso Select -> HW Dash
                         setRawDrawingRenderEnabled(true)
-                        Device.currentDevice().setEraserRawDrawingEnabled(true) 
+                        Device.currentDevice().setEraserRawDrawingEnabled(true)
                         setStrokeStyle(TouchHelper.STROKE_STYLE_DASH)
                         setStrokeColor(android.graphics.Color.BLACK)
                         setStrokeWidth(2.0f)
@@ -61,6 +61,7 @@ object PenToolConfigurator {
                         Device.currentDevice().setEraserRawDrawingEnabled(false)
                     }
                 }
+
                 ToolType.PEN -> {
                     setStrokeColor(ColorUtils.adjustColorForHardware(currentTool.displayColor))
                     setStrokeStyle(currentTool.strokeType.touchHelperStyle)
@@ -69,7 +70,7 @@ object PenToolConfigurator {
                     // Disable hardware render if stroke is too large
                     val enableHardware = !isLargeStrokeMode
                     setRawDrawingRenderEnabled(enableHardware)
-                    
+
                     // Ensure eraser channel is off for pen
                     Device.currentDevice().setEraserRawDrawingEnabled(false)
                 }

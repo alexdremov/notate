@@ -46,7 +46,7 @@ class PenInputHandler(
 
     @Volatile
     private var isStrokeInProgress = false
-    
+
     // --- Selection State ---
     private var isSelecting = false // True if drawing selection lasso/rect
 
@@ -78,7 +78,7 @@ class PenInputHandler(
             DwellDetector(view.context, strokeBuilder) { pts ->
                 // On Dwell Detected
                 if (!isStrokeInProgress) return@DwellDetector
-                
+
                 // Shape Perfection Logic (Stylus Dwell)
                 val result = ShapeRecognizer.recognize(pts)
                 if (result != null && result.shape != ShapeRecognizer.RecognizedShape.NONE) {
@@ -238,12 +238,13 @@ class PenInputHandler(
      */
     private fun updateTouchHelperTool() {
         val helper = touchHelper ?: return
-        isLargeStrokeMode = PenToolConfigurator.configure(
-            helper,
-            currentTool,
-            currentScale,
-            view.context
-        )
+        isLargeStrokeMode =
+            PenToolConfigurator.configure(
+                helper,
+                currentTool,
+                currentScale,
+                view.context,
+            )
     }
 
     // Deprecated: Use setScale instead
@@ -275,12 +276,12 @@ class PenInputHandler(
         isStrokeInProgress = true
         isSelecting = false
         isIgnoringCurrentStroke = false
-        
+
         // Always clear previous selection when starting a new stylus interaction
         // This ensures "Tap anywhere outside" deselects, and prevents multiple selections confusion.
         controller.clearSelection()
         view.post { (view as? com.alexdremov.notate.ui.OnyxCanvasView)?.dismissActionPopup() }
-        
+
         if (currentTool.type == ToolType.SELECT) {
             isSelecting = true
             if (currentTool.selectionType == com.alexdremov.notate.model.SelectionType.LASSO) {
@@ -383,7 +384,8 @@ class PenInputHandler(
 
         dwellDetector.onStop()
         val isSpecialMode =
-            currentTool.type == ToolType.ERASER || currentTool.type == ToolType.SELECT || (currentTool.type != ToolType.ERASER && isLargeStrokeMode)
+            currentTool.type == ToolType.ERASER || currentTool.type == ToolType.SELECT ||
+                (currentTool.type != ToolType.ERASER && isLargeStrokeMode)
 
         if (isSpecialMode) {
             com.onyx.android.sdk.api.device.EpdDeviceManager
@@ -391,10 +393,9 @@ class PenInputHandler(
         }
 
         cursorView?.hide()
-        
+
         // Handle Select Tool Finalization
         if (currentTool.type == ToolType.SELECT && isSelecting) {
-            
             if (currentTool.selectionType == com.alexdremov.notate.model.SelectionType.LASSO) {
                 lassoPath.lineTo(touchPoint.x, touchPoint.y)
                 lassoPath.close()
@@ -403,26 +404,26 @@ class PenInputHandler(
                 lassoPath.transform(inverseMatrix, worldPath)
                 val strokes = controller.getStrokesInPath(worldPath)
                 controller.selectStrokes(strokes)
-                
+
                 // Trigger refresh to clear the HW drawn dashed line
                 refreshHandler.post(refreshRunnable)
             } else {
                 // Rectangle Select Finalize
                 val startX = selectionStartX ?: touchPoint.x
                 val startY = selectionStartY ?: touchPoint.y
-                
+
                 val left = minOf(startX, touchPoint.x)
                 val top = minOf(startY, touchPoint.y)
                 val right = maxOf(startX, touchPoint.x)
                 val bottom = maxOf(startY, touchPoint.y)
-                
+
                 val screenRect = RectF(left, top, right, bottom)
                 // Map to World
                 val worldRect = RectF()
                 val pts = floatArrayOf(screenRect.left, screenRect.top, screenRect.right, screenRect.bottom)
                 inverseMatrix.mapPoints(pts)
-                
-                // Note: mapPoints maps [x0,y0, x1,y1]. 
+
+                // Note: mapPoints maps [x0,y0, x1,y1].
                 // Since matrix might have rotation (though unlikely in this app), simple mapping might be unsafe if rotated.
                 // But we only support scale/pan.
                 // However, mapRect is safer.
@@ -431,18 +432,18 @@ class PenInputHandler(
                 // matrix: World -> Screen.
                 // inverseMatrix: Screen -> World.
                 inverseMatrix.mapRect(worldRect, screenRect)
-                
+
                 val strokes = controller.getStrokesInRect(worldRect)
                 controller.selectStrokes(strokes)
-                
+
                 selectionStartX = null
                 selectionStartY = null
                 cursorView?.hideSelectionRect()
             }
-            
+
             lassoPath.reset()
             isSelecting = false
-            
+
             // Show Actions for the new selection
             view.post {
                 if (view is com.alexdremov.notate.ui.OnyxCanvasView) {
@@ -492,6 +493,9 @@ class PenInputHandler(
 
                     stroke?.let { s ->
                         controller.commitEraser(s, effectiveEraserType)
+                        if (effectiveEraserType == EraserType.LASSO) {
+                            refreshHandler.post(refreshRunnable)
+                        }
                     }
                 } else {
                     // Ink Stroke (Potential Scribble or Shape)

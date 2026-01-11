@@ -24,7 +24,7 @@ class SelectionManager {
         _selectedStrokes.add(stroke)
         recomputeBounds()
     }
-    
+
     fun selectAll(strokes: List<Stroke>) {
         _selectedStrokes.addAll(strokes)
         recomputeBounds()
@@ -58,7 +58,7 @@ class SelectionManager {
             selectionBounds.union(iter.next().bounds)
         }
     }
-    
+
     /**
      * Returns the bounding box of the selection with the current transform applied.
      * Note: This is an AABB (Axis Aligned Bounding Box) of the transformed shape.
@@ -68,23 +68,28 @@ class SelectionManager {
         transformMatrix.mapRect(r)
         return r
     }
-    
+
     /**
-     * Returns the 4 corners of the selection box in World coordinates, 
+     * Returns the 4 corners of the selection box in World coordinates,
      * with the current transform applied.
      * Order: Top-Left, Top-Right, Bottom-Right, Bottom-Left.
      */
     fun getTransformedCorners(): FloatArray {
-        val pts = floatArrayOf(
-            selectionBounds.left, selectionBounds.top,     // TL
-            selectionBounds.right, selectionBounds.top,    // TR
-            selectionBounds.right, selectionBounds.bottom, // BR
-            selectionBounds.left, selectionBounds.bottom   // BL
-        )
+        val pts =
+            floatArrayOf(
+                selectionBounds.left,
+                selectionBounds.top, // TL
+                selectionBounds.right,
+                selectionBounds.top, // TR
+                selectionBounds.right,
+                selectionBounds.bottom, // BR
+                selectionBounds.left,
+                selectionBounds.bottom, // BL
+            )
         transformMatrix.mapPoints(pts)
         return pts
     }
-    
+
     /**
      * Returns the center of the selection in World coordinates,
      * with the current transform applied.
@@ -94,11 +99,14 @@ class SelectionManager {
         transformMatrix.mapPoints(pts)
         return pts
     }
-    
-    fun translate(dx: Float, dy: Float) {
+
+    fun translate(
+        dx: Float,
+        dy: Float,
+    ) {
         transformMatrix.postTranslate(dx, dy)
     }
-    
+
     fun applyTransform(matrix: Matrix) {
         transformMatrix.postConcat(matrix)
     }

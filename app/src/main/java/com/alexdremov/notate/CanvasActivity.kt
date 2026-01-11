@@ -115,7 +115,7 @@ class CanvasActivity : AppCompatActivity() {
             renderToolbar(viewModel.tools.value, viewModel.activeToolId.value)
         }
         toolbarCoordinator.setup()
-        
+
         // Ensure clicking/tapping anywhere on the toolbar clears selection
         binding.toolbarContainer.setOnTouchListener { _, event ->
             if (event.action == android.view.MotionEvent.ACTION_DOWN) {
@@ -366,7 +366,10 @@ class CanvasActivity : AppCompatActivity() {
                                     else -> R.drawable.stylus_fountain_pen_24
                                 }
                             }
-                            ToolType.SELECT -> R.drawable.ic_crop_square // Placeholder or existing icon
+
+                            ToolType.SELECT -> {
+                                R.drawable.ic_tool_select
+                            } // Placeholder or existing icon
                         }
                     setImageResource(iconRes)
                     imageTintList = ColorStateList.valueOf(Color.BLACK)
@@ -408,10 +411,10 @@ class CanvasActivity : AppCompatActivity() {
                     setImageResource(R.drawable.ic_add)
                     background = null
                     imageTintList = ColorStateList.valueOf(Color.GRAY)
-                    setOnClickListener { 
+                    setOnClickListener {
                         binding.canvasView.getController().clearSelection()
                         binding.canvasView.dismissActionPopup()
-                        viewModel.addPen() 
+                        viewModel.addPen()
                     }
                 }
             binding.toolbarContainer.addView(addBtn)
@@ -426,10 +429,10 @@ class CanvasActivity : AppCompatActivity() {
                 setImageResource(R.drawable.ic_undo)
                 background = null
                 imageTintList = ColorStateList.valueOf(Color.BLACK)
-                setOnClickListener { 
+                setOnClickListener {
                     binding.canvasView.getController().clearSelection()
                     binding.canvasView.dismissActionPopup()
-                    binding.canvasView.undo() 
+                    binding.canvasView.undo()
                 }
             }
         binding.toolbarContainer.addView(undoBtn)
@@ -441,10 +444,10 @@ class CanvasActivity : AppCompatActivity() {
                 setImageResource(R.drawable.ic_redo)
                 background = null
                 imageTintList = ColorStateList.valueOf(Color.BLACK)
-                setOnClickListener { 
+                setOnClickListener {
                     binding.canvasView.getController().clearSelection()
                     binding.canvasView.dismissActionPopup()
-                    binding.canvasView.redo() 
+                    binding.canvasView.redo()
                 }
             }
         binding.toolbarContainer.addView(redoBtn)

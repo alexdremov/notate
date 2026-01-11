@@ -193,7 +193,11 @@ class Quadtree(
         }
     }
 
-    fun hitTest(x: Float, y: Float, tolerance: Float): Stroke? {
+    fun hitTest(
+        x: Float,
+        y: Float,
+        tolerance: Float,
+    ): Stroke? {
         val searchRect = RectF(x - tolerance, y - tolerance, x + tolerance, y + tolerance)
         val potentialStrokes = ArrayList<Stroke>()
         retrieve(potentialStrokes, searchRect)
@@ -205,7 +209,7 @@ class Quadtree(
             val dist = StrokeGeometry.distPointToStroke(x, y, stroke)
             // effective tolerance considers stroke width + touch fuzziness
             val effectiveTolerance = tolerance + (stroke.width / 2f)
-            
+
             if (dist <= effectiveTolerance && dist < minDistance) {
                 minDistance = dist
                 closestStroke = stroke

@@ -6,10 +6,9 @@ import android.graphics.Color
 import android.graphics.DashPathEffect
 import android.graphics.Paint
 import android.graphics.Path
+import android.graphics.RectF
 import android.util.AttributeSet
 import android.view.View
-
-import android.graphics.RectF
 
 class CursorView
     @JvmOverloads
@@ -24,34 +23,41 @@ class CursorView
         private var isCursorVisible = false
         private var isLassoMode = false
         private val lassoPath = Path()
-        
+
         private var shapePath: Path? = null
         private var selectionRect: RectF? = null
 
-        private val cursorPaint = Paint().apply {
-            style = Paint.Style.STROKE
-            color = Color.BLACK
-            strokeWidth = 2f
-            isAntiAlias = true
-        }
+        private val cursorPaint =
+            Paint().apply {
+                style = Paint.Style.STROKE
+                color = Color.BLACK
+                strokeWidth = 2f
+                isAntiAlias = true
+            }
 
-        private val shapePaint = Paint().apply {
-            style = Paint.Style.STROKE
-            color = Color.BLACK
-            strokeWidth = 3f
-            pathEffect = DashPathEffect(floatArrayOf(10f, 10f), 0f)
-            isAntiAlias = true
-        }
-        
-        private val selectionPaint = Paint().apply {
-            style = Paint.Style.STROKE
-            color = Color.BLACK
-            strokeWidth = 2f
-            pathEffect = DashPathEffect(floatArrayOf(10f, 10f), 0f)
-            isAntiAlias = true
-        }
+        private val shapePaint =
+            Paint().apply {
+                style = Paint.Style.STROKE
+                color = Color.BLACK
+                strokeWidth = 3f
+                pathEffect = DashPathEffect(floatArrayOf(10f, 10f), 0f)
+                isAntiAlias = true
+            }
 
-        fun update(x: Float, y: Float, radius: Float) {
+        private val selectionPaint =
+            Paint().apply {
+                style = Paint.Style.STROKE
+                color = Color.BLACK
+                strokeWidth = 2f
+                pathEffect = DashPathEffect(floatArrayOf(10f, 10f), 0f)
+                isAntiAlias = true
+            }
+
+        fun update(
+            x: Float,
+            y: Float,
+            radius: Float,
+        ) {
             cursorX = x
             cursorY = y
             cursorRadius = radius
@@ -59,7 +65,7 @@ class CursorView
             isCursorVisible = true
             postInvalidate()
         }
-        
+
         fun updateLassoPath(path: Path) {
             lassoPath.set(path)
             isLassoMode = true
@@ -72,7 +78,7 @@ class CursorView
             isCursorVisible = true
             postInvalidate()
         }
-        
+
         fun showSelectionRect(rect: RectF) {
             selectionRect = rect
             isCursorVisible = true
@@ -84,7 +90,7 @@ class CursorView
             if (cursorRadius <= 0 && selectionRect == null && !isLassoMode) isCursorVisible = false
             postInvalidate()
         }
-        
+
         fun hideSelectionRect() {
             selectionRect = null
             if (cursorRadius <= 0 && shapePath == null && !isLassoMode) isCursorVisible = false
@@ -106,7 +112,7 @@ class CursorView
             shapePath?.let {
                 canvas.drawPath(it, shapePaint)
             }
-            
+
             selectionRect?.let {
                 canvas.drawRect(it, selectionPaint)
             }

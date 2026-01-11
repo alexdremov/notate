@@ -19,37 +19,41 @@ class ViewportInteractor(
     private val invalidateCallback: () -> Unit,
     private val onScaleChanged: () -> Unit,
     private val onInteractionStart: () -> Unit,
-    private val onInteractionEnd: () -> Unit
+    private val onInteractionEnd: () -> Unit,
 ) {
     // State
     private var currentScale = 1.0f
     private var isPanning = false
     private var isInteracting = false
     private var hasPerformedScale = false
-    
+
     private var lastTouchX = 0f
     private var lastTouchY = 0f
-    
+
     // Config
     private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop
-    
-    // Scale Detector
-    private val scaleDetector = ScaleGestureDetector(context, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
-        override fun onScaleBegin(detector: ScaleGestureDetector): Boolean {
-            hasPerformedScale = true
-            return super.onScaleBegin(detector)
-        }
 
-        override fun onScale(detector: ScaleGestureDetector): Boolean {
-            handleScale(detector)
-            return true
-        }
-    })
+    // Scale Detector
+    private val scaleDetector =
+        ScaleGestureDetector(
+            context,
+            object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
+                override fun onScaleBegin(detector: ScaleGestureDetector): Boolean {
+                    hasPerformedScale = true
+                    return super.onScaleBegin(detector)
+                }
+
+                override fun onScale(detector: ScaleGestureDetector): Boolean {
+                    handleScale(detector)
+                    return true
+                }
+            },
+        )
 
     fun onTouchEvent(event: MotionEvent): Boolean {
         // Pass to ScaleDetector
         scaleDetector.onTouchEvent(event)
-        
+
         // Handle Panning
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
@@ -60,38 +64,38 @@ class ViewportInteractor(
                 isInteracting = true
                 hasPerformedScale = false
             }
-            
+
             MotionEvent.ACTION_POINTER_DOWN -> {
                 // Update focus point to avoid jump
                 updateFocusPoint(event)
             }
-            
+
             MotionEvent.ACTION_POINTER_UP -> {
                 // Update focus point to avoid jump
                 updateFocusPoint(event)
             }
-            
+
             MotionEvent.ACTION_MOVE -> {
                 val focusX = getFocusX(event)
                 val focusY = getFocusY(event)
-                
+
                 if (!isInteracting) {
                     // Safety: if we missed DOWN (e.g. intercepted), re-init
                     lastTouchX = focusX
                     lastTouchY = focusY
                     isInteracting = true
                 }
-                
+
                 val dx = focusX - lastTouchX
                 val dy = focusY - lastTouchY
-                
+
                 if (!isPanning) {
                     if (hypot(dx, dy) > touchSlop) {
                         isPanning = true
                         startInteraction()
                     }
                 }
-                
+
                 if (isPanning) {
                     matrix.postTranslate(dx, dy)
                     invalidateCallback()
@@ -99,7 +103,7 @@ class ViewportInteractor(
                     lastTouchY = focusY
                 }
             }
-            
+
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                 if (isPanning || isInteracting) {
                     endInteraction()
@@ -108,10 +112,10 @@ class ViewportInteractor(
                 isInteracting = false
             }
         }
-        
+
         return isPanning || isInteracting
     }
-    
+
     private fun handleScale(detector: ScaleGestureDetector) {
         var scaleFactor = detector.scaleFactor
         val newScale = currentScale * scaleFactor
@@ -131,55 +135,55 @@ class ViewportInteractor(
         invalidateCallback()
         onScaleChanged()
     }
-    
+
     private fun updateFocusPoint(event: MotionEvent) {
         lastTouchX = getFocusX(event)
         lastTouchY = getFocusY(event)
     }
-    
+
     private fun getFocusX(event: MotionEvent): Float {
         var sum = 0f
         val count = event.pointerCount
-        val skip = if(event.actionMasked == MotionEvent.ACTION_POINTER_UP) event.actionIndex else -1
+        val skip = if (event.actionMasked == MotionEvent.ACTION_POINTER_UP) event.actionIndex else -1
         var div = 0
-        for(i in 0 until count) {
-            if(i == skip) continue
+        for (i in 0 until count) {
+            if (i == skip) continue
             sum += event.getX(i)
             div++
         }
-        return if(div > 0) sum/div else event.x
+        return if (div > 0) sum / div else event.x
     }
-    
+
     private fun getFocusY(event: MotionEvent): Float {
         var sum = 0f
         val count = event.pointerCount
-        val skip = if(event.actionMasked == MotionEvent.ACTION_POINTER_UP) event.actionIndex else -1
+        val skip = if (event.actionMasked == MotionEvent.ACTION_POINTER_UP) event.actionIndex else -1
         var div = 0
-        for(i in 0 until count) {
-            if(i == skip) continue
+        for (i in 0 until count) {
+            if (i == skip) continue
             sum += event.getY(i)
             div++
         }
-        return if(div > 0) sum/div else event.y
+        return if (div > 0) sum / div else event.y
     }
-    
+
     private fun startInteraction() {
         onInteractionStart()
         EpdFastModeController.enterFastMode()
     }
-    
+
     private fun endInteraction() {
         onInteractionEnd()
         EpdFastModeController.exitFastMode()
     }
-    
+
     fun getCurrentScale() = currentScale
-    
+
     fun setScale(scale: Float) {
         currentScale = scale
     }
-    
+
     fun isInteracting() = isPanning || isInteracting
-    
+
     fun isBusy() = isPanning || hasPerformedScale
 }

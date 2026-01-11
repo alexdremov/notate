@@ -19,8 +19,9 @@ class DwellDetector(
     private val onDwellDetected: (List<TouchPoint>) -> Unit,
 ) {
     private val handler = Handler(Looper.getMainLooper())
+
     // Increased threshold to account for hand jitter (especially for fingers)
-    private val distanceThreshold = 20f 
+    private val distanceThreshold = 20f
 
     private var lastDwellPoint: TouchPoint? = null
     private var lastDwellIndex: Int = -1
