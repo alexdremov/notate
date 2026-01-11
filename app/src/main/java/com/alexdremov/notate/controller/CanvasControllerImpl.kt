@@ -15,6 +15,11 @@ class CanvasControllerImpl(
     private val uiHandler = Handler(Looper.getMainLooper())
     private var viewportController: com.alexdremov.notate.controller.ViewportController? = null
     private val selectionManager = SelectionManager()
+    private var onContentChangedListener: (() -> Unit)? = null
+
+    override fun setOnContentChangedListener(listener: () -> Unit) {
+        this.onContentChangedListener = listener
+    }
 
     override fun setViewportController(controller: com.alexdremov.notate.controller.ViewportController) {
         this.viewportController = controller
@@ -26,7 +31,12 @@ class CanvasControllerImpl(
 
     override fun commitStroke(stroke: Stroke) {
         val added = model.addStroke(stroke)
-        if (added != null) runOnUi { renderer.updateTilesWithStroke(added) }
+        if (added != null) {
+            runOnUi {
+                renderer.updateTilesWithStroke(added)
+                onContentChangedListener?.invoke()
+            }
+        }
     }
 
     override fun previewEraser(
@@ -54,6 +64,7 @@ class CanvasControllerImpl(
             } else if (type == EraserType.STANDARD) {
                 renderer.refreshTiles(stroke.bounds)
             }
+            onContentChangedListener?.invoke()
         }
     }
 
@@ -139,6 +150,7 @@ class CanvasControllerImpl(
             val toRemove = selectionManager.selectedStrokes.toList()
             selectionManager.clearSelection()
             deleteStrokesFromModel(toRemove)
+            runOnUi { onContentChangedListener?.invoke() }
         }
     }
 
@@ -194,6 +206,7 @@ class CanvasControllerImpl(
                 commitStroke(s.copy(path = newPath, points = newPoints, bounds = newBounds, strokeOrder = 0))
             }
             endBatchSession()
+            runOnUi { onContentChangedListener?.invoke() }
         }
     }
 
@@ -268,7 +281,10 @@ class CanvasControllerImpl(
         selectionManager.selectAll(newSelected)
         selectionManager.transformMatrix.reset()
 
-        runOnUi { renderer.invalidate() }
+        runOnUi {
+            renderer.invalidate()
+            onContentChangedListener?.invoke()
+        }
     }
 
     private fun runOnUi(block: () -> Unit) {

@@ -133,6 +133,11 @@ class OnyxCanvasView
                 )
 
             setupGestureDetectors()
+
+            canvasController.setOnContentChangedListener {
+                minimapDrawer.setDirty()
+                onContentChanged?.invoke()
+            }
         }
 
         private fun setupGestureDetectors() {

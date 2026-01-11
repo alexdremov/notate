@@ -113,6 +113,8 @@ interface CanvasController {
     fun commitMoveSelection()
 
     fun getSelectionManager(): SelectionManager
+
+    fun setOnContentChangedListener(listener: () -> Unit)
 }
 
 interface ViewportController {
