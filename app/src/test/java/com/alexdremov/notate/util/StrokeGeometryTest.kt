@@ -14,8 +14,10 @@ import org.robolectric.annotation.Config
 @RunWith(AndroidJUnit4::class)
 @Config(manifest = Config.NONE, sdk = [33])
 class StrokeGeometryTest {
-
-    private fun createStroke(points: List<TouchPoint>, width: Float = 10f): Stroke {
+    private fun createStroke(
+        points: List<TouchPoint>,
+        width: Float = 10f,
+    ): Stroke {
         val path = Path()
         if (points.isNotEmpty()) {
             path.moveTo(points[0].x, points[0].y)
@@ -33,69 +35,83 @@ class StrokeGeometryTest {
             color = -16777216,
             width = width,
             style = StrokeType.PENCIL,
-            bounds = bounds
+            bounds = bounds,
         )
     }
-    
+
     @Test
     fun `test distPointToStroke`() {
-        val points = listOf(
-            TouchPoint(0f, 0f, 1f, 1f, 0L),
-            TouchPoint(100f, 0f, 1f, 1f, 0L)
-        )
+        val points =
+            listOf(
+                TouchPoint(0f, 0f, 1f, 1f, 0L),
+                TouchPoint(100f, 0f, 1f, 1f, 0L),
+            )
         val stroke = createStroke(points)
-        
+
         // Point exactly on line
         assertEquals(0f, StrokeGeometry.distPointToStroke(50f, 0f, stroke), 0.1f)
-        
+
         // Point 10 units away
         assertEquals(10f, StrokeGeometry.distPointToStroke(50f, 10f, stroke), 0.1f)
-        
+
         // Point beyond end
         assertEquals(10f, StrokeGeometry.distPointToStroke(110f, 0f, stroke), 0.1f)
     }
-    
+
     @Test
     fun `test intersection basic crossing`() {
         // Horizontal line
-        val s1 = createStroke(listOf(
-            TouchPoint(0f, 50f, 1f, 1f, 0L),
-            TouchPoint(100f, 50f, 1f, 1f, 0L)
-        ))
-        
+        val s1 =
+            createStroke(
+                listOf(
+                    TouchPoint(0f, 50f, 1f, 1f, 0L),
+                    TouchPoint(100f, 50f, 1f, 1f, 0L),
+                ),
+            )
+
         // Vertical line crossing it
-        val s2 = createStroke(listOf(
-            TouchPoint(50f, 0f, 1f, 1f, 0L),
-            TouchPoint(50f, 100f, 1f, 1f, 0L)
-        ))
-        
+        val s2 =
+            createStroke(
+                listOf(
+                    TouchPoint(50f, 0f, 1f, 1f, 0L),
+                    TouchPoint(50f, 100f, 1f, 1f, 0L),
+                ),
+            )
+
         assertTrue(StrokeGeometry.strokeIntersects(s1, s2))
     }
-    
+
     @Test
     fun `test intersection no overlap`() {
-         val s1 = createStroke(listOf(
-            TouchPoint(0f, 0f, 1f, 1f, 0L),
-            TouchPoint(10f, 0f, 1f, 1f, 0L)
-        ))
-        
-        val s2 = createStroke(listOf(
-            TouchPoint(0f, 100f, 1f, 1f, 0L),
-            TouchPoint(10f, 100f, 1f, 1f, 0L)
-        ))
-        
+        val s1 =
+            createStroke(
+                listOf(
+                    TouchPoint(0f, 0f, 1f, 1f, 0L),
+                    TouchPoint(10f, 0f, 1f, 1f, 0L),
+                ),
+            )
+
+        val s2 =
+            createStroke(
+                listOf(
+                    TouchPoint(0f, 100f, 1f, 1f, 0L),
+                    TouchPoint(10f, 100f, 1f, 1f, 0L),
+                ),
+            )
+
         assertFalse(StrokeGeometry.strokeIntersects(s1, s2))
     }
-    
+
     @Test
     fun `test isPointInPolygon`() {
-        val polygon = listOf(
-            TouchPoint(0f, 0f, 0f, 0f, 0L),
-            TouchPoint(100f, 0f, 0f, 0f, 0L),
-            TouchPoint(100f, 100f, 0f, 0f, 0L),
-            TouchPoint(0f, 100f, 0f, 0f, 0L)
-        )
-        
+        val polygon =
+            listOf(
+                TouchPoint(0f, 0f, 0f, 0f, 0L),
+                TouchPoint(100f, 0f, 0f, 0f, 0L),
+                TouchPoint(100f, 100f, 0f, 0f, 0L),
+                TouchPoint(0f, 100f, 0f, 0f, 0L),
+            )
+
         assertTrue(StrokeGeometry.isPointInPolygon(50f, 50f, polygon))
         assertFalse(StrokeGeometry.isPointInPolygon(150f, 50f, polygon))
     }

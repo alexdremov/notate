@@ -9,18 +9,15 @@ import android.graphics.RectF
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.alexdremov.notate.model.Stroke
 import com.alexdremov.notate.model.StrokeType
+import com.alexdremov.notate.testutil.SnapshotVerifier
 import com.alexdremov.notate.util.StrokeRenderer
 import com.onyx.android.sdk.api.device.epd.EpdController
 import com.onyx.android.sdk.data.note.TouchPoint
-import io.mockk.every
-import io.mockk.mockkStatic
-import io.mockk.unmockkStatic
-import com.alexdremov.notate.testutil.SnapshotVerifier
 import com.onyx.android.sdk.pen.NeoBrushPenWrapper
 import io.mockk.every
 import io.mockk.mockkStatic
-import io.mockk.unmockkStatic
 import io.mockk.slot
+import io.mockk.unmockkStatic
 import org.junit.After
 import org.junit.Assert.*
 import org.junit.Before
@@ -34,22 +31,21 @@ import kotlin.math.sin
 @Config(manifest = Config.NONE, sdk = [33])
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 class RenderingSnapshotTest {
-
     @Before
     fun setup() {
         mockkStatic(EpdController::class)
         every { EpdController.getMaxTouchPressure() } returns 4096f
-        
+
         mockkStatic(NeoBrushPenWrapper::class)
         // Mock native brush drawing to just draw a simple path (simulation)
         // signature: drawStroke(Canvas, Paint, List<TouchPoint>, float, float, boolean)
-        every { 
-            NeoBrushPenWrapper.drawStroke(any(), any(), any(), any(), any(), any()) 
+        every {
+            NeoBrushPenWrapper.drawStroke(any(), any(), any(), any(), any(), any())
         } answers {
             val canvas = arg<Canvas>(0)
             val paint = arg<Paint>(1)
             val points = arg<List<TouchPoint>>(2)
-            
+
             // Simulate native drawing by just drawing lines
             if (points.isNotEmpty()) {
                 val path = Path()
@@ -61,14 +57,19 @@ class RenderingSnapshotTest {
             }
         }
     }
-    
+
     @After
     fun teardown() {
         unmockkStatic(EpdController::class)
         unmockkStatic(NeoBrushPenWrapper::class)
     }
 
-    private fun createStroke(points: List<TouchPoint>, type: StrokeType, width: Float = 10f, color: Int = Color.BLACK): Stroke {
+    private fun createStroke(
+        points: List<TouchPoint>,
+        type: StrokeType,
+        width: Float = 10f,
+        color: Int = Color.BLACK,
+    ): Stroke {
         val path = Path()
         if (points.isNotEmpty()) {
             path.moveTo(points[0].x, points[0].y)
@@ -86,7 +87,7 @@ class RenderingSnapshotTest {
             color = color,
             width = width,
             style = type,
-            bounds = bounds
+            bounds = bounds,
         )
     }
 
@@ -101,15 +102,15 @@ class RenderingSnapshotTest {
         for (i in 0..segments) {
             val t = i / segments.toFloat() // 0.0 to 1.0
             val x = startX + (endX - startX) * t
-            val y = centerY + amplitude * sin(t * Math.PI * 4).toFloat() 
+            val y = centerY + amplitude * sin(t * Math.PI * 4).toFloat()
 
             // Varying Pressure
             val pressure = (sin(t * Math.PI) * 4096).toFloat().coerceIn(100f, 4096f)
-            
+
             // Varying Tilt (Int)
             val tiltX = (t * 90).toInt() // 0 to 90 degrees
             val tiltY = 0
-            
+
             val size = 10f + t * 20f
 
             points.add(TouchPoint(x, y, pressure, size, tiltX, tiltY, i * 10L))
@@ -117,7 +118,12 @@ class RenderingSnapshotTest {
         return points
     }
 
-    private fun verifySnapshot(type: StrokeType, name: String, color: Int = Color.BLACK, width: Float = 10f) {
+    private fun verifySnapshot(
+        type: StrokeType,
+        name: String,
+        color: Int = Color.BLACK,
+        width: Float = 10f,
+    ) {
         val widthPx = 500
         val heightPx = 300
         val bitmap = Bitmap.createBitmap(widthPx, heightPx, Bitmap.Config.ARGB_8888)
@@ -127,9 +133,9 @@ class RenderingSnapshotTest {
 
         val points = createSineWavePoints()
         val stroke = createStroke(points, type, width, color)
-        
+
         StrokeRenderer.drawStroke(canvas, paint, stroke)
-        
+
         SnapshotVerifier.verify(bitmap, name)
     }
 
@@ -181,10 +187,11 @@ class RenderingSnapshotTest {
         StrokeRenderer.drawStroke(canvas, paint, stroke)
 
         // 4. Render a second overlapping HIGHLIGHTER stroke
-        val highlighterPoints = listOf(
-            TouchPoint(50f, 150f, 2000f, 20f, 0, 0, 0L),
-            TouchPoint(450f, 150f, 2000f, 20f, 0, 0, 0L)
-        )
+        val highlighterPoints =
+            listOf(
+                TouchPoint(50f, 150f, 2000f, 20f, 0, 0, 0L),
+                TouchPoint(450f, 150f, 2000f, 20f, 0, 0, 0L),
+            )
         val hlStroke = createStroke(highlighterPoints, StrokeType.HIGHLIGHTER, width = 30f, color = Color.YELLOW)
         StrokeRenderer.drawStroke(canvas, paint, hlStroke)
 

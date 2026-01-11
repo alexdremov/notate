@@ -113,12 +113,13 @@ class FixedPageLayout(
                 // Draw Pattern inside the page (now clipped)
                 // Apply padding and alignment logic
                 val style = model.backgroundStyle
-                val patternArea = RectF(
-                    pageRect.left + style.paddingLeft,
-                    pageRect.top + style.paddingTop,
-                    pageRect.right - style.paddingRight,
-                    pageRect.bottom - style.paddingBottom
-                )
+                val patternArea =
+                    RectF(
+                        pageRect.left + style.paddingLeft,
+                        pageRect.top + style.paddingTop,
+                        pageRect.right - style.paddingRight,
+                        pageRect.bottom - style.paddingBottom,
+                    )
 
                 // We intersect the pattern area with visible rect to avoid drawing pattern outside viewport
                 val bgIntersection = RectF(patternArea)
@@ -128,12 +129,13 @@ class FixedPageLayout(
                     val offsetY = patternArea.top // Pattern starts after top padding
 
                     if (style.isCentered) {
-                        val spacing = when (style) {
-                            is BackgroundStyle.Dots -> style.spacing
-                            is BackgroundStyle.Lines -> style.spacing
-                            is BackgroundStyle.Grid -> style.spacing
-                            else -> 0f
-                        }
+                        val spacing =
+                            when (style) {
+                                is BackgroundStyle.Dots -> style.spacing
+                                is BackgroundStyle.Lines -> style.spacing
+                                is BackgroundStyle.Grid -> style.spacing
+                                else -> 0f
+                            }
                         if (spacing > 0) {
                             // Center the pattern horizontally within the patternArea
                             val availableWidth = patternArea.width()

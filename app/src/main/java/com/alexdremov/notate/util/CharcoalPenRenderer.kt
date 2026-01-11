@@ -100,11 +100,12 @@ object CharcoalPenRenderer {
         val points = stroke.points
         if (points.size < 2) return null
 
-        // Use a deterministic seed based on stroke geometry to ensure 
+        // Use a deterministic seed based on stroke geometry to ensure
         // consistent rendering across sessions (and snapshot tests).
-        val seed = points.fold(0L) { acc, p -> 
-            acc * 31 + p.timestamp + p.x.toBits() + p.y.toBits()
-        }
+        val seed =
+            points.fold(0L) { acc, p ->
+                acc * 31 + p.timestamp + p.x.toBits() + p.y.toBits()
+            }
         val random = Random(seed)
 
         val size = points.size
