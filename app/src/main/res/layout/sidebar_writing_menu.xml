@@ -97,7 +97,7 @@
 
     </LinearLayout>
 
-    <!-- Axis Locking -->
+    <!-- Axis Snapping -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
@@ -114,7 +114,7 @@
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="Axis Locking"
+                android:text="Axis Snapping"
                 android:textSize="16sp"
                 android:textColor="#000000" />
 

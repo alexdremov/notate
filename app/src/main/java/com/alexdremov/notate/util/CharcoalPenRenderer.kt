@@ -100,6 +100,13 @@ object CharcoalPenRenderer {
         val points = stroke.points
         if (points.size < 2) return null
 
+        // Use a deterministic seed based on stroke geometry to ensure 
+        // consistent rendering across sessions (and snapshot tests).
+        val seed = points.fold(0L) { acc, p -> 
+            acc * 31 + p.timestamp + p.x.toBits() + p.y.toBits()
+        }
+        val random = Random(seed)
+
         val size = points.size
         val vertexCount = size * 2
         val verts = FloatArray(vertexCount * 2)
@@ -136,7 +143,7 @@ object CharcoalPenRenderer {
             val widthFactor = 1.0 + (tiltFraction * tiltExpansion)
             val halfWidth = (baseWidth * widthFactor) / 2.0
 
-            val jitter = (Random.nextFloat() - 0.5f) * (halfWidth * 0.3)
+            val jitter = (random.nextFloat() - 0.5f) * (halfWidth * 0.3)
             val w = halfWidth + jitter
 
             val vIndex = i * 4
@@ -167,7 +174,7 @@ object CharcoalPenRenderer {
                 val tiltMag2 = hypot(p2.tiltX.toDouble(), p2.tiltY.toDouble()).coerceAtMost(90.0)
                 val widthFactor2 = 1.0 + ((tiltMag2 / 90.0) * tiltExpansion)
                 val halfWidth2 = (baseWidth * widthFactor2) / 2.0
-                val jitter2 = (Random.nextFloat() - 0.5f) * (halfWidth2 * 0.3)
+                val jitter2 = (random.nextFloat() - 0.5f) * (halfWidth2 * 0.3)
                 val w2 = halfWidth2 + jitter2
 
                 verts[vLastIndex] = (p2.x + nx * w2).toFloat()
