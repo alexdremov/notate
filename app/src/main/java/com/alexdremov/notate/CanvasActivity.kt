@@ -131,6 +131,7 @@ class CanvasActivity : AppCompatActivity() {
                 this,
                 binding.settingsSidebarContainer,
                 getCurrentStyle = { binding.canvasView.getBackgroundStyle() },
+                isFixedPageMode = { binding.canvasView.getModel().canvasType == com.alexdremov.notate.data.CanvasType.FIXED_PAGES },
                 onStyleUpdate = { newStyle -> binding.canvasView.setBackgroundStyle(newStyle) },
                 onExportRequest = { action ->
                     when (action) {

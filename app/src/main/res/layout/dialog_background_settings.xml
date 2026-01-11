@@ -89,4 +89,127 @@
             android:progress="10" />
     </LinearLayout>
 
+    <!-- Color Selection -->
+    <LinearLayout
+        android:id="@+id/layout_color"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:paddingTop="16dp">
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Color" />
+
+        <HorizontalScrollView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:scrollbars="none">
+
+            <LinearLayout
+                android:id="@+id/container_colors"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:paddingTop="8dp" />
+        </HorizontalScrollView>
+    </LinearLayout>
+
+    <!-- Page Layout (Fixed Pages) -->
+    <LinearLayout
+        android:id="@+id/layout_page_settings"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:paddingTop="16dp">
+
+        <CheckBox
+            android:id="@+id/cb_center_align"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Center Pattern" />
+
+        <!-- Top Padding -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:paddingTop="8dp">
+
+            <TextView
+                android:id="@+id/tv_padding_top_label"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Top Padding: 0 mm" />
+
+            <SeekBar
+                android:id="@+id/seekbar_padding_top"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:max="100" />
+        </LinearLayout>
+
+        <!-- Bottom Padding -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:paddingTop="8dp">
+
+            <TextView
+                android:id="@+id/tv_padding_bottom_label"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Bottom Padding: 0 mm" />
+
+            <SeekBar
+                android:id="@+id/seekbar_padding_bottom"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:max="100" />
+        </LinearLayout>
+
+        <!-- Left Padding -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:paddingTop="8dp">
+
+            <TextView
+                android:id="@+id/tv_padding_left_label"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Left Padding: 0 mm" />
+
+            <SeekBar
+                android:id="@+id/seekbar_padding_left"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:max="100" />
+        </LinearLayout>
+
+        <!-- Right Padding -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:paddingTop="8dp">
+
+            <TextView
+                android:id="@+id/tv_padding_right_label"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Right Padding: 0 mm" />
+
+            <SeekBar
+                android:id="@+id/seekbar_padding_right"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:max="100" />
+        </LinearLayout>
+
+    </LinearLayout>
+
 </LinearLayout>

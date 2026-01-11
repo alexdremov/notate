@@ -18,6 +18,7 @@ import kotlin.math.roundToInt
 class BackgroundSettingsPopup(
     private val context: Context,
     private val currentStyle: BackgroundStyle,
+    private val isFixedPageMode: Boolean,
     private val onUpdate: (BackgroundStyle) -> Unit,
     private val onDismiss: () -> Unit,
 ) : PopupWindow(context) {
@@ -34,10 +35,32 @@ class BackgroundSettingsPopup(
     private val tvSizeLabel: TextView = view.findViewById(R.id.tv_size_label)
     private val seekbarSize: SeekBar = view.findViewById(R.id.seekbar_size)
 
+    // Color
+    private val layoutColor: View = view.findViewById(R.id.layout_color)
+    private val containerColors: android.widget.LinearLayout = view.findViewById(R.id.container_colors)
+
+    // Page Layout
+    private val layoutPageSettings: View = view.findViewById(R.id.layout_page_settings)
+    private val cbCenterAlign: android.widget.CheckBox = view.findViewById(R.id.cb_center_align)
+    private val tvPaddingTopLabel: TextView = view.findViewById(R.id.tv_padding_top_label)
+    private val seekbarPaddingTop: SeekBar = view.findViewById(R.id.seekbar_padding_top)
+    private val tvPaddingBottomLabel: TextView = view.findViewById(R.id.tv_padding_bottom_label)
+    private val seekbarPaddingBottom: SeekBar = view.findViewById(R.id.seekbar_padding_bottom)
+    private val tvPaddingLeftLabel: TextView = view.findViewById(R.id.tv_padding_left_label)
+    private val seekbarPaddingLeft: SeekBar = view.findViewById(R.id.seekbar_padding_left)
+    private val tvPaddingRightLabel: TextView = view.findViewById(R.id.tv_padding_right_label)
+    private val seekbarPaddingRight: SeekBar = view.findViewById(R.id.seekbar_padding_right)
+
     // Internal State (World Units / Pixels)
     private var spacingPx: Float = 50f
     private var radiusPx: Float = 2f
     private var thicknessPx: Float = 1f
+    private var selectedColor: Int = Color.LTGRAY
+    private var paddingTopPx: Float = 0f
+    private var paddingBottomPx: Float = 0f
+    private var paddingLeftPx: Float = 0f
+    private var paddingRightPx: Float = 0f
+    private var isCentered: Boolean = false
 
     // Constants for Ranges (in mm)
     private val MIN_SPACING_MM = 2f
@@ -49,6 +72,18 @@ class BackgroundSettingsPopup(
     private val MIN_THICKNESS_MM = 0.1f
     private val MAX_THICKNESS_MM = 1.0f
 
+    private val MAX_PADDING_MM = 50f
+
+    private val PRESET_COLORS = listOf(
+        Color.LTGRAY,
+        Color.GRAY,
+        Color.DKGRAY,
+        Color.BLACK,
+        Color.parseColor("#E1F5FE"), // Light Blue
+        Color.parseColor("#E8F5E9"), // Light Green
+        Color.parseColor("#FFF3E0")  // Light Orange
+    )
+
     init {
         contentView = view
         isFocusable = true
@@ -56,11 +91,19 @@ class BackgroundSettingsPopup(
         setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
         elevation = 16f
 
+        layoutPageSettings.visibility = if (isFixedPageMode) View.VISIBLE else View.GONE
+
         // Initialize state from current style
+        selectedColor = currentStyle.color
+        paddingTopPx = currentStyle.paddingTop
+        paddingBottomPx = currentStyle.paddingBottom
+        paddingLeftPx = currentStyle.paddingLeft
+        paddingRightPx = currentStyle.paddingRight
+        isCentered = currentStyle.isCentered
+
         when (currentStyle) {
             is BackgroundStyle.Blank -> {
                 rgPatternType.check(R.id.rb_blank)
-                // Use defaults for others if switching back
                 spacingPx = context.mmToPx(5f)
             }
 
@@ -84,6 +127,8 @@ class BackgroundSettingsPopup(
         }
 
         setupSeekBars()
+        setupColorPicker()
+        setupPageLayoutControls()
         updateUIState(rgPatternType.checkedRadioButtonId)
 
         rgPatternType.setOnCheckedChangeListener { _, checkedId ->
@@ -93,6 +138,128 @@ class BackgroundSettingsPopup(
 
         setOnDismissListener {
             onDismiss()
+        }
+    }
+
+    private fun setupPageLayoutControls() {
+        // Alignment
+        cbCenterAlign.isChecked = isCentered
+        cbCenterAlign.setOnCheckedChangeListener { _, isChecked ->
+            isCentered = isChecked
+            emitUpdate()
+        }
+
+        // Padding Top
+        seekbarPaddingTop.max = 100
+        seekbarPaddingTop.progress = mmToProgress(pxToMm(paddingTopPx), 0f, MAX_PADDING_MM)
+        seekbarPaddingTop.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                if (fromUser) {
+                    val mm = progressToMm(progress, 0f, MAX_PADDING_MM)
+                    paddingTopPx = context.mmToPx(mm)
+                    updateLabels()
+                    emitUpdate()
+                }
+            }
+            override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+            override fun onStopTrackingTouch(seekBar: SeekBar?) {}
+        })
+
+        // Padding Bottom
+        seekbarPaddingBottom.max = 100
+        seekbarPaddingBottom.progress = mmToProgress(pxToMm(paddingBottomPx), 0f, MAX_PADDING_MM)
+        seekbarPaddingBottom.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                if (fromUser) {
+                    val mm = progressToMm(progress, 0f, MAX_PADDING_MM)
+                    paddingBottomPx = context.mmToPx(mm)
+                    updateLabels()
+                    emitUpdate()
+                }
+            }
+            override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+            override fun onStopTrackingTouch(seekBar: SeekBar?) {}
+        })
+
+        // Padding Left
+        seekbarPaddingLeft.max = 100
+        seekbarPaddingLeft.progress = mmToProgress(pxToMm(paddingLeftPx), 0f, MAX_PADDING_MM)
+        seekbarPaddingLeft.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                if (fromUser) {
+                    val mm = progressToMm(progress, 0f, MAX_PADDING_MM)
+                    paddingLeftPx = context.mmToPx(mm)
+                    updateLabels()
+                    emitUpdate()
+                }
+            }
+            override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+            override fun onStopTrackingTouch(seekBar: SeekBar?) {}
+        })
+
+        // Padding Right
+        seekbarPaddingRight.max = 100
+        seekbarPaddingRight.progress = mmToProgress(pxToMm(paddingRightPx), 0f, MAX_PADDING_MM)
+        seekbarPaddingRight.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                if (fromUser) {
+                    val mm = progressToMm(progress, 0f, MAX_PADDING_MM)
+                    paddingRightPx = context.mmToPx(mm)
+                    updateLabels()
+                    emitUpdate()
+                }
+            }
+            override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+            override fun onStopTrackingTouch(seekBar: SeekBar?) {}
+        })
+    }
+
+    private fun setupColorPicker() {
+        containerColors.removeAllViews()
+        val size = context.resources.getDimensionPixelSize(R.dimen.palette_item_size_dp)
+        val margin = context.resources.getDimensionPixelSize(R.dimen.palette_item_margin_dp)
+
+        for (color in PRESET_COLORS) {
+            val frame = android.widget.FrameLayout(context)
+            val params = android.widget.LinearLayout.LayoutParams(size, size)
+            params.setMargins(margin, 0, margin, 0)
+            frame.layoutParams = params
+
+            val circle = View(context)
+            val circleSize = (size * 0.8f).toInt()
+            val circleParams = android.widget.FrameLayout.LayoutParams(circleSize, circleSize)
+            circleParams.gravity = android.view.Gravity.CENTER
+            circle.layoutParams = circleParams
+            
+            // Simple oval shape
+            val drawable = android.graphics.drawable.GradientDrawable()
+            drawable.shape = android.graphics.drawable.GradientDrawable.OVAL
+            drawable.setColor(color)
+            if (color == Color.WHITE || color == Color.parseColor("#FFF3E0") || color == Color.parseColor("#E8F5E9") || color == Color.parseColor("#E1F5FE")) {
+                drawable.setStroke(2, Color.LTGRAY)
+            }
+            circle.background = drawable
+            
+            // Selection indicator
+            if (color == selectedColor) {
+                 val ring = View(context)
+                 val ringParams = android.widget.FrameLayout.LayoutParams(size, size)
+                 ring.layoutParams = ringParams
+                 val ringDrawable = android.graphics.drawable.GradientDrawable()
+                 ringDrawable.shape = android.graphics.drawable.GradientDrawable.OVAL
+                 ringDrawable.setStroke(5, Color.BLACK)
+                 ringDrawable.setColor(Color.TRANSPARENT)
+                 ring.background = ringDrawable
+                 frame.addView(ring)
+            }
+
+            frame.addView(circle)
+            frame.setOnClickListener {
+                selectedColor = color
+                setupColorPicker() // Refresh UI
+                emitUpdate()
+            }
+            containerColors.addView(frame)
         }
     }
 
@@ -157,6 +324,8 @@ class BackgroundSettingsPopup(
 
         layoutSpacing.visibility = if (isBlank) View.GONE else View.VISIBLE
         layoutSize.visibility = if (isBlank) View.GONE else View.VISIBLE
+        layoutColor.visibility = if (isBlank) View.GONE else View.VISIBLE
+        layoutPageSettings.visibility = if (isBlank) View.GONE else View.VISIBLE
 
         if (isBlank) return
 
@@ -189,15 +358,53 @@ class BackgroundSettingsPopup(
             val thicknessMm = pxToMm(thicknessPx)
             tvSizeLabel.text = String.format("Thickness: %.1f mm", thicknessMm)
         }
+
+        tvPaddingTopLabel.text = String.format("Top Padding: %.0f mm", pxToMm(paddingTopPx))
+        tvPaddingBottomLabel.text = String.format("Bottom Padding: %.0f mm", pxToMm(paddingBottomPx))
+        tvPaddingLeftLabel.text = String.format("Left Padding: %.0f mm", pxToMm(paddingLeftPx))
+        tvPaddingRightLabel.text = String.format("Right Padding: %.0f mm", pxToMm(paddingRightPx))
     }
 
     private fun emitUpdate() {
         val newStyle =
             when (rgPatternType.checkedRadioButtonId) {
-                R.id.rb_dots -> BackgroundStyle.Dots(spacing = spacingPx, radius = radiusPx)
-                R.id.rb_lines -> BackgroundStyle.Lines(spacing = spacingPx, thickness = thicknessPx)
-                R.id.rb_grid -> BackgroundStyle.Grid(spacing = spacingPx, thickness = thicknessPx)
-                else -> BackgroundStyle.Blank()
+                R.id.rb_dots -> BackgroundStyle.Dots(
+                    color = selectedColor,
+                    spacing = spacingPx,
+                    radius = radiusPx,
+                    paddingTop = paddingTopPx,
+                    paddingBottom = paddingBottomPx,
+                    paddingLeft = paddingLeftPx,
+                    paddingRight = paddingRightPx,
+                    isCentered = isCentered
+                )
+                R.id.rb_lines -> BackgroundStyle.Lines(
+                    color = selectedColor,
+                    spacing = spacingPx,
+                    thickness = thicknessPx,
+                    paddingTop = paddingTopPx,
+                    paddingBottom = paddingBottomPx,
+                    paddingLeft = paddingLeftPx,
+                    paddingRight = paddingRightPx,
+                    isCentered = isCentered
+                )
+                R.id.rb_grid -> BackgroundStyle.Grid(
+                    color = selectedColor,
+                    spacing = spacingPx,
+                    thickness = thicknessPx,
+                    paddingTop = paddingTopPx,
+                    paddingBottom = paddingBottomPx,
+                    paddingLeft = paddingLeftPx,
+                    paddingRight = paddingRightPx,
+                    isCentered = isCentered
+                )
+                else -> BackgroundStyle.Blank(
+                    paddingTop = paddingTopPx,
+                    paddingBottom = paddingBottomPx,
+                    paddingLeft = paddingLeftPx,
+                    paddingRight = paddingRightPx,
+                    isCentered = isCentered
+                )
             }
         onUpdate(newStyle)
     }

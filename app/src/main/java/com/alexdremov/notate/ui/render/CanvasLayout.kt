@@ -6,6 +6,7 @@ import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.RectF
 import com.alexdremov.notate.config.CanvasConfig
+import com.alexdremov.notate.model.BackgroundStyle
 import com.alexdremov.notate.model.InfiniteCanvasModel
 import com.alexdremov.notate.util.TileManager
 import kotlin.math.floor
@@ -110,11 +111,39 @@ class FixedPageLayout(
                 canvas.clipRect(pageRect)
 
                 // Draw Pattern inside the page (now clipped)
-                // We intersect the page rect with visible rect to avoid drawing pattern outside viewport
-                val bgIntersection = RectF(pageRect)
+                // Apply padding and alignment logic
+                val style = model.backgroundStyle
+                val patternArea = RectF(
+                    pageRect.left + style.paddingLeft,
+                    pageRect.top + style.paddingTop,
+                    pageRect.right - style.paddingRight,
+                    pageRect.bottom - style.paddingBottom
+                )
+
+                // We intersect the pattern area with visible rect to avoid drawing pattern outside viewport
+                val bgIntersection = RectF(patternArea)
                 if (bgIntersection.intersect(visibleRect)) {
-                    // Pass offsets to align pattern to page origin
-                    BackgroundDrawer.draw(canvas, model.backgroundStyle, bgIntersection, zoomLevel, pageRect.left, pageRect.top)
+                    // Calculate offsets
+                    var offsetX = patternArea.left
+                    val offsetY = patternArea.top // Pattern starts after top padding
+
+                    if (style.isCentered) {
+                        val spacing = when (style) {
+                            is BackgroundStyle.Dots -> style.spacing
+                            is BackgroundStyle.Lines -> style.spacing
+                            is BackgroundStyle.Grid -> style.spacing
+                            else -> 0f
+                        }
+                        if (spacing > 0) {
+                            // Center the pattern horizontally within the patternArea
+                            val availableWidth = patternArea.width()
+                            val remainder = availableWidth % spacing
+                            offsetX += remainder / 2f
+                        }
+                    }
+
+                    // Pass offsets to align pattern to page origin (or padded origin)
+                    BackgroundDrawer.draw(canvas, style, bgIntersection, zoomLevel, offsetX, offsetY)
                 }
 
                 val intersection = RectF(pageRect)

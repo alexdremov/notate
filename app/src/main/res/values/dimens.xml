@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <dimen name="palette_item_size_dp">48dp</dimen>
+    <dimen name="palette_item_margin_dp">4dp</dimen>
+</resources>
