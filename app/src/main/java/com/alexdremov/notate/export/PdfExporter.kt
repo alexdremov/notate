@@ -145,7 +145,7 @@ object PdfExporter {
 
             // Draw Pattern
             val pageWorldRect = RectF(0f, topOffset, pageWidth, topOffset + pageHeight)
-            BackgroundDrawer.draw(canvas, bgStyle, pageWorldRect, 1.0f, 0f, topOffset) // Pass offset to align pattern
+            BackgroundDrawer.draw(canvas, bgStyle, pageWorldRect, 0f, topOffset, forceVector = isVector) // Pass offset to align pattern
 
             // Draw Strokes
             // Optimization: Filter strokes that intersect this page
@@ -200,7 +200,7 @@ object PdfExporter {
         canvas.translate(-bounds.left, -bounds.top)
 
         // Draw Background
-        BackgroundDrawer.draw(canvas, bgStyle, bounds, 1.0f)
+        BackgroundDrawer.draw(canvas, bgStyle, bounds, forceVector = isVector)
 
         val paint =
             Paint().apply {

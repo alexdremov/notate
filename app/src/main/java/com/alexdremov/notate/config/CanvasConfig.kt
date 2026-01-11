@@ -17,7 +17,7 @@ object CanvasConfig {
     const val LOD_BIAS = 0.5f // Switch to lower resolution sooner
     const val CACHE_MEMORY_PERCENT = 0.8 // of heap
     const val ERROR_CACHE_SIZE = 100
-    const val NEIGHBOR_PRECACHE_THRESHOLD_PERCENT = 0.85 // Don't precache if > 85% full
+    const val NEIGHBOR_PRECACHE_THRESHOLD_PERCENT = 0.9
     const val NEIGHBOR_COUNT = 2
     const val THREAD_POOL_SIZE = 4
 

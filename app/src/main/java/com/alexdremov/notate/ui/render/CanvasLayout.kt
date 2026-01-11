@@ -50,7 +50,7 @@ class InfiniteLayout : CanvasLayout {
         // We only draw background if we have a valid rect.
         // For infinite export, usually we want a background behind content.
         if (!drawRect.isEmpty) {
-            BackgroundDrawer.draw(canvas, model.backgroundStyle, drawRect, zoomLevel)
+            BackgroundDrawer.draw(canvas, model.backgroundStyle, drawRect)
         }
 
         val useDirectVectors = visibleRect == null
@@ -145,7 +145,7 @@ class FixedPageLayout(
                     }
 
                     // Pass offsets to align pattern to page origin (or padded origin)
-                    BackgroundDrawer.draw(canvas, style, bgIntersection, zoomLevel, offsetX, offsetY)
+                    BackgroundDrawer.draw(canvas, style, bgIntersection, offsetX, offsetY)
                 }
 
                 val intersection = RectF(pageRect)
@@ -185,7 +185,7 @@ class FixedPageLayout(
             // Export should also respect page origin
             canvas.save()
             canvas.clipRect(pageRect)
-            BackgroundDrawer.draw(canvas, model.backgroundStyle, pageRect, 1.0f, pageRect.left, pageRect.top)
+            BackgroundDrawer.draw(canvas, model.backgroundStyle, pageRect, pageRect.left, pageRect.top)
             canvas.restore()
 
             canvas.drawRect(pageRect, borderPaint)

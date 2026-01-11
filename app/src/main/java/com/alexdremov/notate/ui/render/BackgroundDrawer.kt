@@ -20,7 +20,10 @@ object BackgroundDrawer {
             isAntiAlias = true
         }
 
+    // Threshold: If we need to draw more than this many primitives, switch to Bitmap Cache
+    // to save CPU cycles. Otherwise, use Vector to save GPU Fill Rate.
     private const val MAX_PRIMITIVES = 10000
+    private const val VECTOR_RENDER_THRESHOLD = 4000
 
     // Component for handling BitmapShader caching
     private val patternCache = BackgroundPatternCache()
@@ -29,16 +32,18 @@ object BackgroundDrawer {
         canvas: Canvas,
         style: BackgroundStyle,
         rect: RectF,
-        zoomLevel: Float,
         offsetX: Float = 0f,
         offsetY: Float = 0f,
+        forceVector: Boolean = false,
     ) {
         if (rect.isEmpty || !rect.left.isFinite() || !rect.right.isFinite() || !rect.top.isFinite() || !rect.bottom.isFinite()) return
 
-        // Hybrid Rendering Strategy:
-        // High Zoom (> 2.0): Use Vector Loops. Items are sparse, loops are fast, quality is perfect.
-        // Low Zoom (<= 2.0): Use Bitmap Cache. Items are dense, loops are slow.
-        val useCache = zoomLevel <= 2.0f
+        // Rendering Strategy:
+        // 1. Force Vector (PDF Export): Always use vector primitives.
+        // 2. Dense Pattern (Screen): Use Bitmap Cache to avoid thousands of CPU draw calls.
+        // 3. Sparse Pattern (Screen): Use Vector to avoid expensive GPU full-screen texture fills.
+
+        val useCache = !forceVector && shouldUseCache(style, rect)
 
         when (style) {
             is BackgroundStyle.Blank -> {
@@ -74,7 +79,43 @@ object BackgroundDrawer {
         }
     }
 
-    // --- Vector Renderers (Iterative Loops) ---
+    private fun shouldUseCache(
+        style: BackgroundStyle,
+        rect: RectF,
+    ): Boolean {
+        val width = rect.width()
+        val height = rect.height()
+
+        if (width <= 0 || height <= 0) return false
+
+        return when (style) {
+            is BackgroundStyle.Dots -> {
+                if (style.spacing <= 0.1f) return true
+                val cols = width / style.spacing
+                val rows = height / style.spacing
+                (cols * rows) > VECTOR_RENDER_THRESHOLD
+            }
+
+            is BackgroundStyle.Lines -> {
+                if (style.spacing <= 0.1f) return true
+                val rows = height / style.spacing
+                rows > VECTOR_RENDER_THRESHOLD
+            }
+
+            is BackgroundStyle.Grid -> {
+                if (style.spacing <= 0.1f) return true
+                val cols = width / style.spacing
+                val rows = height / style.spacing
+                (cols + rows) > VECTOR_RENDER_THRESHOLD
+            }
+
+            else -> {
+                false
+            }
+        }
+    }
+
+    // --- Vector Renderers ---
 
     private fun drawDotsVector(
         canvas: Canvas,

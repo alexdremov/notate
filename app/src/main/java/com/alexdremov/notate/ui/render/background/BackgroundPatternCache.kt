@@ -57,18 +57,10 @@ class BackgroundPatternCache {
         style: BackgroundStyle,
         spacing: Float,
     ) {
-        // Cap texture size to avoid OOM
-        val targetSize = ceil(spacing).toInt()
-        val bitmapSize = if (targetSize > 256) 256 else targetSize
-
-        if (bitmapSize <= 0) return
+        val bitmapSize = ceil(spacing).toInt().coerceAtLeast(1)
 
         val bitmap = Bitmap.createBitmap(bitmapSize, bitmapSize, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bitmap)
-
-        // Scale rendering to fit into our capped bitmap size
-        val drawScale = bitmapSize.toFloat() / spacing
-        canvas.scale(drawScale, drawScale)
 
         BackgroundPrimitiveRenderer.drawTilePrimitives(canvas, style, spacing)
 
