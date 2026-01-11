@@ -34,12 +34,12 @@ class TileManager(
     private val canvasModel: InfiniteCanvasModel,
     private val renderer: CanvasRenderer,
     private val tileSize: Int = CanvasConfig.TILE_SIZE,
+    private val executor: java.util.concurrent.ExecutorService = Executors.newFixedThreadPool(CanvasConfig.THREAD_POOL_SIZE),
 ) {
     var onTileReady: (() -> Unit)? = null
     var isInteracting: Boolean = false
 
     private val tileCache = TileCache(tileSize)
-    private val executor = Executors.newFixedThreadPool(CanvasConfig.THREAD_POOL_SIZE)
     private val mainHandler = Handler(Looper.getMainLooper())
 
     // State Tracking
@@ -201,9 +201,11 @@ class TileManager(
 
                 val bitmap = generateTileBitmap(col, row, worldSize)
 
-                // Final check before committing to cache
-                if (forceRefresh || tileCache.get(key) == null) {
-                    tileCache.put(key, bitmap)
+                // Final check before committing to cache - ensure we are still on the same version
+                if (version == renderVersion.get()) {
+                    if (forceRefresh || tileCache.get(key) == null) {
+                        tileCache.put(key, bitmap)
+                    }
                 }
             } catch (t: Throwable) {
                 errorMessages.put(key, "${t.javaClass.simpleName}: ${t.message}")
@@ -369,20 +371,13 @@ class TileManager(
     }
 
     fun invalidateTiles(bounds: RectF) {
-        val snapshot = tileCache.snapshot()
-        for (key in snapshot.keys) {
-            val worldSize = calculateWorldTileSize(key.level)
-            val tileRect = getTileWorldRect(key.col, key.row, worldSize)
-
-            if (RectF.intersects(bounds, tileRect)) {
-                tileCache.remove(key)
-            }
-        }
-        notifyTileReady()
+        // Delegate to refreshTiles to ensure double-buffering (no white flashes).
+        // This keeps the stale content visible until the new content is ready (async generation).
+        refreshTiles(bounds)
     }
 
     fun refreshTiles(bounds: RectF) {
-        val version = renderVersion.get()
+        val version = renderVersion.incrementAndGet()
         val snapshot = tileCache.snapshot()
         val currentGenerating = synchronized(generatingKeys) { HashSet(generatingKeys) }
 
@@ -424,7 +419,7 @@ class TileManager(
     ) {
         val level = calculateLOD(scale)
         val worldSize = calculateWorldTileSize(level)
-        val version = renderVersion.get()
+        val version = renderVersion.incrementAndGet()
 
         val startCol = floor(visibleRect.left / worldSize).toInt()
         val endCol = floor(visibleRect.right / worldSize).toInt()

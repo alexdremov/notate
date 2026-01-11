@@ -332,20 +332,7 @@ class OnyxCanvasView
         fun setTool(tool: PenTool) {
             this.currentTool = tool
             penInputHandler.setTool(tool)
-
-            // Toggle Raw Drawing to ensure refresh works (mirrors Lasso Lift logic)
-            val wasEnabled = touchHelper?.isRawDrawingInputEnabled() == true
-            if (wasEnabled) {
-                touchHelper?.setRawDrawingEnabled(false)
-            }
-
-            EpdController.invalidate(this, UpdateMode.GC)
-
-            if (wasEnabled) {
-                touchHelper?.setRawDrawingEnabled(true)
-            }
-
-            updateTouchHelperTool()
+            performHardRefresh()
         }
 
         fun setEraser(tool: PenTool) {
@@ -359,6 +346,7 @@ class OnyxCanvasView
         fun setBackgroundStyle(style: com.alexdremov.notate.model.BackgroundStyle) {
             canvasModel.setBackground(style)
             invalidateCanvas()
+            performHardRefresh()
             onContentChanged?.invoke()
         }
 
@@ -389,8 +377,7 @@ class OnyxCanvasView
             canvasRenderer.clearTiles()
             minimapDrawer.setDirty()
             drawContent()
-            touchHelper?.setRawDrawingEnabled(false)
-            touchHelper?.setRawDrawingEnabled(true)
+            performHardRefresh()
             onContentChanged?.invoke()
         }
 
@@ -440,6 +427,22 @@ class OnyxCanvasView
             penInputHandler.setScale(viewportInteractor.getCurrentScale())
         }
 
+        private fun performHardRefresh() {
+            // Toggle Raw Drawing to ensure refresh works (mirrors Lasso Lift logic)
+            val wasEnabled = touchHelper?.isRawDrawingInputEnabled() == true
+            if (wasEnabled) {
+                touchHelper?.setRawDrawingEnabled(false)
+            }
+
+            EpdController.invalidate(this, UpdateMode.GC)
+
+            if (wasEnabled) {
+                touchHelper?.setRawDrawingEnabled(true)
+                // Re-apply tool config after toggling
+                updateTouchHelperTool()
+            }
+        }
+
         private fun setupTouchHelper() {
             if (touchHelper == null) {
                 touchHelper = TouchHelper.create(this, true, penInputHandler)
@@ -467,6 +470,6 @@ class OnyxCanvasView
             canvasRenderer.refreshTiles(viewportInteractor.getCurrentScale(), visibleRect)
             minimapDrawer.setDirty()
             drawContent()
-            EpdController.invalidate(this, UpdateMode.DU_QUALITY)
+            performHardRefresh()
         }
     }
