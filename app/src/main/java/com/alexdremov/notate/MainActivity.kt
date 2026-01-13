@@ -85,6 +85,7 @@ fun MainScreen(viewModel: HomeViewModel) {
     val currentProject by viewModel.currentProject.collectAsState()
     val projects by viewModel.projects.collectAsState()
     val browserItems by viewModel.browserItems.collectAsState()
+    val breadcrumbs by viewModel.breadcrumbs.collectAsState()
     val title by viewModel.title.collectAsState()
 
     val context = LocalContext.current
@@ -161,6 +162,8 @@ fun MainScreen(viewModel: HomeViewModel) {
                 // --- Level 1+: File Browser ---
                 FileBrowserScreen(
                     items = browserItems,
+                    breadcrumbs = breadcrumbs,
+                    onBreadcrumbClick = { viewModel.loadBrowserItems(it.path) },
                     onItemClick = { item ->
                         when (item) {
                             is ProjectItem -> {

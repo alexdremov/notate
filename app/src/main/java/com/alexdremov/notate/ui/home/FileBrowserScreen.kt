@@ -14,7 +14,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -24,6 +23,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import com.alexdremov.notate.data.FileSystemItem
+import com.alexdremov.notate.model.BreadcrumbItem
+import com.alexdremov.notate.ui.home.components.Breadcrumbs
 import com.alexdremov.notate.ui.home.components.DeleteConfirmationDialog
 import com.alexdremov.notate.ui.home.components.EmptyState
 import com.alexdremov.notate.ui.home.components.FileGridItem
@@ -35,6 +36,8 @@ import com.alexdremov.notate.ui.home.components.FileGridItem
 @Composable
 fun FileBrowserScreen(
     items: List<FileSystemItem>,
+    breadcrumbs: List<BreadcrumbItem>,
+    onBreadcrumbClick: (BreadcrumbItem) -> Unit,
     onItemClick: (FileSystemItem) -> Unit,
     onItemDelete: (FileSystemItem) -> Unit,
     onItemRename: (FileSystemItem, String) -> Unit,
@@ -44,20 +47,28 @@ fun FileBrowserScreen(
     var itemToManage by remember { mutableStateOf<FileSystemItem?>(null) }
     var itemToRename by remember { mutableStateOf<FileSystemItem?>(null) }
 
-    if (items.isEmpty()) {
-        EmptyState("Folder is empty.\nCreate a folder or canvas.")
-    } else {
-        LazyVerticalGrid(
-            columns = GridCells.Adaptive(minSize = 180.dp),
-            contentPadding = PaddingValues(16.dp),
-            modifier = Modifier.fillMaxSize(),
-        ) {
-            items(items) {
-                FileGridItem(
-                    item = it,
-                    onClick = { onItemClick(it) },
-                    onLongClick = { itemToManage = it },
-                )
+    Column(Modifier.fillMaxSize()) {
+        Breadcrumbs(
+            items = breadcrumbs,
+            onItemClick = onBreadcrumbClick,
+            modifier = Modifier.fillMaxWidth(),
+        )
+
+        if (items.isEmpty()) {
+            EmptyState("Folder is empty.\nCreate a folder or canvas.")
+        } else {
+            LazyVerticalGrid(
+                columns = GridCells.Adaptive(minSize = 180.dp),
+                contentPadding = PaddingValues(16.dp),
+                modifier = Modifier.fillMaxSize(),
+            ) {
+                items(items) {
+                    FileGridItem(
+                        item = it,
+                        onClick = { onItemClick(it) },
+                        onLongClick = { itemToManage = it },
+                    )
+                }
             }
         }
     }

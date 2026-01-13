@@ -10,6 +10,7 @@ import com.alexdremov.notate.data.FileSystemItem
 import com.alexdremov.notate.data.PreferencesManager
 import com.alexdremov.notate.data.ProjectConfig
 import com.alexdremov.notate.data.ProjectRepository
+import com.alexdremov.notate.model.BreadcrumbItem
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -36,6 +37,9 @@ class HomeViewModel(
 
     private val _browserItems = MutableStateFlow<List<FileSystemItem>>(emptyList())
     val browserItems: StateFlow<List<FileSystemItem>> = _browserItems.asStateFlow()
+
+    private val _breadcrumbs = MutableStateFlow<List<BreadcrumbItem>>(emptyList())
+    val breadcrumbs: StateFlow<List<BreadcrumbItem>> = _breadcrumbs.asStateFlow()
 
     private val _title = MutableStateFlow("My Projects")
     val title: StateFlow<String> = _title.asStateFlow()
@@ -72,6 +76,50 @@ class HomeViewModel(
         }
     }
 
+    private fun updateBreadcrumbs() {
+        val project = _currentProject.value
+        val repo = repository
+        if (project == null || repo == null) {
+            _breadcrumbs.value = emptyList()
+            return
+        }
+
+        val rootPath = repo.getRootPath()
+        val currentPath = _currentPath.value
+        val items = mutableListOf<BreadcrumbItem>()
+
+        // Root
+        items.add(BreadcrumbItem(project.name, rootPath))
+
+        if (currentPath != null && currentPath != rootPath) {
+            if (currentPath.startsWith("content://")) {
+                val uri = Uri.parse(currentPath)
+                val name = DocumentFile.fromTreeUri(getApplication(), uri)?.name ?: "Folder"
+                items.add(BreadcrumbItem(name, currentPath))
+            } else {
+                if (currentPath.startsWith(rootPath)) {
+                    val relative = currentPath.removePrefix(rootPath).trimStart('/')
+                    if (relative.isNotEmpty()) {
+                        val segments = relative.split('/')
+                        var builtPath = rootPath
+                        segments.forEach { segment ->
+                            builtPath =
+                                if (builtPath.endsWith(File.separator)) {
+                                    builtPath + segment
+                                } else {
+                                    builtPath + File.separator + segment
+                                }
+                            items.add(BreadcrumbItem(segment, builtPath))
+                        }
+                    }
+                } else {
+                    items.add(BreadcrumbItem(File(currentPath).name, currentPath))
+                }
+            }
+        }
+        _breadcrumbs.value = items
+    }
+
     // --- Project Management ---
 
     fun addProject(
@@ -104,6 +152,7 @@ class HomeViewModel(
         repository = null
         _browserItems.value = emptyList()
         _currentPath.value = null
+        _breadcrumbs.value = emptyList()
         updateTitle()
     }
 
@@ -113,6 +162,7 @@ class HomeViewModel(
         val repo = repository ?: return
         _currentPath.value = path
         updateTitle()
+        updateBreadcrumbs()
         viewModelScope.launch {
             _browserItems.value = repo.getItems(path)
         }
