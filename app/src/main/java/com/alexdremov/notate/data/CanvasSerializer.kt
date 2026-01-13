@@ -132,4 +132,123 @@ object CanvasSerializer {
             Log.e("CanvasSerializer", "Error loading canvas data", e)
         }
     }
+
+    data class LoadedCanvasState(
+        val strokes: List<Stroke>,
+        val quadtree: com.alexdremov.notate.util.Quadtree,
+        val contentBounds: RectF,
+        val nextStrokeOrder: Long,
+        val canvasType: CanvasType,
+        val pageWidth: Float,
+        val pageHeight: Float,
+        val backgroundStyle: com.alexdremov.notate.model.BackgroundStyle,
+        val viewportScale: Float,
+        val viewportOffsetX: Float,
+        val viewportOffsetY: Float,
+    )
+
+    /**
+     * Parses CanvasData into a fully prepared state model.
+     * Heavily computationally expensive (Path reconstruction, Bounds calc, Quadtree insert).
+     * Should be called on a background thread.
+     */
+    fun parseCanvasData(data: CanvasData): LoadedCanvasState {
+        val strokes = ArrayList<Stroke>()
+        var quadtree = com.alexdremov.notate.util.Quadtree(0, RectF(-50000f, -50000f, 50000f, 50000f))
+        val contentBounds = RectF()
+        var nextStrokeOrder: Long = 0
+
+        val sysPressure = EpdController.getMaxTouchPressure()
+        val defaultMaxPressure = if (sysPressure > 0f) sysPressure else 4096f
+
+        try {
+            data.strokes.forEach { sData ->
+                val points = ArrayList<TouchPoint>()
+
+                if (sData.pointsPacked != null && sData.timestampsPacked != null) {
+                    val floats = sData.pointsPacked
+                    val longs = sData.timestampsPacked
+                    val count = longs.size
+
+                    for (i in 0 until count) {
+                        val x = floats[i * 4]
+                        val y = floats[i * 4 + 1]
+                        val rawP = floats[i * 4 + 2]
+                        val s = floats[i * 4 + 3]
+                        val t = longs[i]
+
+                        val pressure = if (rawP.isNaN() || rawP <= 0f) defaultMaxPressure else rawP
+                        points.add(TouchPoint(x, y, pressure, s, t))
+                    }
+                } else {
+                    sData.points.forEach { pData ->
+                        val pressure =
+                            if (pData.pressure.isNaN() || pData.pressure <= 0f) {
+                                defaultMaxPressure
+                            } else {
+                                pData.pressure
+                            }
+                        points.add(TouchPoint(pData.x, pData.y, pressure, pData.size, pData.timestamp))
+                    }
+                }
+
+                // Reconstruct Path
+                val path = Path()
+                if (points.isNotEmpty()) {
+                    path.moveTo(points[0].x, points[0].y)
+                    for (i in 1 until points.size) {
+                        val p1 = points[i - 1]
+                        val p2 = points[i]
+                        val cx = (p1.x + p2.x) / 2
+                        val cy = (p1.y + p2.y) / 2
+                        path.quadTo(p1.x, p1.y, cx, cy)
+                    }
+                    path.lineTo(points.last().x, points.last().y)
+                }
+
+                val bounds = StrokeGeometry.computeStrokeBounds(path, sData.width, sData.style)
+
+                val stroke =
+                    Stroke(
+                        path = path,
+                        points = points,
+                        color = sData.color,
+                        width = sData.width,
+                        style = sData.style,
+                        bounds = bounds,
+                        strokeOrder = sData.strokeOrder,
+                        zIndex = sData.zIndex,
+                    )
+
+                if (stroke.strokeOrder >= nextStrokeOrder) {
+                    nextStrokeOrder = stroke.strokeOrder + 1
+                }
+
+                strokes.add(stroke)
+                quadtree = quadtree.insert(stroke)
+                
+                if (contentBounds.isEmpty) {
+                    contentBounds.set(bounds)
+                } else {
+                    contentBounds.union(bounds)
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("CanvasSerializer", "Error parsing canvas data", e)
+        }
+        
+        return LoadedCanvasState(
+            strokes = strokes,
+            quadtree = quadtree,
+            contentBounds = contentBounds,
+            nextStrokeOrder = nextStrokeOrder,
+            canvasType = data.canvasType,
+            pageWidth = data.pageWidth,
+            pageHeight = data.pageHeight,
+            backgroundStyle = data.backgroundStyle,
+            viewportScale = data.zoomLevel,
+            viewportOffsetX = data.offsetX,
+            viewportOffsetY = data.offsetY
+        )
+    }
 }

@@ -83,7 +83,7 @@ class SelectionInteractor(
 
     private val SNAP_ANGLE_THRESHOLD = 5.0 // Degrees
     private val AXIS_LOCK_THRESHOLD = 20f // Pixels moved before locking kicks in
-    private val AXIS_LOCK_RATIO = 4.0 // Dominant axis must be 4x the other
+    private val AXIS_LOCK_GAP = 20.0 // Dominant axis must be 4x the other
 
     fun onDown(
         x: Float,
@@ -222,10 +222,10 @@ class SelectionInteractor(
 
                     // Only lock if we moved enough to determine intent
                     if (hypot(totalDx, totalDy) > AXIS_LOCK_THRESHOLD) {
-                        if (kotlin.math.abs(totalDx) > kotlin.math.abs(totalDy) * AXIS_LOCK_RATIO) {
+                        if (kotlin.math.abs(totalDy) <= AXIS_LOCK_GAP) {
                             // Lock to Horizontal (keep Y at originY)
                             targetY = dragOriginY
-                        } else if (kotlin.math.abs(totalDy) > kotlin.math.abs(totalDx) * AXIS_LOCK_RATIO) {
+                        } else if (kotlin.math.abs(totalDx) <= AXIS_LOCK_GAP) {
                             // Lock to Vertical (keep X at originX)
                             targetX = dragOriginX
                         }

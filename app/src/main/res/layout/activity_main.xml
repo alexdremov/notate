@@ -28,7 +28,7 @@
         android:orientation="horizontal"
         android:background="@drawable/bg_floating_toolbar"
         android:elevation="6dp"
-        android:padding="8dp" />
+        android:padding="2dp" />
 
     <!-- 3. Scrim (Overlay Layer) -->
     <View

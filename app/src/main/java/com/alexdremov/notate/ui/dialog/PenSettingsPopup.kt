@@ -2,6 +2,7 @@ package com.alexdremov.notate.ui.dialog
 
 import android.content.Context
 import android.graphics.Color
+import android.graphics.Rect
 import android.graphics.drawable.GradientDrawable
 import android.util.TypedValue
 import android.view.LayoutInflater
@@ -518,6 +519,53 @@ class PenSettingsPopup(
     private fun updateTool(modifier: (PenTool) -> PenTool) {
         currentTool = modifier(currentTool)
         onUpdate(currentTool)
+    }
+
+    fun show(parent: View, targetRect: Rect) {
+        val displayMetrics = context.resources.displayMetrics
+        val screenWidth = displayMetrics.widthPixels
+        val screenHeight = displayMetrics.heightPixels
+        
+        val anchorX = targetRect.left
+        val anchorY = targetRect.top
+        val anchorHeight = targetRect.height()
+        val anchorWidth = targetRect.width()
+
+        // Measure root view to get dimensions before showing
+        binding.root.measure(
+            View.MeasureSpec.makeMeasureSpec(screenWidth, View.MeasureSpec.AT_MOST),
+            View.MeasureSpec.makeMeasureSpec(screenHeight, View.MeasureSpec.AT_MOST),
+        )
+        val popupWidth = binding.root.measuredWidth
+        val popupHeight = binding.root.measuredHeight
+
+        // Calculate horizontal offset to keep popup on screen
+        var xPos = anchorX
+        val padding = context.dpToPx(16)
+
+        // If anchor + popup would go off-screen right
+        if (xPos + popupWidth > screenWidth - padding) {
+             // Align right edge of popup with right edge of anchor, or push left
+            xPos = (screenWidth - padding) - popupWidth
+        }
+
+        // If anchor + xOffset would go off-screen left
+        if (xPos < padding) {
+            xPos = padding
+        }
+
+        // Decide vertical position based on screen position (Top half vs Bottom half)
+        val yPos: Int
+        if (anchorY > screenHeight / 2) {
+            // Show ABOVE
+            yPos = anchorY - popupHeight - context.dpToPx(10)
+        } else {
+            // Show BELOW
+            yPos = anchorY + anchorHeight + context.dpToPx(10)
+        }
+
+        popupWindow.showAtLocation(parent, android.view.Gravity.NO_GRAVITY, xPos, yPos)
+        refreshHighQuality(binding.root)
     }
 
     /**

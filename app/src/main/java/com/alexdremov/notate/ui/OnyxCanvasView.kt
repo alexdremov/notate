@@ -316,6 +316,19 @@ class OnyxCanvasView
             return canvasModel.toCanvasData()
         }
 
+        fun loadCanvasState(state: com.alexdremov.notate.data.CanvasSerializer.LoadedCanvasState) {
+            canvasModel.setLoadedState(state)
+            matrix.reset()
+            matrix.postScale(state.viewportScale, state.viewportScale)
+            matrix.postTranslate(state.viewportOffsetX, state.viewportOffsetY)
+            viewportInteractor.setScale(state.viewportScale)
+
+            canvasRenderer.updateLayoutStrategy()
+            canvasRenderer.clearTiles()
+            minimapDrawer.setDirty()
+            drawContent()
+        }
+
         fun loadCanvasData(data: CanvasData) {
             canvasModel.loadFromCanvasData(data)
             matrix.reset()

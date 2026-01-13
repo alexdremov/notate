@@ -22,7 +22,12 @@ class DraggableLinearLayout
         private var lastTouchX = 0f
         private var lastTouchY = 0f
         private var isDragging = false
-        private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop
+        private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop * 4 // Increased for E-Ink stability
+
+        init {
+            clipChildren = false
+            clipToPadding = false
+        }
 
         /**
          * Callback invoked when the view is dragged.
@@ -40,12 +45,23 @@ class DraggableLinearLayout
          */
         var onDragEnd: (() -> Unit)? = null
 
+        var onDown: (() -> Unit)? = null
+        var onUp: (() -> Unit)? = null
+        
+        var isDragEnabled: Boolean = true
+
         override fun onInterceptTouchEvent(ev: MotionEvent): Boolean {
+            if (ev.action == MotionEvent.ACTION_DOWN) {
+                android.util.Log.d("BooxVibesDebug", "DLL.onIntercept: DOWN, isDragEnabled=$isDragEnabled")
+            }
+            if (!isDragEnabled) return false
+            
             when (ev.action) {
                 MotionEvent.ACTION_DOWN -> {
                     lastTouchX = ev.rawX
                     lastTouchY = ev.rawY
                     isDragging = false
+                    onDown?.invoke()
                     return false
                 }
 
@@ -53,9 +69,19 @@ class DraggableLinearLayout
                     val dx = abs(ev.rawX - lastTouchX)
                     val dy = abs(ev.rawY - lastTouchY)
                     if (dx > touchSlop || dy > touchSlop) {
+                        android.util.Log.d("BooxVibesDebug", "DLL.onIntercept: MOVE > Slop, Intercepting!")
                         isDragging = true
                         onDragStart?.invoke()
                         return true
+                    }
+                }
+                
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    android.util.Log.d("BooxVibesDebug", "DLL.onIntercept: UP/CANCEL")
+                    onUp?.invoke()
+                    if (isDragging) {
+                        isDragging = false
+                        onDragEnd?.invoke()
                     }
                 }
             }
@@ -63,10 +89,14 @@ class DraggableLinearLayout
         }
 
         override fun onTouchEvent(event: MotionEvent): Boolean {
+            if (event.action == MotionEvent.ACTION_DOWN) {
+                android.util.Log.d("BooxVibesDebug", "DLL.onTouch: DOWN")
+            }
             when (event.action) {
                 MotionEvent.ACTION_DOWN -> {
                     lastTouchX = event.rawX
                     lastTouchY = event.rawY
+                    onDown?.invoke()
                     return true
                 }
 
@@ -113,6 +143,7 @@ class DraggableLinearLayout
                 }
 
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    onUp?.invoke()
                     if (isDragging) {
                         isDragging = false
                         onDragEnd?.invoke()

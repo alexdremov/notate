@@ -477,6 +477,31 @@ class InfiniteCanvasModel {
         }
 
     /**
+     * Loads the model state from a pre-calculated LoadedCanvasState object.
+     * This method is fast and only updates the references.
+     * Thread-safe (Write Lock).
+     */
+    fun setLoadedState(state: com.alexdremov.notate.data.CanvasSerializer.LoadedCanvasState) {
+        rwLock.write {
+            allStrokes.clear()
+            historyManager.clear()
+            
+            allStrokes.addAll(state.strokes)
+            quadtree = state.quadtree
+            contentBounds.set(state.contentBounds)
+            nextStrokeOrder = state.nextStrokeOrder
+
+            canvasType = state.canvasType
+            pageWidth = state.pageWidth
+            pageHeight = state.pageHeight
+            backgroundStyle = state.backgroundStyle
+            viewportScale = state.viewportScale
+            viewportOffsetX = state.viewportOffsetX
+            viewportOffsetY = state.viewportOffsetY
+        }
+    }
+
+    /**
      * Loads the model state from a CanvasData object.
      * Reconstructs paths, bounds, and spatial index.
      * Thread-safe (Write Lock).

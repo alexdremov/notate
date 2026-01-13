@@ -17,7 +17,7 @@ data class ProjectConfig(
 object PreferencesManager {
     private const val PREFS_NAME = "notate_prefs"
     private const val KEY_PROJECTS = "projects_list"
-    private const val KEY_TOOLBOX = "toolbox_config"
+    private const val KEY_TOOLBAR_ITEMS = "toolbar_items_config"
     private const val KEY_COLORS = "favorite_colors"
     private const val KEY_SCRIBBLE_TO_ERASE = "scribble_to_erase"
     private const val KEY_SHAPE_PERFECTION_ENABLED = "shape_perfection_enabled"
@@ -123,21 +123,43 @@ object PreferencesManager {
 
     // --- Toolbox Persistence ---
 
-    fun saveTools(
+    fun saveToolbarItems(
         context: Context,
-        tools: List<PenTool>,
+        items: List<com.alexdremov.notate.model.ToolbarItem>,
     ) {
-        val json = Json.encodeToString(tools)
-        getPrefs(context).edit().putString(KEY_TOOLBOX, json).apply()
+        val json = Json.encodeToString(items)
+        getPrefs(context).edit().putString(KEY_TOOLBAR_ITEMS, json).apply()
     }
 
-    fun getTools(context: Context): List<PenTool> {
-        val json = getPrefs(context).getString(KEY_TOOLBOX, null) ?: return PenTool.defaultPens()
-        return try {
-            Json.decodeFromString(json)
-        } catch (e: Exception) {
-            PenTool.defaultPens()
+    fun getToolbarItems(context: Context): List<com.alexdremov.notate.model.ToolbarItem> {
+        val json = getPrefs(context).getString(KEY_TOOLBAR_ITEMS, null)
+        if (json != null) {
+            return try {
+                Json.decodeFromString(json)
+            } catch (e: Exception) {
+                defaultToolbarItems()
+            }
         }
+        
+        return defaultToolbarItems()
+    }
+
+    private fun defaultToolbarItems(): List<com.alexdremov.notate.model.ToolbarItem> {
+        val items = mutableListOf<com.alexdremov.notate.model.ToolbarItem>()
+        val defaultPens = PenTool.defaultPens()
+        
+        defaultPens.forEach { tool ->
+            when (tool.type) {
+                com.alexdremov.notate.model.ToolType.PEN -> items.add(com.alexdremov.notate.model.ToolbarItem.Pen(tool))
+                com.alexdremov.notate.model.ToolType.ERASER -> items.add(com.alexdremov.notate.model.ToolbarItem.Eraser(tool))
+                com.alexdremov.notate.model.ToolType.SELECT -> items.add(com.alexdremov.notate.model.ToolbarItem.Select(tool))
+            }
+        }
+        
+        items.add(com.alexdremov.notate.model.ToolbarItem.Action(com.alexdremov.notate.model.ActionType.UNDO))
+        items.add(com.alexdremov.notate.model.ToolbarItem.Action(com.alexdremov.notate.model.ActionType.REDO))
+        items.add(com.alexdremov.notate.model.ToolbarItem.Widget(com.alexdremov.notate.model.WidgetType.PAGE_NAVIGATION))
+        return items
     }
 
     // --- Favorite Colors Persistence ---

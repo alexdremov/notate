@@ -192,6 +192,8 @@ class CanvasControllerImpl(
             val matrix = android.graphics.Matrix()
             matrix.setTranslate(dx, dy)
 
+            val pastedStrokes = ArrayList<Stroke>()
+
             startBatchSession()
             strokes.forEach { s ->
                 val newPath = android.graphics.Path(s.path)
@@ -203,10 +205,22 @@ class CanvasControllerImpl(
                     }
                 val newBounds = android.graphics.RectF(s.bounds)
                 matrix.mapRect(newBounds)
-                commitStroke(s.copy(path = newPath, points = newPoints, bounds = newBounds, strokeOrder = 0))
+
+                val newStroke = s.copy(path = newPath, points = newPoints, bounds = newBounds, strokeOrder = 0)
+                val added = model.addStroke(newStroke)
+                if (added != null) {
+                    pastedStrokes.add(added)
+                }
             }
             endBatchSession()
-            runOnUi { onContentChangedListener?.invoke() }
+
+            runOnUi {
+                pastedStrokes.forEach { renderer.updateTilesWithStroke(it) }
+                selectionManager.clearSelection()
+                selectionManager.selectAll(pastedStrokes)
+                renderer.invalidate()
+                onContentChangedListener?.invoke()
+            }
         }
     }
 

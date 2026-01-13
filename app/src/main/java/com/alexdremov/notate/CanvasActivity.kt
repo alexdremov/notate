@@ -56,6 +56,7 @@ class CanvasActivity : AppCompatActivity() {
     private val viewModel: DrawingViewModel by viewModels()
     private var activePenPopup: com.alexdremov.notate.ui.dialog.PenSettingsPopup? = null
     private var isGridOpen = false
+    private val isToolbarHorizontal = mutableStateOf(true)
 
     private lateinit var sidebarCoordinator: SidebarCoordinator
     private lateinit var sidebarController: SettingsSidebarController
@@ -112,9 +113,65 @@ class CanvasActivity : AppCompatActivity() {
                 updateExclusionRects()
             }
         toolbarCoordinator.onOrientationChanged = {
-            renderToolbar(viewModel.tools.value, viewModel.activeToolId.value)
+            isToolbarHorizontal.value = toolbarCoordinator.getOrientation() == LinearLayout.HORIZONTAL
         }
+        
+        // Disable drawing when interacting with toolbar (touch down)
+        // This prevents accidental strokes and improves UI responsiveness
+        binding.toolbarContainer.onDown = {
+            viewModel.setDrawingEnabled(false)
+            com.onyx.android.sdk.api.device.EpdDeviceManager.enterAnimationUpdate(true)
+        }
+        
+        binding.toolbarContainer.onUp = {
+             // Re-enable drawing only if not in edit mode
+            if (!viewModel.isEditMode.value) {
+                viewModel.setDrawingEnabled(true)
+            }
+            com.onyx.android.sdk.api.device.EpdDeviceManager.exitAnimationUpdate(true)
+        }
+        
         toolbarCoordinator.setup()
+
+        // Initialize Toolbar UI (Compose)
+        binding.toolbarContainer.removeAllViews()
+        val composeToolbar = androidx.compose.ui.platform.ComposeView(this).apply {
+            layoutParams = ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+            setViewCompositionStrategy(androidx.compose.ui.platform.ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed)
+            setContent {
+                val horizontal by remember { isToolbarHorizontal }
+                com.alexdremov.notate.ui.toolbar.ToolbarView(
+                    viewModel = viewModel,
+                    isHorizontal = horizontal,
+                    canvasController = binding.canvasView.getController(),
+                    canvasModel = binding.canvasView.getModel(),
+                    onToolClick = { item, rect -> 
+                        // Convert Compose Rect to Android Graphics Rect
+                        val androidRect = android.graphics.Rect(
+                            rect.left.toInt(),
+                            rect.top.toInt(),
+                            rect.right.toInt(),
+                            rect.bottom.toInt()
+                        )
+                        handleToolClick(item.id, androidRect) 
+                    },
+                    onActionClick = { action ->
+                        when(action) {
+                            com.alexdremov.notate.model.ActionType.UNDO -> binding.canvasView.undo()
+                            com.alexdremov.notate.model.ActionType.REDO -> binding.canvasView.redo()
+                        }
+                    },
+                    onOpenSidebar = { 
+                        sidebarCoordinator.open()
+                        sidebarController.showMainMenu()
+                    }
+                )
+            }
+        }
+        binding.toolbarContainer.addView(composeToolbar)
 
         // Ensure clicking/tapping anywhere on the toolbar clears selection
         binding.toolbarContainer.setOnTouchListener { _, event ->
@@ -145,6 +202,10 @@ class CanvasActivity : AppCompatActivity() {
                         }
                     }
                 },
+                onEditToolbar = {
+                    sidebarCoordinator.close()
+                    viewModel.setEditMode(true)
+                }
             )
 
         binding.canvasView.onStrokeStarted = {
@@ -160,26 +221,23 @@ class CanvasActivity : AppCompatActivity() {
         // ViewModel observation
         lifecycleScope.launch {
             launch {
-                viewModel.tools.collect { tools ->
-                    renderToolbar(tools, viewModel.activeToolId.value)
-                    tools.find { it.type == ToolType.ERASER }?.let { eraser ->
-                        binding.canvasView.setEraser(eraser)
-                    }
-                }
-            }
-            launch {
-                viewModel.activeToolId.collect { id ->
-                    renderToolbar(viewModel.tools.value, id)
-                }
-            }
-            launch {
+                // Legacy support for Eraser cursor update
                 viewModel.activeTool.collect { tool ->
                     binding.canvasView.setTool(tool)
+                    if (tool.type == ToolType.ERASER) {
+                        binding.canvasView.setEraser(tool)
+                    }
                 }
             }
             launch {
                 viewModel.isDrawingEnabled.collect { enabled ->
                     binding.canvasView.setDrawingEnabled(enabled)
+                }
+            }
+            launch {
+                viewModel.isEditMode.collect { isEdit ->
+                    android.util.Log.d("BooxVibesDebug", "CanvasActivity: isEditMode=$isEdit, setting isDragEnabled=${!isEdit}")
+                    binding.toolbarContainer.isDragEnabled = !isEdit
                 }
             }
         }
@@ -222,11 +280,14 @@ class CanvasActivity : AppCompatActivity() {
 
                 if (!jsonString.isNullOrEmpty()) {
                     val data = Json.decodeFromString<CanvasData>(jsonString)
+                    // Parse heavy geometry on background thread
+                    val loadedState = com.alexdremov.notate.data.CanvasSerializer.parseCanvasData(data)
+                    
                     withContext(Dispatchers.Main) {
-                        binding.canvasView.loadCanvasData(data)
-                        isFixedPageState?.value = data.canvasType == com.alexdremov.notate.data.CanvasType.FIXED_PAGES
-                        // Trigger toolbar update to show/hide navigation
-                        renderToolbar(viewModel.tools.value, viewModel.activeToolId.value)
+                        binding.canvasView.loadCanvasState(loadedState)
+                        val isFixed = loadedState.canvasType == com.alexdremov.notate.data.CanvasType.FIXED_PAGES
+                        isFixedPageState?.value = isFixed
+                        viewModel.setFixedPageMode(isFixed)
                     }
                 }
             } catch (e: Exception) {
@@ -302,209 +363,26 @@ class CanvasActivity : AppCompatActivity() {
         binding.canvasView.setExclusionRects(rects)
     }
 
-    private fun renderToolbar(
-        tools: List<PenTool>,
-        activeId: String,
-    ) {
-        binding.toolbarContainer.removeAllViews()
-
-        val isHorizontal = toolbarCoordinator.getOrientation() == LinearLayout.HORIZONTAL
-        val spacerSize = dpToPx(8)
-        val sectionSpacerSize = dpToPx(16)
-
-        fun addSpacer(size: Int) {
-            binding.toolbarContainer.addView(
-                Space(this).apply {
-                    layoutParams =
-                        if (isHorizontal) {
-                            LinearLayout.LayoutParams(size, ViewGroup.LayoutParams.MATCH_PARENT)
-                        } else {
-                            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, size)
-                        }
-                },
-            )
-        }
-
-        tools.forEachIndexed { index, tool ->
-            val container =
-                android.widget.FrameLayout(this).apply {
-                    layoutParams = LinearLayout.LayoutParams(dpToPx(48), dpToPx(48))
-
-                    if (tool.id == activeId) {
-                        background = ContextCompat.getDrawable(context, R.drawable.bg_tool_active)
-                    } else {
-                        background = null
-                    }
-
-                    setOnClickListener { handleToolClick(tool.id, it) }
-                }
-
-            val iconView =
-                android.widget.ImageView(this).apply {
-                    layoutParams =
-                        android.widget.FrameLayout
-                            .LayoutParams(
-                                android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
-                                android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
-                            ).apply {
-                                gravity = android.view.Gravity.CENTER
-                            }
-                    scaleType = android.widget.ImageView.ScaleType.CENTER_INSIDE
-
-                    val iconRes =
-                        when (tool.type) {
-                            ToolType.ERASER -> {
-                                R.drawable.ink_eraser_24
-                            }
-
-                            ToolType.PEN -> {
-                                when (tool.strokeType) {
-                                    StrokeType.PENCIL -> R.drawable.stylus_pencil_24
-                                    StrokeType.HIGHLIGHTER -> R.drawable.stylus_highlighter_24
-                                    StrokeType.BRUSH -> R.drawable.stylus_brush_24
-                                    StrokeType.CHARCOAL -> R.drawable.stylus_pen_24
-                                    StrokeType.DASH -> R.drawable.stylus_dash_24
-                                    else -> R.drawable.stylus_fountain_pen_24
-                                }
-                            }
-
-                            ToolType.SELECT -> {
-                                R.drawable.ic_tool_select
-                            } // Placeholder or existing icon
-                        }
-                    setImageResource(iconRes)
-                    imageTintList = ColorStateList.valueOf(Color.BLACK)
-                }
-            container.addView(iconView)
-
-            if (tool.type == ToolType.PEN) {
-                val badgeSize = dpToPx(14)
-                val badgeView =
-                    View(this).apply {
-                        layoutParams =
-                            android.widget.FrameLayout.LayoutParams(badgeSize, badgeSize).apply {
-                                gravity = android.view.Gravity.BOTTOM or android.view.Gravity.END
-                                setMargins(0, 0, dpToPx(8), dpToPx(8))
-                            }
-
-                        background =
-                            android.graphics.drawable.GradientDrawable().apply {
-                                shape = android.graphics.drawable.GradientDrawable.OVAL
-                                setColor(tool.color)
-                                setStroke(dpToPx(1), Color.LTGRAY)
-                            }
-                    }
-                container.addView(badgeView)
-            }
-
-            binding.toolbarContainer.addView(container)
-
-            if (index < tools.size - 1 || tools.count { it.type == ToolType.PEN } < 7) {
-                addSpacer(spacerSize)
-            }
-        }
-
-        if (tools.count { it.type == ToolType.PEN } < 7) {
-            val addBtn =
-                ImageButton(this).apply {
-                    layoutParams = LinearLayout.LayoutParams(dpToPx(48), dpToPx(48))
-                    scaleType = android.widget.ImageView.ScaleType.CENTER_INSIDE
-                    setImageResource(R.drawable.ic_add)
-                    background = null
-                    imageTintList = ColorStateList.valueOf(Color.GRAY)
-                    setOnClickListener {
-                        binding.canvasView.getController().clearSelection()
-                        binding.canvasView.dismissActionPopup()
-                        viewModel.addPen()
-                    }
-                }
-            binding.toolbarContainer.addView(addBtn)
-        }
-
-        addSpacer(sectionSpacerSize)
-
-        val undoBtn =
-            ImageButton(this).apply {
-                layoutParams = LinearLayout.LayoutParams(dpToPx(48), dpToPx(48))
-                scaleType = android.widget.ImageView.ScaleType.CENTER_INSIDE
-                setImageResource(R.drawable.ic_undo)
-                background = null
-                imageTintList = ColorStateList.valueOf(Color.BLACK)
-                setOnClickListener {
-                    binding.canvasView.getController().clearSelection()
-                    binding.canvasView.dismissActionPopup()
-                    binding.canvasView.undo()
-                }
-            }
-        binding.toolbarContainer.addView(undoBtn)
-
-        val redoBtn =
-            ImageButton(this).apply {
-                layoutParams = LinearLayout.LayoutParams(dpToPx(48), dpToPx(48))
-                scaleType = android.widget.ImageView.ScaleType.CENTER_INSIDE
-                setImageResource(R.drawable.ic_redo)
-                background = null
-                imageTintList = ColorStateList.valueOf(Color.BLACK)
-                setOnClickListener {
-                    binding.canvasView.getController().clearSelection()
-                    binding.canvasView.dismissActionPopup()
-                    binding.canvasView.redo()
-                }
-            }
-        binding.toolbarContainer.addView(redoBtn)
-
-        // Add Navigation controls if in Fixed Page mode
-        if (isFixedPageState?.value == true) {
-            addSpacer(sectionSpacerSize)
-            val composeView =
-                androidx.compose.ui.platform.ComposeView(this).apply {
-                    // Important: View Composition Strategy to avoid memory leaks if views are detached/reattached frequently
-                    setViewCompositionStrategy(androidx.compose.ui.platform.ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed)
-                    setContent {
-                        com.alexdremov.notate.ui.navigation.CompactPageNavigation(
-                            controller = binding.canvasView.getController(),
-                            model = binding.canvasView.getModel(),
-                            isVertical = !isHorizontal,
-                            onGridOpenChanged = { isOpen ->
-                                isGridOpen = isOpen
-                                binding.canvasView.getController().clearSelection()
-                                binding.canvasView.dismissActionPopup()
-                                updateDrawingEnabledState()
-                            },
-                        )
-                    }
-                }
-            binding.toolbarContainer.addView(composeView)
-        }
-
-        addSpacer(spacerSize)
-        val settingsBtn =
-            ImageButton(this).apply {
-                layoutParams = LinearLayout.LayoutParams(dpToPx(48), dpToPx(48))
-                scaleType = android.widget.ImageView.ScaleType.CENTER_INSIDE
-                setImageResource(R.drawable.ic_more_vert)
-                background = null
-                imageTintList = ColorStateList.valueOf(Color.BLACK)
-                setOnClickListener {
-                    binding.canvasView.getController().clearSelection()
-                    binding.canvasView.dismissActionPopup()
-                    sidebarCoordinator.open()
-                    sidebarController.showMainMenu()
-                }
-            }
-        binding.toolbarContainer.addView(settingsBtn)
-
-        binding.toolbarContainer.requestLayout()
-    }
-
     private fun handleToolClick(
         toolId: String,
-        anchor: View,
+        targetRect: android.graphics.Rect,
     ) {
+        android.util.Log.d("BooxVibesDebug", "CanvasActivity: handleToolClick ID=$toolId, Rect=$targetRect, ActiveID=${viewModel.activeToolId.value}")
         binding.canvasView.getController().clearSelection()
         binding.canvasView.dismissActionPopup()
         if (viewModel.activeToolId.value == toolId) {
-            val tool = viewModel.tools.value.find { it.id == toolId } ?: return
+            val item = viewModel.toolbarItems.value.find { it.id == toolId }
+            val tool = when (item) {
+                is com.alexdremov.notate.model.ToolbarItem.Pen -> item.penTool
+                is com.alexdremov.notate.model.ToolbarItem.Eraser -> {
+                    // Logic to get the current eraser config
+                    viewModel.activeTool.value
+                }
+                is com.alexdremov.notate.model.ToolbarItem.Select -> {
+                    viewModel.activeTool.value
+                }
+                else -> null
+            } ?: return
 
             val popup =
                 com.alexdremov.notate.ui.dialog.PenSettingsPopup(
@@ -530,7 +408,8 @@ class CanvasActivity : AppCompatActivity() {
             com.alexdremov.notate.util.EpdFastModeController
                 .enterFastMode()
 
-            activePenPopup?.show(anchor)
+            android.util.Log.d("BooxVibesDebug", "CanvasActivity: Showing Popup!")
+            activePenPopup?.show(binding.root, targetRect)
         } else {
             viewModel.selectTool(toolId)
         }

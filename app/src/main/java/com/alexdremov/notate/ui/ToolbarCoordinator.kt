@@ -61,6 +61,14 @@ class ToolbarCoordinator(
         toolbarContainer.onDragEnd = {
             EpdDeviceManager.exitAnimationUpdate(true)
         }
+        
+        toolbarContainer.onDown = {
+            EpdDeviceManager.enterAnimationUpdate(true)
+        }
+
+        toolbarContainer.onUp = {
+            EpdDeviceManager.exitAnimationUpdate(true)
+        }
 
         resetToTopLeft()
     }
