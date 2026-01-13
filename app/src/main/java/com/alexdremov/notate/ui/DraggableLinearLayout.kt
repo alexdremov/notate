@@ -47,7 +47,7 @@ class DraggableLinearLayout
 
         var onDown: (() -> Unit)? = null
         var onUp: (() -> Unit)? = null
-        
+
         var isDragEnabled: Boolean = true
 
         override fun onInterceptTouchEvent(ev: MotionEvent): Boolean {
@@ -55,7 +55,7 @@ class DraggableLinearLayout
                 android.util.Log.d("BooxVibesDebug", "DLL.onIntercept: DOWN, isDragEnabled=$isDragEnabled")
             }
             if (!isDragEnabled) return false
-            
+
             when (ev.action) {
                 MotionEvent.ACTION_DOWN -> {
                     lastTouchX = ev.rawX
@@ -75,7 +75,7 @@ class DraggableLinearLayout
                         return true
                     }
                 }
-                
+
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                     android.util.Log.d("BooxVibesDebug", "DLL.onIntercept: UP/CANCEL")
                     onUp?.invoke()

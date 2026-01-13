@@ -61,7 +61,7 @@ class ToolbarCoordinator(
         toolbarContainer.onDragEnd = {
             EpdDeviceManager.exitAnimationUpdate(true)
         }
-        
+
         toolbarContainer.onDown = {
             EpdDeviceManager.enterAnimationUpdate(true)
         }

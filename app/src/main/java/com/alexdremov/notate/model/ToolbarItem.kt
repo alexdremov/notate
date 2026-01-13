@@ -7,27 +7,37 @@ sealed class ToolbarItem {
     abstract val id: String
 
     @Serializable
-    data class Pen(val penTool: PenTool) : ToolbarItem() {
+    data class Pen(
+        val penTool: PenTool,
+    ) : ToolbarItem() {
         override val id: String get() = penTool.id
     }
 
     @Serializable
-    data class Eraser(val penTool: PenTool) : ToolbarItem() {
+    data class Eraser(
+        val penTool: PenTool,
+    ) : ToolbarItem() {
         override val id: String get() = penTool.id
     }
 
     @Serializable
-    data class Select(val penTool: PenTool) : ToolbarItem() {
+    data class Select(
+        val penTool: PenTool,
+    ) : ToolbarItem() {
         override val id: String get() = penTool.id
     }
 
     @Serializable
-    data class Action(val actionType: ActionType) : ToolbarItem() {
+    data class Action(
+        val actionType: ActionType,
+    ) : ToolbarItem() {
         override val id: String get() = actionType.name
     }
 
     @Serializable
-    data class Widget(val widgetType: WidgetType) : ToolbarItem() {
+    data class Widget(
+        val widgetType: WidgetType,
+    ) : ToolbarItem() {
         override val id: String get() = widgetType.name
     }
 }
@@ -35,10 +45,10 @@ sealed class ToolbarItem {
 @Serializable
 enum class ActionType {
     UNDO,
-    REDO
+    REDO,
 }
 
 @Serializable
 enum class WidgetType {
-    PAGE_NAVIGATION
+    PAGE_NAVIGATION,
 }

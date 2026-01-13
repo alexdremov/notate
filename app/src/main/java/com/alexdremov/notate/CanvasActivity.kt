@@ -115,62 +115,67 @@ class CanvasActivity : AppCompatActivity() {
         toolbarCoordinator.onOrientationChanged = {
             isToolbarHorizontal.value = toolbarCoordinator.getOrientation() == LinearLayout.HORIZONTAL
         }
-        
+
         // Disable drawing when interacting with toolbar (touch down)
         // This prevents accidental strokes and improves UI responsiveness
         binding.toolbarContainer.onDown = {
             viewModel.setDrawingEnabled(false)
-            com.onyx.android.sdk.api.device.EpdDeviceManager.enterAnimationUpdate(true)
+            com.onyx.android.sdk.api.device.EpdDeviceManager
+                .enterAnimationUpdate(true)
         }
-        
+
         binding.toolbarContainer.onUp = {
-             // Re-enable drawing only if not in edit mode
+            // Re-enable drawing only if not in edit mode
             if (!viewModel.isEditMode.value) {
                 viewModel.setDrawingEnabled(true)
             }
-            com.onyx.android.sdk.api.device.EpdDeviceManager.exitAnimationUpdate(true)
+            com.onyx.android.sdk.api.device.EpdDeviceManager
+                .exitAnimationUpdate(true)
         }
-        
+
         toolbarCoordinator.setup()
 
         // Initialize Toolbar UI (Compose)
         binding.toolbarContainer.removeAllViews()
-        val composeToolbar = androidx.compose.ui.platform.ComposeView(this).apply {
-            layoutParams = ViewGroup.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            )
-            setViewCompositionStrategy(androidx.compose.ui.platform.ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed)
-            setContent {
-                val horizontal by remember { isToolbarHorizontal }
-                com.alexdremov.notate.ui.toolbar.ToolbarView(
-                    viewModel = viewModel,
-                    isHorizontal = horizontal,
-                    canvasController = binding.canvasView.getController(),
-                    canvasModel = binding.canvasView.getModel(),
-                    onToolClick = { item, rect -> 
-                        // Convert Compose Rect to Android Graphics Rect
-                        val androidRect = android.graphics.Rect(
-                            rect.left.toInt(),
-                            rect.top.toInt(),
-                            rect.right.toInt(),
-                            rect.bottom.toInt()
-                        )
-                        handleToolClick(item.id, androidRect) 
-                    },
-                    onActionClick = { action ->
-                        when(action) {
-                            com.alexdremov.notate.model.ActionType.UNDO -> binding.canvasView.undo()
-                            com.alexdremov.notate.model.ActionType.REDO -> binding.canvasView.redo()
-                        }
-                    },
-                    onOpenSidebar = { 
-                        sidebarCoordinator.open()
-                        sidebarController.showMainMenu()
-                    }
-                )
+        val composeToolbar =
+            androidx.compose.ui.platform.ComposeView(this).apply {
+                layoutParams =
+                    ViewGroup.LayoutParams(
+                        ViewGroup.LayoutParams.WRAP_CONTENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT,
+                    )
+                setViewCompositionStrategy(androidx.compose.ui.platform.ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed)
+                setContent {
+                    val horizontal by remember { isToolbarHorizontal }
+                    com.alexdremov.notate.ui.toolbar.ToolbarView(
+                        viewModel = viewModel,
+                        isHorizontal = horizontal,
+                        canvasController = binding.canvasView.getController(),
+                        canvasModel = binding.canvasView.getModel(),
+                        onToolClick = { item, rect ->
+                            // Convert Compose Rect to Android Graphics Rect
+                            val androidRect =
+                                android.graphics.Rect(
+                                    rect.left.toInt(),
+                                    rect.top.toInt(),
+                                    rect.right.toInt(),
+                                    rect.bottom.toInt(),
+                                )
+                            handleToolClick(item.id, androidRect)
+                        },
+                        onActionClick = { action ->
+                            when (action) {
+                                com.alexdremov.notate.model.ActionType.UNDO -> binding.canvasView.undo()
+                                com.alexdremov.notate.model.ActionType.REDO -> binding.canvasView.redo()
+                            }
+                        },
+                        onOpenSidebar = {
+                            sidebarCoordinator.open()
+                            sidebarController.showMainMenu()
+                        },
+                    )
+                }
             }
-        }
         binding.toolbarContainer.addView(composeToolbar)
 
         // Ensure clicking/tapping anywhere on the toolbar clears selection
@@ -205,7 +210,7 @@ class CanvasActivity : AppCompatActivity() {
                 onEditToolbar = {
                     sidebarCoordinator.close()
                     viewModel.setEditMode(true)
-                }
+                },
             )
 
         binding.canvasView.onStrokeStarted = {
@@ -281,8 +286,10 @@ class CanvasActivity : AppCompatActivity() {
                 if (!jsonString.isNullOrEmpty()) {
                     val data = Json.decodeFromString<CanvasData>(jsonString)
                     // Parse heavy geometry on background thread
-                    val loadedState = com.alexdremov.notate.data.CanvasSerializer.parseCanvasData(data)
-                    
+                    val loadedState =
+                        com.alexdremov.notate.data.CanvasSerializer
+                            .parseCanvasData(data)
+
                     withContext(Dispatchers.Main) {
                         binding.canvasView.loadCanvasState(loadedState)
                         val isFixed = loadedState.canvasType == com.alexdremov.notate.data.CanvasType.FIXED_PAGES
@@ -367,22 +374,33 @@ class CanvasActivity : AppCompatActivity() {
         toolId: String,
         targetRect: android.graphics.Rect,
     ) {
-        android.util.Log.d("BooxVibesDebug", "CanvasActivity: handleToolClick ID=$toolId, Rect=$targetRect, ActiveID=${viewModel.activeToolId.value}")
+        android.util.Log.d(
+            "BooxVibesDebug",
+            "CanvasActivity: handleToolClick ID=$toolId, Rect=$targetRect, ActiveID=${viewModel.activeToolId.value}",
+        )
         binding.canvasView.getController().clearSelection()
         binding.canvasView.dismissActionPopup()
         if (viewModel.activeToolId.value == toolId) {
             val item = viewModel.toolbarItems.value.find { it.id == toolId }
-            val tool = when (item) {
-                is com.alexdremov.notate.model.ToolbarItem.Pen -> item.penTool
-                is com.alexdremov.notate.model.ToolbarItem.Eraser -> {
-                    // Logic to get the current eraser config
-                    viewModel.activeTool.value
-                }
-                is com.alexdremov.notate.model.ToolbarItem.Select -> {
-                    viewModel.activeTool.value
-                }
-                else -> null
-            } ?: return
+            val tool =
+                when (item) {
+                    is com.alexdremov.notate.model.ToolbarItem.Pen -> {
+                        item.penTool
+                    }
+
+                    is com.alexdremov.notate.model.ToolbarItem.Eraser -> {
+                        // Logic to get the current eraser config
+                        viewModel.activeTool.value
+                    }
+
+                    is com.alexdremov.notate.model.ToolbarItem.Select -> {
+                        viewModel.activeTool.value
+                    }
+
+                    else -> {
+                        null
+                    }
+                } ?: return
 
             val popup =
                 com.alexdremov.notate.ui.dialog.PenSettingsPopup(

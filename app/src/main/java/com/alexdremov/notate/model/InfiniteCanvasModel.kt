@@ -485,7 +485,7 @@ class InfiniteCanvasModel {
         rwLock.write {
             allStrokes.clear()
             historyManager.clear()
-            
+
             allStrokes.addAll(state.strokes)
             quadtree = state.quadtree
             contentBounds.set(state.contentBounds)

@@ -140,25 +140,51 @@ object PreferencesManager {
                 defaultToolbarItems()
             }
         }
-        
+
         return defaultToolbarItems()
     }
 
     private fun defaultToolbarItems(): List<com.alexdremov.notate.model.ToolbarItem> {
         val items = mutableListOf<com.alexdremov.notate.model.ToolbarItem>()
         val defaultPens = PenTool.defaultPens()
-        
+
         defaultPens.forEach { tool ->
             when (tool.type) {
-                com.alexdremov.notate.model.ToolType.PEN -> items.add(com.alexdremov.notate.model.ToolbarItem.Pen(tool))
-                com.alexdremov.notate.model.ToolType.ERASER -> items.add(com.alexdremov.notate.model.ToolbarItem.Eraser(tool))
-                com.alexdremov.notate.model.ToolType.SELECT -> items.add(com.alexdremov.notate.model.ToolbarItem.Select(tool))
+                com.alexdremov.notate.model.ToolType.PEN -> {
+                    items.add(
+                        com.alexdremov.notate.model.ToolbarItem
+                            .Pen(tool),
+                    )
+                }
+
+                com.alexdremov.notate.model.ToolType.ERASER -> {
+                    items.add(
+                        com.alexdremov.notate.model.ToolbarItem
+                            .Eraser(tool),
+                    )
+                }
+
+                com.alexdremov.notate.model.ToolType.SELECT -> {
+                    items.add(
+                        com.alexdremov.notate.model.ToolbarItem
+                            .Select(tool),
+                    )
+                }
             }
         }
-        
-        items.add(com.alexdremov.notate.model.ToolbarItem.Action(com.alexdremov.notate.model.ActionType.UNDO))
-        items.add(com.alexdremov.notate.model.ToolbarItem.Action(com.alexdremov.notate.model.ActionType.REDO))
-        items.add(com.alexdremov.notate.model.ToolbarItem.Widget(com.alexdremov.notate.model.WidgetType.PAGE_NAVIGATION))
+
+        items.add(
+            com.alexdremov.notate.model.ToolbarItem
+                .Action(com.alexdremov.notate.model.ActionType.UNDO),
+        )
+        items.add(
+            com.alexdremov.notate.model.ToolbarItem
+                .Action(com.alexdremov.notate.model.ActionType.REDO),
+        )
+        items.add(
+            com.alexdremov.notate.model.ToolbarItem
+                .Widget(com.alexdremov.notate.model.WidgetType.PAGE_NAVIGATION),
+        )
         return items
     }
 

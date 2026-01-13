@@ -154,7 +154,9 @@ object CanvasSerializer {
      */
     fun parseCanvasData(data: CanvasData): LoadedCanvasState {
         val strokes = ArrayList<Stroke>()
-        var quadtree = com.alexdremov.notate.util.Quadtree(0, RectF(-50000f, -50000f, 50000f, 50000f))
+        var quadtree =
+            com.alexdremov.notate.util
+                .Quadtree(0, RectF(-50000f, -50000f, 50000f, 50000f))
         val contentBounds = RectF()
         var nextStrokeOrder: Long = 0
 
@@ -226,7 +228,7 @@ object CanvasSerializer {
 
                 strokes.add(stroke)
                 quadtree = quadtree.insert(stroke)
-                
+
                 if (contentBounds.isEmpty) {
                     contentBounds.set(bounds)
                 } else {
@@ -236,7 +238,7 @@ object CanvasSerializer {
         } catch (e: Exception) {
             Log.e("CanvasSerializer", "Error parsing canvas data", e)
         }
-        
+
         return LoadedCanvasState(
             strokes = strokes,
             quadtree = quadtree,
@@ -248,7 +250,7 @@ object CanvasSerializer {
             backgroundStyle = data.backgroundStyle,
             viewportScale = data.zoomLevel,
             viewportOffsetX = data.offsetX,
-            viewportOffsetY = data.offsetY
+            viewportOffsetY = data.offsetY,
         )
     }
 }

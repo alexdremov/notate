@@ -19,7 +19,7 @@ class SettingsSidebarController(
     private val isFixedPageMode: () -> Boolean,
     private val onStyleUpdate: (BackgroundStyle) -> Unit,
     private val onExportRequest: (ExportAction) -> Unit,
-    private val onEditToolbar: () -> Unit
+    private val onEditToolbar: () -> Unit,
 ) {
     private val wrapperView: View = LayoutInflater.from(context).inflate(R.layout.sidebar_layout_wrapper, container, false)
     private val contentFrame: FrameLayout = wrapperView.findViewById(R.id.sidebar_content)

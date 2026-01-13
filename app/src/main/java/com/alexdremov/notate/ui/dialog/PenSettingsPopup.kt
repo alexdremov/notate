@@ -521,11 +521,14 @@ class PenSettingsPopup(
         onUpdate(currentTool)
     }
 
-    fun show(parent: View, targetRect: Rect) {
+    fun show(
+        parent: View,
+        targetRect: Rect,
+    ) {
         val displayMetrics = context.resources.displayMetrics
         val screenWidth = displayMetrics.widthPixels
         val screenHeight = displayMetrics.heightPixels
-        
+
         val anchorX = targetRect.left
         val anchorY = targetRect.top
         val anchorHeight = targetRect.height()
@@ -545,7 +548,7 @@ class PenSettingsPopup(
 
         // If anchor + popup would go off-screen right
         if (xPos + popupWidth > screenWidth - padding) {
-             // Align right edge of popup with right edge of anchor, or push left
+            // Align right edge of popup with right edge of anchor, or push left
             xPos = (screenWidth - padding) - popupWidth
         }
 
