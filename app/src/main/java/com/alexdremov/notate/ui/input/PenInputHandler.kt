@@ -428,7 +428,7 @@ class PenInputHandler(
                 controller.selectStrokes(strokes)
 
                 // Trigger refresh to clear the HW drawn dashed line
-                refreshHandler.post(refreshRunnable)
+                refreshHandler.postDelayed(refreshRunnable, 50)
             } else {
                 // Rectangle Select Finalize
                 val startX = selectionStartX ?: touchPoint.x
