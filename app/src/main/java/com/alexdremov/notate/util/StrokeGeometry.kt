@@ -315,9 +315,12 @@ object StrokeGeometry {
                     val interpY = previousPoint.y + (currentPoint.y - previousPoint.y) * t
                     val interpP = previousPoint.pressure + (currentPoint.pressure - previousPoint.pressure) * t
                     val interpS = previousPoint.size + (currentPoint.size - previousPoint.size) * t
+                    // Normalize tilt to Float during interpolation
+                    val interpTX = previousPoint.tiltX.toFloat() + (currentPoint.tiltX.toFloat() - previousPoint.tiltX.toFloat()) * t
+                    val interpTY = previousPoint.tiltY.toFloat() + (currentPoint.tiltY.toFloat() - previousPoint.tiltY.toFloat()) * t
                     val interpTime = previousPoint.timestamp + ((currentPoint.timestamp - previousPoint.timestamp) * t).toLong()
 
-                    val p = TouchPoint(interpX, interpY, interpP, interpS, interpTime)
+                    val p = TouchPoint(interpX, interpY, interpP, interpS, interpTX.toInt(), interpTY.toInt(), interpTime)
 
                     if (isPointErased(p)) {
                         modificationHappened = true

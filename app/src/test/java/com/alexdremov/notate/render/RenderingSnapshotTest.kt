@@ -107,13 +107,13 @@ class RenderingSnapshotTest {
             // Varying Pressure
             val pressure = (sin(t * Math.PI) * 4096).toFloat().coerceIn(100f, 4096f)
 
-            // Varying Tilt (Int)
-            val tiltX = (t * 90).toInt() // 0 to 90 degrees
-            val tiltY = 0
+            // Varying Tilt (Float normalized)
+            val tiltX = t * 90f // 0 to 90 degrees
+            val tiltY = 0f
 
             val size = 10f + t * 20f
 
-            points.add(TouchPoint(x, y, pressure, size, tiltX, tiltY, i * 10L))
+            points.add(TouchPoint(x, y, pressure, size, tiltX.toInt(), tiltY.toInt(), i * 10L))
         }
         return points
     }

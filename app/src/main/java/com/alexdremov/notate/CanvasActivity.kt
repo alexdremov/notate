@@ -1,3 +1,5 @@
+@file:OptIn(kotlinx.serialization.ExperimentalSerializationApi::class)
+
 package com.alexdremov.notate
 
 import android.content.res.ColorStateList
@@ -33,7 +35,6 @@ import com.alexdremov.notate.ui.SidebarCoordinator
 import com.alexdremov.notate.ui.ToolbarCoordinator
 import com.alexdremov.notate.ui.dpToPx
 import com.alexdremov.notate.ui.export.ExportAction
-import com.alexdremov.notate.util.ThumbnailGenerator
 import com.alexdremov.notate.vm.DrawingViewModel
 import com.onyx.android.sdk.api.device.EpdDeviceManager
 import com.onyx.android.sdk.api.device.epd.EpdController
@@ -47,8 +48,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
-import kotlinx.serialization.encodeToString
-import kotlinx.serialization.json.Json
 import java.io.File
 
 class CanvasActivity : AppCompatActivity() {
@@ -62,6 +61,7 @@ class CanvasActivity : AppCompatActivity() {
     private lateinit var sidebarController: SettingsSidebarController
     private lateinit var toolbarCoordinator: ToolbarCoordinator
     private lateinit var exportCoordinator: CanvasExportCoordinator
+    private lateinit var canvasRepository: com.alexdremov.notate.data.CanvasRepository
 
     private var autoSaveJob: Job? = null
     private val saveMutex = Mutex()
@@ -81,6 +81,9 @@ class CanvasActivity : AppCompatActivity() {
 
         // Initialize State Holder
         isFixedPageState = mutableStateOf(false)
+        canvasRepository =
+            com.alexdremov.notate.data
+                .CanvasRepository(this)
 
         // Use DU (Direct Update) as the baseline for high responsiveness and no flashing.
         EpdController.setViewDefaultUpdateMode(window.decorView, UpdateMode.DU)
@@ -271,34 +274,27 @@ class CanvasActivity : AppCompatActivity() {
             }
     }
 
+    @androidx.annotation.OptIn(kotlinx.serialization.ExperimentalSerializationApi::class)
     private fun loadCanvas() {
         val path = currentCanvasPath ?: return
         lifecycleScope.launch(Dispatchers.IO) {
-            try {
-                val jsonString =
-                    if (path.startsWith("content://")) {
-                        contentResolver.openInputStream(Uri.parse(path))?.bufferedReader()?.use { it.readText() }
-                    } else {
-                        val file = File(path)
-                        if (file.exists() && file.length() > 0) file.readText() else null
-                    }
+            val result = canvasRepository.loadCanvas(path)
 
-                if (!jsonString.isNullOrEmpty()) {
-                    val data = Json.decodeFromString<CanvasData>(jsonString)
-                    // Parse heavy geometry on background thread
-                    val loadedState =
-                        com.alexdremov.notate.data.CanvasSerializer
-                            .parseCanvasData(data)
+            if (result != null) {
+                withContext(Dispatchers.Main) {
+                    val tUiStart = System.currentTimeMillis()
+                    binding.canvasView.loadCanvasState(result.canvasState)
+                    val isFixed = result.canvasState.canvasType == com.alexdremov.notate.data.CanvasType.FIXED_PAGES
+                    isFixedPageState?.value = isFixed
+                    viewModel.setFixedPageMode(isFixed)
+                    val tUiEnd = System.currentTimeMillis()
+                    android.util.Log.d("CanvasActivity", "  UI Load: ${tUiEnd - tUiStart}ms")
 
-                    withContext(Dispatchers.Main) {
-                        binding.canvasView.loadCanvasState(loadedState)
-                        val isFixed = loadedState.canvasType == com.alexdremov.notate.data.CanvasType.FIXED_PAGES
-                        isFixedPageState?.value = isFixed
-                        viewModel.setFixedPageMode(isFixed)
+                    if (result.migrationPerformed && result.newPath != null) {
+                        currentCanvasPath = result.newPath
+                        android.util.Log.d("CanvasActivity", "Migration completed, new path: $currentCanvasPath")
                     }
                 }
-            } catch (e: Exception) {
-                e.printStackTrace()
             }
         }
     }
@@ -308,34 +304,17 @@ class CanvasActivity : AppCompatActivity() {
         saveCanvas()
     }
 
+    @androidx.annotation.OptIn(kotlinx.serialization.ExperimentalSerializationApi::class)
     private fun saveCanvas() {
         val path = currentCanvasPath ?: return
+        android.util.Log.d("CanvasActivity", "Saving canvas to $path")
         val rawData = binding.canvasView.getCanvasData()
 
         lifecycleScope.launch(Dispatchers.Default) {
-            // Generate thumbnail off the UI thread but before serialization
-            val thumbBase64 = ThumbnailGenerator.generateBase64(rawData)
-            val dataWithThumb = rawData.copy(thumbnail = thumbBase64)
-
             withContext(NonCancellable) {
                 saveMutex.withLock {
                     try {
-                        val jsonString = Json.encodeToString(dataWithThumb)
-
-                        if (path.startsWith("content://")) {
-                            contentResolver.openOutputStream(Uri.parse(path), "wt")?.use {
-                                it.write(jsonString.toByteArray())
-                            }
-                        } else {
-                            // Atomic write for local files
-                            val targetFile = File(path)
-                            val tmpFile = File(targetFile.parent, "${targetFile.name}.tmp")
-                            tmpFile.writeText(jsonString)
-                            if (targetFile.exists()) {
-                                targetFile.delete()
-                            }
-                            tmpFile.renameTo(targetFile)
-                        }
+                        canvasRepository.saveCanvas(path, rawData)
                     } catch (e: Exception) {
                         e.printStackTrace()
                     }

@@ -7,6 +7,7 @@ import com.alexdremov.notate.model.InfiniteCanvasModel
 import com.alexdremov.notate.model.Stroke
 import com.alexdremov.notate.ui.render.CanvasRenderer
 import java.util.ArrayList
+import java.util.stream.Collectors
 
 class CanvasControllerImpl(
     private val model: InfiniteCanvasModel,
@@ -115,17 +116,21 @@ class CanvasControllerImpl(
         val strokes = model.queryStrokes(bounds)
 
         // Strict Lasso Logic: Convert path to polygon points
+        // Use a coarser step (15f) for faster polygon construction without losing much precision for selection
         val pathPoints =
             com.alexdremov.notate.util.StrokeGeometry
-                .flattenPath(path)
+                .flattenPath(path, 15f)
 
-        return strokes.filter { stroke ->
-            if (!bounds.contains(stroke.bounds)) return@filter false
-            stroke.points.all { p ->
-                com.alexdremov.notate.util.StrokeGeometry
-                    .isPointInPolygon(p.x, p.y, pathPoints)
-            }
-        }
+        // Parallel processing for heavy geometric checks
+        return strokes
+            .parallelStream()
+            .filter { stroke ->
+                if (!bounds.contains(stroke.bounds)) return@filter false
+                stroke.points.all { p ->
+                    com.alexdremov.notate.util.StrokeGeometry
+                        .isPointInPolygon(p.x, p.y, pathPoints)
+                }
+            }.collect(Collectors.toList())
     }
 
     override fun selectStroke(stroke: Stroke) {

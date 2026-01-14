@@ -1,8 +1,11 @@
+@file:OptIn(kotlinx.serialization.ExperimentalSerializationApi::class)
+
 package com.alexdremov.notate.data
 
 import com.alexdremov.notate.model.BackgroundStyle
 import com.alexdremov.notate.model.StrokeType
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.protobuf.ProtoNumber
 
 enum class CanvasType {
     INFINITE,
@@ -11,27 +14,45 @@ enum class CanvasType {
 
 @Serializable
 data class CanvasData(
+    @ProtoNumber(1)
     val thumbnail: String? = null, // Base64 encoded PNG
-    val version: Int = 2,
+    @ProtoNumber(2)
+    val version: Int = 3,
+    @ProtoNumber(3)
     val strokes: List<StrokeData> = emptyList(),
+    @ProtoNumber(4)
     val offsetX: Float = 0f,
+    @ProtoNumber(5)
     val offsetY: Float = 0f,
+    @ProtoNumber(6)
     val zoomLevel: Float = 1f,
+    @ProtoNumber(7)
     val canvasType: CanvasType = CanvasType.INFINITE,
+    @ProtoNumber(8)
     val pageWidth: Float = 0f,
+    @ProtoNumber(9)
     val pageHeight: Float = 0f,
+    @ProtoNumber(10)
     val backgroundStyle: BackgroundStyle = BackgroundStyle.Blank(),
 )
 
 @Serializable
 data class StrokeData(
+    @ProtoNumber(1)
     val points: List<PointData> = emptyList(),
-    val pointsPacked: FloatArray? = null, // [x, y, pressure, size, x, y, ...]
+    @ProtoNumber(2)
+    val pointsPacked: FloatArray? = null, // [x, y, pressure, size, tiltX, tiltY, ...]
+    @ProtoNumber(3)
     val timestampsPacked: LongArray? = null, // [t, t, ...]
+    @ProtoNumber(4)
     val color: Int,
+    @ProtoNumber(5)
     val width: Float,
+    @ProtoNumber(6)
     val style: StrokeType,
+    @ProtoNumber(7)
     val strokeOrder: Long = 0,
+    @ProtoNumber(8)
     val zIndex: Float = 0f,
 ) {
     override fun equals(other: Any?): Boolean {
@@ -75,14 +96,24 @@ data class StrokeData(
 
 @Serializable
 data class PointData(
+    @ProtoNumber(1)
     val x: Float,
+    @ProtoNumber(2)
     val y: Float,
+    @ProtoNumber(3)
     val pressure: Float,
+    @ProtoNumber(4)
     val size: Float,
+    @ProtoNumber(5)
+    val tiltX: Float = 0f,
+    @ProtoNumber(6)
+    val tiltY: Float = 0f,
+    @ProtoNumber(7)
     val timestamp: Long,
 )
 
 @Serializable
 data class CanvasDataPreview(
+    @ProtoNumber(1)
     val thumbnail: String? = null,
 )

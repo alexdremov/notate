@@ -55,6 +55,9 @@ class MainActivity : ComponentActivity() {
         // Use fast animation mode for the menu UI
         EpdDeviceManager.enterAnimationUpdate(true)
 
+        // Handle incoming intent (e.g. from File Manager)
+        handleIntent(intent)
+
         setContent {
             NotateTheme {
                 Surface(
@@ -65,6 +68,26 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    private fun handleIntent(intent: Intent?) {
+        if (intent?.action == Intent.ACTION_VIEW) {
+            val uri = intent.data ?: return
+            val path = if (uri.scheme == "file") uri.path else uri.toString()
+            if (path != null) {
+                val canvasIntent =
+                    Intent(this, CanvasActivity::class.java).apply {
+                        putExtra("CANVAS_PATH", path)
+                    }
+                startActivity(canvasIntent)
+            }
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleIntent(intent)
     }
 
     override fun onResume() {

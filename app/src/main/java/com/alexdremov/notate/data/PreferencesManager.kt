@@ -1,17 +1,33 @@
+@file:OptIn(kotlinx.serialization.ExperimentalSerializationApi::class)
+
 package com.alexdremov.notate.data
 
 import android.content.Context
 import android.content.SharedPreferences
+import android.util.Base64
 import com.alexdremov.notate.model.PenTool
+import com.alexdremov.notate.model.ToolbarItem
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.encodeToString
+import kotlinx.serialization.builtins.ListSerializer
+import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.protobuf.ProtoBuf
+import kotlinx.serialization.protobuf.ProtoNumber
 
 @Serializable
 data class ProjectConfig(
+    @ProtoNumber(1)
     val id: String,
+    @ProtoNumber(2)
     val name: String,
+    @ProtoNumber(3)
     val uri: String,
+)
+
+@Serializable
+data class FavoriteColors(
+    @ProtoNumber(1)
+    val colors: List<Int>,
 )
 
 object PreferencesManager {
@@ -24,6 +40,8 @@ object PreferencesManager {
     private const val KEY_SHAPE_PERFECTION_DELAY = "shape_perfection_delay"
     private const val KEY_ANGLE_SNAPPING = "angle_snapping_enabled"
     private const val KEY_AXIS_LOCKING = "axis_locking_enabled"
+
+    private val protoBuf = ProtoBuf
 
     private fun getPrefs(context: Context): SharedPreferences = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
@@ -75,11 +93,19 @@ object PreferencesManager {
     }
 
     fun getProjects(context: Context): List<ProjectConfig> {
-        val json = getPrefs(context).getString(KEY_PROJECTS, null) ?: return emptyList()
+        val data = getPrefs(context).getString(KEY_PROJECTS, null) ?: return emptyList()
         return try {
-            Json.decodeFromString(json)
+            val bytes = Base64.decode(data, Base64.DEFAULT)
+            protoBuf.decodeFromByteArray(ListSerializer(ProjectConfig.serializer()), bytes)
         } catch (e: Exception) {
-            emptyList()
+            // Fallback to JSON for migration
+            try {
+                val projects = Json.decodeFromString<List<ProjectConfig>>(data)
+                saveProjects(context, projects) // Resave in new format
+                projects
+            } catch (jsonError: Exception) {
+                emptyList()
+            }
         }
     }
 
@@ -117,8 +143,9 @@ object PreferencesManager {
         context: Context,
         list: List<ProjectConfig>,
     ) {
-        val json = Json.encodeToString(list)
-        getPrefs(context).edit().putString(KEY_PROJECTS, json).apply()
+        val bytes = protoBuf.encodeToByteArray(ListSerializer(ProjectConfig.serializer()), list)
+        val string = Base64.encodeToString(bytes, Base64.DEFAULT)
+        getPrefs(context).edit().putString(KEY_PROJECTS, string).apply()
     }
 
     // --- Toolbox Persistence ---
@@ -127,20 +154,28 @@ object PreferencesManager {
         context: Context,
         items: List<com.alexdremov.notate.model.ToolbarItem>,
     ) {
-        val json = Json.encodeToString(items)
-        getPrefs(context).edit().putString(KEY_TOOLBAR_ITEMS, json).apply()
+        val bytes = protoBuf.encodeToByteArray(ListSerializer(ToolbarItem.serializer()), items)
+        val string = Base64.encodeToString(bytes, Base64.DEFAULT)
+        getPrefs(context).edit().putString(KEY_TOOLBAR_ITEMS, string).apply()
     }
 
     fun getToolbarItems(context: Context): List<com.alexdremov.notate.model.ToolbarItem> {
-        val json = getPrefs(context).getString(KEY_TOOLBAR_ITEMS, null)
-        if (json != null) {
+        val data = getPrefs(context).getString(KEY_TOOLBAR_ITEMS, null)
+        if (data != null) {
             return try {
-                Json.decodeFromString(json)
+                val bytes = Base64.decode(data, Base64.DEFAULT)
+                protoBuf.decodeFromByteArray(ListSerializer(ToolbarItem.serializer()), bytes)
             } catch (e: Exception) {
-                defaultToolbarItems()
+                // Fallback to JSON
+                try {
+                    val items = Json.decodeFromString<List<com.alexdremov.notate.model.ToolbarItem>>(data)
+                    saveToolbarItems(context, items) // Resave
+                    items
+                } catch (jsonError: Exception) {
+                    defaultToolbarItems()
+                }
             }
         }
-
         return defaultToolbarItems()
     }
 
@@ -194,16 +229,26 @@ object PreferencesManager {
         context: Context,
         colors: List<Int>,
     ) {
-        val json = Json.encodeToString(colors)
-        getPrefs(context).edit().putString(KEY_COLORS, json).apply()
+        val wrapper = FavoriteColors(colors)
+        val bytes = protoBuf.encodeToByteArray(FavoriteColors.serializer(), wrapper)
+        val string = Base64.encodeToString(bytes, Base64.DEFAULT)
+        getPrefs(context).edit().putString(KEY_COLORS, string).apply()
     }
 
     fun getFavoriteColors(context: Context): List<Int> {
-        val json = getPrefs(context).getString(KEY_COLORS, null) ?: return defaultColors()
+        val data = getPrefs(context).getString(KEY_COLORS, null) ?: return defaultColors()
         return try {
-            Json.decodeFromString(json)
+            val bytes = Base64.decode(data, Base64.DEFAULT)
+            protoBuf.decodeFromByteArray(FavoriteColors.serializer(), bytes).colors
         } catch (e: Exception) {
-            defaultColors()
+            // Fallback to JSON
+            try {
+                val colors = Json.decodeFromString<List<Int>>(data)
+                saveFavoriteColors(context, colors) // Resave
+                colors
+            } catch (jsonError: Exception) {
+                defaultColors()
+            }
         }
     }
 

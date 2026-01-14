@@ -1,8 +1,11 @@
+@file:OptIn(kotlinx.serialization.ExperimentalSerializationApi::class)
+
 package com.alexdremov.notate.model
 
 import android.graphics.Color
 import com.onyx.android.sdk.pen.TouchHelper
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.protobuf.ProtoNumber
 
 @Serializable
 enum class ToolType {
@@ -26,13 +29,21 @@ enum class SelectionType {
 
 @Serializable
 data class PenTool(
+    @ProtoNumber(1)
     val id: String,
+    @ProtoNumber(2)
     val name: String,
+    @ProtoNumber(3)
     val type: ToolType,
+    @ProtoNumber(4)
     var color: Int = Color.BLACK,
+    @ProtoNumber(5)
     var width: Float = 3f,
+    @ProtoNumber(6)
     var strokeType: StrokeType = StrokeType.FOUNTAIN,
+    @ProtoNumber(7)
     var eraserType: EraserType = EraserType.STANDARD,
+    @ProtoNumber(8)
     var selectionType: SelectionType = SelectionType.RECTANGLE,
 ) {
     val displayColor: Int

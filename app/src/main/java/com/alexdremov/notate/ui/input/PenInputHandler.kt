@@ -566,17 +566,17 @@ class PenInputHandler(
                                     .map { it.size }
                                     .average()
                                     .toFloat()
-                            // Tilt is Int in Onyx SDK
+                            // Tilt is Float for our internal logic, cast to Int for SDK
                             val avgTiltX =
                                 originalStroke.points
                                     .map { it.tiltX }
                                     .average()
-                                    .toInt()
+                                    .toFloat()
                             val avgTiltY =
                                 originalStroke.points
                                     .map { it.tiltY }
                                     .average()
-                                    .toInt()
+                                    .toFloat()
 
                             for (segmentPoints in result.segments) {
                                 val newTouchPoints =
@@ -586,8 +586,8 @@ class PenInputHandler(
                                             p.y,
                                             avgPressure,
                                             avgSize,
-                                            avgTiltX,
-                                            avgTiltY,
+                                            avgTiltX.toInt(),
+                                            avgTiltY.toInt(),
                                             System.currentTimeMillis(),
                                         )
                                     }

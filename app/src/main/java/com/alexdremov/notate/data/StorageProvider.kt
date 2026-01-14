@@ -1,11 +1,15 @@
+@file:OptIn(kotlinx.serialization.ExperimentalSerializationApi::class)
+
 package com.alexdremov.notate.data
 
 import android.content.Context
 import android.net.Uri
+import android.util.Log
 import androidx.documentfile.provider.DocumentFile
-import kotlinx.serialization.encodeToString
-import kotlinx.serialization.json.Json
+import kotlinx.serialization.encodeToByteArray
+import kotlinx.serialization.protobuf.ProtoBuf
 import java.io.File
+import java.io.InputStream
 
 interface StorageProvider {
     fun isApplicable(path: String?): Boolean
@@ -64,7 +68,7 @@ class LocalStorageProvider(
                         )
                     }
 
-                    it.extension == "json" -> {
+                    it.extension == "json" || it.extension == "notate" -> {
                         CanvasItem(
                             name = it.nameWithoutExtension,
                             path = it.absolutePath,
@@ -81,6 +85,26 @@ class LocalStorageProvider(
     }
 
     private fun extractThumbnail(file: File): String? {
+        // Peek at the first byte to determine format
+        // JSON starts with '{' (0x7B)
+        // Protobuf with thumbnail (field 1) starts with 0x0A
+        var isJson = false
+        try {
+            file.inputStream().use { stream ->
+                val firstByte = stream.read()
+                if (firstByte == 0x7B) {
+                    isJson = true
+                }
+            }
+        } catch (e: Exception) {
+            // If read fails, assume based on extension as fallback
+            isJson = file.extension == "json"
+        }
+
+        return if (isJson) extractThumbnailJson(file) else extractThumbnailProtobuf(file)
+    }
+
+    private fun extractThumbnailJson(file: File): String? {
         return try {
             file.reader().use { reader ->
                 val buffer = CharArray(500 * 1024)
@@ -91,6 +115,20 @@ class LocalStorageProvider(
                 match?.groupValues?.get(1)
             }
         } catch (e: Exception) {
+            e.printStackTrace()
+            Log.i("Thumbnail", "Failed to extract thumbnail from JSON")
+            null
+        }
+    }
+
+    private fun extractThumbnailProtobuf(file: File): String? {
+        return try {
+            val bytes = file.readBytes()
+            if (bytes.isEmpty()) return null
+            ProtoBuf.decodeFromByteArray(CanvasDataPreview.serializer(), bytes).thumbnail
+        } catch (e: Exception) {
+            e.printStackTrace()
+            Log.i("Thumbnail", "Failed to extract thumbnail from protobuf")
             null
         }
     }
@@ -112,14 +150,14 @@ class LocalStorageProvider(
     ): String? {
         val targetPath = parentPath ?: rootDir.absolutePath
         val safeName = name.replace("[^a-zA-Z0-9\\s]".toRegex(), "").trim()
-        val fileName = "$safeName.json"
+        val fileName = "$safeName.notate"
 
         val parent = File(targetPath)
         val file = File(parent, fileName)
 
         return if (!file.exists()) {
-            val json = Json.encodeToString(data)
-            file.writeText(json)
+            val bytes = ProtoBuf.encodeToByteArray(data)
+            file.writeBytes(bytes)
             file.absolutePath
         } else {
             null
@@ -203,9 +241,11 @@ class SafStorageProvider(
                         )
                     }
 
-                    it.name?.endsWith(".json") == true -> {
+                    it.name?.endsWith(".json") == true || it.name?.endsWith(".notate") == true -> {
+                        val name = it.name ?: "Unknown"
+                        val isJsonExt = name.endsWith(".json")
                         CanvasItem(
-                            name = it.name?.removeSuffix(".json") ?: "Unknown",
+                            name = name.removeSuffix(if (isJsonExt) ".json" else ".notate"),
                             path = it.uri.toString(),
                             lastModified = it.lastModified(),
                             thumbnail = extractThumbnail(it),
@@ -220,6 +260,21 @@ class SafStorageProvider(
     }
 
     private fun extractThumbnail(file: DocumentFile): String? {
+        var isJson = false
+        try {
+            context.contentResolver.openInputStream(file.uri)?.use { stream ->
+                val firstByte = stream.read()
+                if (firstByte == 0x7B) {
+                    isJson = true
+                }
+            }
+        } catch (e: Exception) {
+            isJson = file.name?.endsWith(".json") == true
+        }
+        return if (isJson) extractThumbnailJson(file) else extractThumbnailProtobuf(file)
+    }
+
+    private fun extractThumbnailJson(file: DocumentFile): String? {
         return try {
             context.contentResolver.openInputStream(file.uri)?.use { stream ->
                 val buffer = ByteArray(500 * 1024) // 500KB
@@ -228,6 +283,18 @@ class SafStorageProvider(
                 val header = String(buffer, 0, read, Charsets.UTF_8)
                 val match = Regex("\"thumbnail\"\\s*:\\s*\"([^\"]+)\"").find(header)
                 match?.groupValues?.get(1)
+            }
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    private fun extractThumbnailProtobuf(file: DocumentFile): String? {
+        return try {
+            context.contentResolver.openInputStream(file.uri)?.use { stream ->
+                val bytes = stream.readBytes()
+                if (bytes.isEmpty()) return null
+                ProtoBuf.decodeFromByteArray(CanvasDataPreview.serializer(), bytes).thumbnail
             }
         } catch (e: Exception) {
             null
@@ -257,16 +324,17 @@ class SafStorageProvider(
         val parentDir = DocumentFile.fromTreeUri(context, targetUri) ?: return null
 
         val safeName = name.replace("[^a-zA-Z0-9\\s]".toRegex(), "").trim()
-        val fileName = "$safeName.json"
+        val fileName = "$safeName.notate"
 
         if (parentDir.findFile(fileName) != null) return null
 
-        val newFile = parentDir.createFile("application/json", safeName) ?: return null
+        // Using octet-stream for .notate
+        val newFile = parentDir.createFile("application/octet-stream", fileName) ?: return null
 
         return try {
-            val json = Json.encodeToString(data)
+            val bytes = ProtoBuf.encodeToByteArray(data)
             context.contentResolver.openOutputStream(newFile.uri)?.use { os ->
-                os.write(json.toByteArray())
+                os.write(bytes)
             }
             newFile.uri.toString()
         } catch (e: Exception) {
@@ -294,8 +362,9 @@ class SafStorageProvider(
                 newName
             } else {
                 val currentName = df.name ?: ""
-                if (currentName.endsWith(".json", ignoreCase = true) && !newName.endsWith(".json", ignoreCase = true)) {
-                    "$newName.json"
+                val ext = if (currentName.endsWith(".json")) ".json" else ".notate"
+                if (currentName.endsWith(ext, ignoreCase = true) && !newName.endsWith(ext, ignoreCase = true)) {
+                    "$newName$ext"
                 } else {
                     newName
                 }
@@ -342,4 +411,40 @@ class SafStorageProvider(
             false
         }
     }
+}
+
+/**
+ * Reads the 'thumbnail' field from a Protobuf stream.
+ * Assumes 'thumbnail' is field #1 and String type (WireType 2).
+ */
+private fun readProtobufThumbnail(stream: InputStream): String? {
+    val firstByte = stream.read()
+    // Tag for Field 1, WireType 2 is 0x0A (0000 1010)
+    if (firstByte != 0x0A) return null
+
+    // Read Varint Length
+    var length = 0
+    var shift = 0
+    while (true) {
+        val b = stream.read()
+        if (b == -1) return null
+        length = length or ((b and 0x7F) shl shift)
+        if ((b and 0x80) == 0) break
+        shift += 7
+    }
+
+    // Limit length to prevent OOM on malformed data (e.g., 2MB max for thumb)
+    if (length > 2 * 1024 * 1024) return null
+
+    val bytes = ByteArray(length)
+    var totalRead = 0
+    while (totalRead < length) {
+        val r = stream.read(bytes, totalRead, length - totalRead)
+        if (r == -1) break
+        totalRead += r
+    }
+
+    if (totalRead < length) return null
+
+    return String(bytes, Charsets.UTF_8)
 }

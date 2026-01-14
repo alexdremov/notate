@@ -3,8 +3,6 @@ package com.alexdremov.notate.data
 import android.content.Context
 import android.net.Uri
 import androidx.documentfile.provider.DocumentFile
-import kotlinx.serialization.encodeToString
-import kotlinx.serialization.json.Json
 import java.io.File
 import java.io.OutputStreamWriter
 
