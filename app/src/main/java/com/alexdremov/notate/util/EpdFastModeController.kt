@@ -65,9 +65,7 @@ object EpdFastModeController {
             // Clear Transient Update
             // Passing 'false' might prevent the GC flash on exit?
             // Native app uses 'true' on idle timeout.
-            // We want to exit without flashing if possible, or maybe 'true' is cleaner.
-            // Let's try 'false' first to be "less annoying".
-            clearTransientUpdateMethod?.invoke(null, false)
+            clearTransientUpdateMethod?.invoke(null, true)
 
             // Disable Turbo
             setEpdTurboMethod?.invoke(null, false)

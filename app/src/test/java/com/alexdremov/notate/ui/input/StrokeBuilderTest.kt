@@ -24,7 +24,7 @@ class StrokeBuilderTest {
         builder.addPoint(end)
         assertTrue(builder.hasPoints())
 
-        val stroke = builder.build(Color.BLACK, 5f, StrokeType.PENCIL)
+        val stroke = builder.build(Color.BLACK, 5f, StrokeType.FINELINER)
         assertNotNull(stroke)
         assertEquals(2, stroke!!.points.size)
         assertEquals(Color.BLACK, stroke.color)
@@ -37,7 +37,7 @@ class StrokeBuilderTest {
         val start = TouchPoint(0f, 0f, 1f, 1f, 0L)
 
         builder.start(start)
-        assertNull(builder.build(Color.BLACK, 5f, StrokeType.PENCIL))
+        assertNull(builder.build(Color.BLACK, 5f, StrokeType.FINELINER))
     }
 
     @Test

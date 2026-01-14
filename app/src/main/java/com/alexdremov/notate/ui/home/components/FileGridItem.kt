@@ -2,6 +2,7 @@ package com.alexdremov.notate.ui.home.components
 
 import android.graphics.BitmapFactory
 import android.util.Base64
+import androidx.compose.animation.core.*
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -11,11 +12,13 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
@@ -33,6 +36,7 @@ import java.util.*
 @Composable
 fun FileGridItem(
     item: FileSystemItem,
+    isSyncing: Boolean = false,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
 ) {
@@ -99,6 +103,35 @@ fun FileGridItem(
                         tint = if (item is ProjectItem) Color(0xFF5AC8FA) else Color.Gray, // Apple-like Blue for folders
                         modifier = Modifier.size(56.dp),
                     )
+                }
+
+                if (isSyncing) {
+                    val infiniteTransition = rememberInfiniteTransition()
+                    val angle by infiniteTransition.animateFloat(
+                        initialValue = 0f,
+                        targetValue = 360f,
+                        animationSpec =
+                            infiniteRepeatable(
+                                animation = tween(1000, easing = LinearEasing),
+                            ),
+                    )
+
+                    Box(
+                        modifier =
+                            Modifier
+                                .align(Alignment.TopEnd)
+                                .padding(8.dp)
+                                .size(24.dp)
+                                .background(Color.White.copy(alpha = 0.8f), androidx.compose.foundation.shape.CircleShape)
+                                .padding(2.dp),
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Sync,
+                            contentDescription = "Syncing",
+                            tint = Color(0xFF007AFF),
+                            modifier = Modifier.fillMaxSize().rotate(angle),
+                        )
+                    }
                 }
             }
 

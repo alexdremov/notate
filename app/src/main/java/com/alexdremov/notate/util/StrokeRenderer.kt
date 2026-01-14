@@ -48,6 +48,17 @@ object StrokeRenderer {
         }
     }
 
+    private object BallpointStrategy : StrokeRenderingStrategy {
+        override fun render(
+            canvas: Canvas,
+            paint: Paint,
+            stroke: Stroke,
+            maxPressure: Float,
+        ) {
+            BallpointPenRenderer.render(canvas, paint, stroke, maxPressure)
+        }
+    }
+
     private object CharcoalStrategy : StrokeRenderingStrategy {
         override fun render(
             canvas: Canvas,
@@ -167,6 +178,7 @@ object StrokeRenderer {
         paint: Paint,
         stroke: Stroke,
         debug: Boolean = false,
+        forceVector: Boolean = false,
     ) {
         if (stroke.points.isEmpty()) {
             DashStrategy.render(canvas, paint, stroke, 0f) // Fallback
@@ -198,13 +210,27 @@ object StrokeRenderer {
 
         // Dispatch to Strategy
         val strategy =
-            when (stroke.style) {
-                StrokeType.FOUNTAIN -> FountainStrategy
-                StrokeType.CHARCOAL -> CharcoalStrategy
-                StrokeType.BRUSH -> BrushStrategy
-                StrokeType.HIGHLIGHTER -> HighlighterStrategy
-                StrokeType.DASH -> DashStrategy
-                else -> SimplePathStrategy
+            if (forceVector) {
+                when (stroke.style) {
+                    StrokeType.FOUNTAIN -> FountainStrategy
+
+                    StrokeType.HIGHLIGHTER -> HighlighterStrategy
+
+                    StrokeType.DASH -> DashStrategy
+
+                    // Complex types (Ballpoint, Charcoal, Brush) fallback to Simple Path for Vector PDF
+                    else -> SimplePathStrategy
+                }
+            } else {
+                when (stroke.style) {
+                    StrokeType.FOUNTAIN -> FountainStrategy
+                    StrokeType.BALLPOINT -> BallpointStrategy
+                    StrokeType.CHARCOAL -> CharcoalStrategy
+                    StrokeType.BRUSH -> BrushStrategy
+                    StrokeType.HIGHLIGHTER -> HighlighterStrategy
+                    StrokeType.DASH -> DashStrategy
+                    else -> SimplePathStrategy
+                }
             }
 
         try {

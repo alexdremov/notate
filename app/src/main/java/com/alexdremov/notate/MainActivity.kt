@@ -8,43 +8,28 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.CreateNewFolder
-import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
+import androidx.compose.material.icons.filled.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
 import com.alexdremov.notate.CanvasActivity
 import com.alexdremov.notate.data.CanvasItem
 import com.alexdremov.notate.data.ProjectItem
-import com.alexdremov.notate.ui.home.CreateCanvasDialog
-import com.alexdremov.notate.ui.home.DialogType
-import com.alexdremov.notate.ui.home.FileBrowserScreen
-import com.alexdremov.notate.ui.home.ProjectListScreen
-import com.alexdremov.notate.ui.home.TextInputDialog
+import com.alexdremov.notate.ui.home.*
 import com.alexdremov.notate.ui.theme.NotateTheme
 import com.alexdremov.notate.vm.HomeViewModel
 import com.onyx.android.sdk.api.device.EpdDeviceManager
-import com.onyx.android.sdk.api.device.epd.EpdController
-import com.onyx.android.sdk.api.device.epd.UpdateMode
 
 class MainActivity : ComponentActivity() {
     private val viewModel: HomeViewModel by viewModels()
@@ -110,11 +95,17 @@ fun MainScreen(viewModel: HomeViewModel) {
     val browserItems by viewModel.browserItems.collectAsState()
     val breadcrumbs by viewModel.breadcrumbs.collectAsState()
     val title by viewModel.title.collectAsState()
+    val syncProgress by viewModel.syncProgress.collectAsState()
+    val syncingProjectIds by viewModel.syncingProjectIds.collectAsState()
 
     val context = LocalContext.current
 
     // Dialog State
     var showNameDialog by remember { mutableStateOf<DialogType?>(null) }
+    var showRemoteStorages by remember { mutableStateOf(false) }
+    var showEditStorage by remember { mutableStateOf(false) }
+    var editingStorage by remember { mutableStateOf<com.alexdremov.notate.data.RemoteStorageConfig?>(null) }
+
     // Temporary state for Project Creation flow
     var pendingProjectName by remember { mutableStateOf<String?>(null) }
 
@@ -156,6 +147,9 @@ fun MainScreen(viewModel: HomeViewModel) {
                 actions = {
                     if (currentProject == null) {
                         // Project List Actions
+                        IconButton(onClick = { showRemoteStorages = true }) {
+                            Icon(Icons.Filled.CloudSync, contentDescription = "Sync Settings")
+                        }
                         IconButton(onClick = { showNameDialog = DialogType.ADD_PROJECT }) {
                             Icon(Icons.Filled.Add, contentDescription = "Add Project")
                         }
@@ -180,6 +174,8 @@ fun MainScreen(viewModel: HomeViewModel) {
                     onOpenProject = { viewModel.openProject(it) },
                     onDeleteProject = { viewModel.removeProject(it) },
                     onRenameProject = { p, n -> viewModel.renameProject(p, n) },
+                    onSyncProject = { viewModel.syncProject(it.id) },
+                    syncingProjectIds = syncingProjectIds,
                 )
             } else {
                 // --- Level 1+: File Browser ---
@@ -207,9 +203,77 @@ fun MainScreen(viewModel: HomeViewModel) {
                     onItemDuplicate = { item -> viewModel.duplicateItem(item) },
                 )
             }
+
+            // Sync Progress Overlay
+            syncProgress?.let { (progress, message) ->
+                Box(
+                    modifier =
+                        Modifier
+                            .fillMaxSize()
+                            .background(Color.Black.copy(alpha = 0.1f)),
+                    contentAlignment = Alignment.BottomCenter,
+                ) {
+                    Card(
+                        modifier =
+                            Modifier
+                                .padding(16.dp)
+                                .fillMaxWidth()
+                                .border(2.dp, Color.Black, RoundedCornerShape(12.dp)),
+                        colors = CardDefaults.cardColors(containerColor = Color.White),
+                    ) {
+                        Column(Modifier.padding(16.dp)) {
+                            Text(message, style = MaterialTheme.typography.bodyMedium)
+                            Spacer(Modifier.height(8.dp))
+                            LinearProgressIndicator(
+                                progress = progress / 100f,
+                                modifier = Modifier.fillMaxWidth(),
+                                color = Color.Black,
+                                trackColor = Color.LightGray,
+                            )
+                        }
+                    }
+                }
+            }
         }
 
         // Handle Dialogs
+        if (showRemoteStorages) {
+            RemoteStorageListDialog(
+                onDismiss = { showRemoteStorages = false },
+                onManageStorage = { storage ->
+                    editingStorage = storage
+                    showEditStorage = true
+                },
+            )
+        }
+
+        if (showEditStorage) {
+            EditRemoteStorageDialog(
+                storage = editingStorage,
+                onDismiss = { showEditStorage = false },
+                onConfirm = { config, password ->
+                    val current =
+                        com.alexdremov.notate.data.SyncPreferencesManager
+                            .getRemoteStorages(context)
+                            .toMutableList()
+                    // Remove existing if editing
+                    current.removeAll { it.id == config.id }
+                    current.add(config)
+                    com.alexdremov.notate.data.SyncPreferencesManager
+                        .saveRemoteStorages(context, current)
+
+                    if (password.isNotBlank()) {
+                        com.alexdremov.notate.data.SyncPreferencesManager
+                            .savePassword(context, config.id, password)
+                    }
+                    showEditStorage = false
+                    // Force refresh of the list dialog by toggling visibility (optional, but helps if state isn't observed)
+                    showRemoteStorages = false
+                    showRemoteStorages = true
+                },
+            )
+        }
+
         when (showNameDialog) {
             DialogType.CREATE_CANVAS -> {
                 CreateCanvasDialog(

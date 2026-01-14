@@ -5,11 +5,7 @@ import android.net.Uri
 import androidx.documentfile.provider.DocumentFile
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.alexdremov.notate.data.CanvasType
-import com.alexdremov.notate.data.FileSystemItem
-import com.alexdremov.notate.data.PreferencesManager
-import com.alexdremov.notate.data.ProjectConfig
-import com.alexdremov.notate.data.ProjectRepository
+import com.alexdremov.notate.data.*
 import com.alexdremov.notate.model.BreadcrumbItem
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -29,8 +25,17 @@ class HomeViewModel(
     private val _currentProject = MutableStateFlow<ProjectConfig?>(null)
     val currentProject: StateFlow<ProjectConfig?> = _currentProject.asStateFlow()
 
+    // --- State: Sync Progress ---
+    private val _syncProgress = MutableStateFlow<Pair<Int, String>?>(null)
+    val syncProgress = _syncProgress.asStateFlow()
+
+    private val _syncingProjectIds = MutableStateFlow<Set<String>>(emptySet())
+    val syncingProjectIds = _syncingProjectIds.asStateFlow()
+
     // File Browser State
     private var repository: ProjectRepository? = null
+    private val canvasRepository = CanvasRepository(application)
+    private val syncManager = SyncManager(application, canvasRepository)
 
     private val _currentPath = MutableStateFlow<String?>(null)
     val currentPath: StateFlow<String?> = _currentPath.asStateFlow()
@@ -262,6 +267,30 @@ class HomeViewModel(
             loadProjects()
         } else {
             loadBrowserItems(_currentPath.value)
+        }
+    }
+
+    fun syncProject(projectId: String) {
+        if (_syncingProjectIds.value.contains(projectId)) return
+
+        _syncingProjectIds.value = _syncingProjectIds.value + projectId
+
+        viewModelScope.launch {
+            try {
+                syncManager.syncProject(projectId) { progress, message ->
+                    _syncProgress.value = progress to message
+                }
+            } finally {
+                _syncingProjectIds.value = _syncingProjectIds.value - projectId
+                // Delay clearing the global progress slightly for visibility
+                viewModelScope.launch {
+                    kotlinx.coroutines.delay(2000)
+                    if (_syncingProjectIds.value.isEmpty()) {
+                        _syncProgress.value = null
+                    }
+                }
+                refresh()
+            }
         }
     }
 

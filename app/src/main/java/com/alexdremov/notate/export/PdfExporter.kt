@@ -247,9 +247,8 @@ object PdfExporter {
         for (stroke in strokes) {
             paint.color = stroke.color
             paint.strokeWidth = stroke.width
-            // Vector render using StrokeRenderer
-            // We use the existing logic which handles Paths nicely
-            StrokeRenderer.drawStroke(canvas, paint, stroke)
+            // Vector render using StrokeRenderer with forced vector mode
+            StrokeRenderer.drawStroke(canvas, paint, stroke, forceVector = true)
         }
     }
 

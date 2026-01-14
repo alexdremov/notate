@@ -13,7 +13,8 @@ enum class StrokeType(
     val defaultZIndex: Float = 0.0f,
 ) {
     FOUNTAIN(TouchHelper.STROKE_STYLE_FOUNTAIN, "Fountain"),
-    PENCIL(TouchHelper.STROKE_STYLE_PENCIL, "Pencil"),
+    BALLPOINT(TouchHelper.STROKE_STYLE_PENCIL, "Ballpoint"),
+    FINELINER(TouchHelper.STROKE_STYLE_PENCIL, "Fineliner"),
     HIGHLIGHTER(
         TouchHelper.STROKE_STYLE_MARKER,
         "Highlighter",
@@ -24,9 +25,4 @@ enum class StrokeType(
     BRUSH(TouchHelper.STROKE_STYLE_NEO_BRUSH, "Brush"),
     CHARCOAL(TouchHelper.STROKE_STYLE_CHARCOAL, "Charcoal"),
     DASH(TouchHelper.STROKE_STYLE_DASH, "Dash"),
-    ;
-
-    companion object {
-        fun fromTouchHelperStyle(style: Int): StrokeType = values().find { it.touchHelperStyle == style } ?: FOUNTAIN
-    }
 }

@@ -19,6 +19,7 @@ import androidx.compose.ui.unit.dp
 import com.alexdremov.notate.model.*
 import com.alexdremov.notate.vm.DrawingViewModel
 
+/*
 @Composable
 fun ToolbarEditPanel(
     viewModel: DrawingViewModel,
@@ -112,7 +113,9 @@ fun ToolbarEditPanel(
         }
     }
 }
+*/
 
+/*
 @Composable
 fun AddItemButton(
     item: ToolbarItem,
@@ -138,3 +141,4 @@ fun AddItemButton(
         Text(label, style = MaterialTheme.typography.labelSmall)
     }
 }
+*/

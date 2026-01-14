@@ -222,7 +222,8 @@ class PenSettingsPopup(
         val styleViews =
             mapOf(
                 StrokeType.FOUNTAIN to binding.styleFountain,
-                StrokeType.PENCIL to binding.stylePencil,
+                StrokeType.BALLPOINT to binding.styleBallpoint,
+                StrokeType.FINELINER to binding.styleFineliner,
                 StrokeType.HIGHLIGHTER to binding.styleHighlighter,
                 StrokeType.BRUSH to binding.styleBrush,
                 StrokeType.CHARCOAL to binding.styleCharcoal,

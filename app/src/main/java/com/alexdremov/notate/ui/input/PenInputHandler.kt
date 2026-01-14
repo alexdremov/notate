@@ -510,7 +510,7 @@ class PenInputHandler(
                         strokeBuilder.build(
                             android.graphics.Color.BLACK,
                             currentTool.width,
-                            StrokeType.PENCIL,
+                            StrokeType.FINELINER,
                         )
 
                     stroke?.let { s ->

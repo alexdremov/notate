@@ -30,11 +30,13 @@ import com.alexdremov.notate.export.CanvasExportCoordinator
 import com.alexdremov.notate.model.PenTool
 import com.alexdremov.notate.model.StrokeType
 import com.alexdremov.notate.model.ToolType
+import com.alexdremov.notate.model.ToolbarItem
 import com.alexdremov.notate.ui.SettingsSidebarController
 import com.alexdremov.notate.ui.SidebarCoordinator
 import com.alexdremov.notate.ui.ToolbarCoordinator
-import com.alexdremov.notate.ui.dpToPx
 import com.alexdremov.notate.ui.export.ExportAction
+import com.alexdremov.notate.ui.navigation.CompactPageNavigation
+import com.alexdremov.notate.ui.toolbar.MainToolbar
 import com.alexdremov.notate.vm.DrawingViewModel
 import com.onyx.android.sdk.api.device.EpdDeviceManager
 import com.onyx.android.sdk.api.device.epd.EpdController
@@ -49,6 +51,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.File
+import androidx.compose.ui.geometry.Rect as ComposeRect
 
 class CanvasActivity : AppCompatActivity() {
     private lateinit var binding: ActivityMainBinding
@@ -62,6 +65,7 @@ class CanvasActivity : AppCompatActivity() {
     private lateinit var toolbarCoordinator: ToolbarCoordinator
     private lateinit var exportCoordinator: CanvasExportCoordinator
     private lateinit var canvasRepository: com.alexdremov.notate.data.CanvasRepository
+    private lateinit var syncManager: com.alexdremov.notate.data.SyncManager
 
     private var autoSaveJob: Job? = null
     private val saveMutex = Mutex()
@@ -84,6 +88,9 @@ class CanvasActivity : AppCompatActivity() {
         canvasRepository =
             com.alexdremov.notate.data
                 .CanvasRepository(this)
+        syncManager =
+            com.alexdremov.notate.data
+                .SyncManager(this, canvasRepository)
 
         // Use DU (Direct Update) as the baseline for high responsiveness and no flashing.
         EpdController.setViewDefaultUpdateMode(window.decorView, UpdateMode.DU)
@@ -150,12 +157,12 @@ class CanvasActivity : AppCompatActivity() {
                 setViewCompositionStrategy(androidx.compose.ui.platform.ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed)
                 setContent {
                     val horizontal by remember { isToolbarHorizontal }
-                    com.alexdremov.notate.ui.toolbar.ToolbarView(
+                    MainToolbar(
                         viewModel = viewModel,
                         isHorizontal = horizontal,
                         canvasController = binding.canvasView.getController(),
                         canvasModel = binding.canvasView.getModel(),
-                        onToolClick = { item, rect ->
+                        onToolClick = { item: ToolbarItem, rect: ComposeRect ->
                             // Convert Compose Rect to Android Graphics Rect
                             val androidRect =
                                 android.graphics.Rect(
@@ -302,6 +309,26 @@ class CanvasActivity : AppCompatActivity() {
     override fun onPause() {
         super.onPause()
         saveCanvas()
+        // Trigger background sync if project is configured
+        currentCanvasPath?.let { path ->
+            android.util.Log.d("CanvasActivity", "onPause: Attempting to sync for file $path")
+            // Use GlobalScope (or ProcessLifecycleScope) to ensure sync continues after Activity pause/destroy
+            // This is "fire and forget" logic for this context.
+            @OptIn(kotlinx.coroutines.DelicateCoroutinesApi::class)
+            kotlinx.coroutines.GlobalScope.launch(Dispatchers.IO) {
+                try {
+                    val projectId = syncManager.findProjectForFile(path)
+                    if (projectId != null) {
+                        android.util.Log.d("CanvasActivity", "Triggering background sync for project $projectId")
+                        syncManager.syncProject(projectId)
+                    } else {
+                        android.util.Log.w("CanvasActivity", "Could not find project for file $path, sync skipped.")
+                    }
+                } catch (e: Exception) {
+                    android.util.Log.e("CanvasActivity", "Background sync failed", e)
+                }
+            }
+        }
     }
 
     @androidx.annotation.OptIn(kotlinx.serialization.ExperimentalSerializationApi::class)

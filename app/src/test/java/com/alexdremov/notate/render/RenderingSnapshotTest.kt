@@ -140,8 +140,13 @@ class RenderingSnapshotTest {
     }
 
     @Test
-    fun `test snapshot pencil`() {
-        verifySnapshot(StrokeType.PENCIL, "snapshot_pencil")
+    fun testBallpointRender() {
+        verifySnapshot(StrokeType.BALLPOINT, "snapshot_ballpoint", Color.BLACK, 5f)
+    }
+
+    @Test
+    fun testFinelinerRender() {
+        verifySnapshot(StrokeType.FINELINER, "snapshot_fineliner")
     }
 
     @Test

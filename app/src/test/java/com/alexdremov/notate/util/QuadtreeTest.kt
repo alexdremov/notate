@@ -32,7 +32,7 @@ class QuadtreeTest {
             points = points,
             color = -16777216, // Black
             width = 2f,
-            style = StrokeType.PENCIL,
+            style = StrokeType.FINELINER,
             bounds = rect,
         )
     }

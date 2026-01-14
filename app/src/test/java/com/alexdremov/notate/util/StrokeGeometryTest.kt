@@ -34,7 +34,7 @@ class StrokeGeometryTest {
             points = points,
             color = -16777216,
             width = width,
-            style = StrokeType.PENCIL,
+            style = StrokeType.FINELINER,
             bounds = bounds,
         )
     }

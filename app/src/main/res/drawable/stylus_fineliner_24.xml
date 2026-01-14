@@ -1,0 +1,36 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="960"
+    android:viewportHeight="960">
+    <!-- Material Symbols often use a flipped Y via group translateY -->
+    <group android:translateY="960">
+        <!-- Fineliner tip: U-base + inner bar + center stem (no top knob) -->
+        <path
+            android:fillColor="#FF000000"
+            android:pathData="
+                M260,-220
+                L260,-560
+                Q260,-600 300,-600
+                L660,-600
+                Q700,-600 700,-560
+                L700,-220
+                L620,-220
+                L620,-520
+                L340,-520
+                L340,-220
+                Z
+
+                M330,-600
+                L330,-700
+                L630,-700
+                L630,-600
+                Z
+
+                M440,-860
+                L440,-700
+                L520,-700
+                L520,-860
+                Z"/>
+    </group>
+</vector>

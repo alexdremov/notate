@@ -55,10 +55,11 @@ data class PenTool(
     companion object {
         fun defaultPens(): List<PenTool> =
             listOf(
-                PenTool("pen_1", "Pen 1", ToolType.PEN, Color.BLACK, 7f, StrokeType.FOUNTAIN),
-                PenTool("pen_2", "Pen 2", ToolType.PEN, Color.parseColor("#1A237E"), 7f, StrokeType.FOUNTAIN),
+                PenTool("pen_0", "Ballpoint", ToolType.PEN, Color.BLACK, 10f, StrokeType.BALLPOINT),
+                PenTool("pen_1", "Pen 1", ToolType.PEN, Color.BLACK, 10f, StrokeType.FINELINER),
+                PenTool("pen_2", "Pen 2", ToolType.PEN, Color.parseColor("#1A237E"), 10f, StrokeType.FOUNTAIN),
                 PenTool("pen_3", "Pen 3", ToolType.PEN, Color.parseColor("#fff9c47c"), 60f, StrokeType.HIGHLIGHTER),
-                PenTool("eraser_std", "Standard Eraser", ToolType.ERASER, Color.WHITE, 30f, StrokeType.PENCIL, EraserType.STANDARD),
+                PenTool("eraser_std", "Standard Eraser", ToolType.ERASER, Color.WHITE, 30f, StrokeType.FINELINER, EraserType.STANDARD),
                 PenTool(
                     "select_tool",
                     "Select",

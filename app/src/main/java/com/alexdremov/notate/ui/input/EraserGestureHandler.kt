@@ -44,7 +44,7 @@ class EraserGestureHandler(
                     currentPoint,
                     width,
                     android.graphics.Color.BLACK,
-                    StrokeType.PENCIL,
+                    StrokeType.FINELINER,
                 )
 
             controller.previewEraser(segmentStroke, eraserType)

@@ -224,7 +224,7 @@ class DrawingViewModel(
             ToolType.ERASER,
             Color.WHITE,
             30f,
-            com.alexdremov.notate.model.StrokeType.PENCIL,
+            com.alexdremov.notate.model.StrokeType.FINELINER,
             com.alexdremov.notate.model.EraserType.STANDARD,
         )
 
