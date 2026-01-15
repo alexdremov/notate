@@ -8,6 +8,7 @@ import android.graphics.RectF
 import com.alexdremov.notate.config.CanvasConfig
 import com.alexdremov.notate.model.BackgroundStyle
 import com.alexdremov.notate.model.InfiniteCanvasModel
+import com.alexdremov.notate.ui.render.background.PatternLayoutHelper
 import com.alexdremov.notate.util.TileManager
 import kotlin.math.floor
 
@@ -111,40 +112,14 @@ class FixedPageLayout(
                 canvas.clipRect(pageRect)
 
                 // Draw Pattern inside the page (now clipped)
-                // Apply padding and alignment logic
+                // Apply padding and alignment logic using Helper
                 val style = model.backgroundStyle
-                val patternArea =
-                    RectF(
-                        pageRect.left + style.paddingLeft,
-                        pageRect.top + style.paddingTop,
-                        pageRect.right - style.paddingRight,
-                        pageRect.bottom - style.paddingBottom,
-                    )
+                val patternArea = PatternLayoutHelper.calculatePatternArea(pageRect, style)
 
                 // We intersect the pattern area with visible rect to avoid drawing pattern outside viewport
                 val bgIntersection = RectF(patternArea)
                 if (bgIntersection.intersect(visibleRect)) {
-                    // Calculate offsets
-                    var offsetX = patternArea.left
-                    val offsetY = patternArea.top // Pattern starts after top padding
-
-                    if (style.isCentered) {
-                        val spacing =
-                            when (style) {
-                                is BackgroundStyle.Dots -> style.spacing
-                                is BackgroundStyle.Lines -> style.spacing
-                                is BackgroundStyle.Grid -> style.spacing
-                                else -> 0f
-                            }
-                        if (spacing > 0) {
-                            // Center the pattern horizontally within the patternArea
-                            val availableWidth = patternArea.width()
-                            val remainder = availableWidth % spacing
-                            offsetX += remainder / 2f
-                        }
-                    }
-
-                    // Pass offsets to align pattern to page origin (or padded origin)
+                    val (offsetX, offsetY) = PatternLayoutHelper.calculateOffsets(patternArea, style)
                     BackgroundDrawer.draw(canvas, style, bgIntersection, offsetX, offsetY)
                 }
 
@@ -182,10 +157,16 @@ class FixedPageLayout(
             val pageRect = RectF(0f, top, pageWidth, top + pageHeight)
             canvas.drawRect(pageRect, bgPaint)
 
-            // Export should also respect page origin
+            // Export should also respect page origin and padding
             canvas.save()
             canvas.clipRect(pageRect)
-            BackgroundDrawer.draw(canvas, model.backgroundStyle, pageRect, pageRect.left, pageRect.top)
+
+            val style = model.backgroundStyle
+            val patternArea = PatternLayoutHelper.calculatePatternArea(pageRect, style)
+            val (offsetX, offsetY) = PatternLayoutHelper.calculateOffsets(patternArea, style)
+
+            BackgroundDrawer.draw(canvas, style, patternArea, offsetX, offsetY)
+
             canvas.restore()
 
             canvas.drawRect(pageRect, borderPaint)

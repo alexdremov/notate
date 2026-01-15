@@ -101,13 +101,22 @@ class DrawingViewModel(
         // Convert ToolbarItem to PenTool for the CanvasView
         val penTool =
             when (item) {
-                is ToolbarItem.Pen -> item.penTool
+                is ToolbarItem.Pen -> {
+                    item.penTool
+                }
+
                 is ToolbarItem.Eraser -> {
                     _currentEraser.value = item.penTool
                     item.penTool
                 }
-                is ToolbarItem.Select -> item.penTool
-                else -> null
+
+                is ToolbarItem.Select -> {
+                    item.penTool
+                }
+
+                else -> {
+                    null
+                }
             }
 
         penTool?.let { _activeTool.value = it }

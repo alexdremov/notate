@@ -20,6 +20,7 @@ class SyncManager(
 
     interface LocalFile {
         val name: String
+        val relativePath: String
         val lastModified: Long
 
         fun openInputStream(): InputStream?
@@ -30,8 +31,10 @@ class SyncManager(
 
     private class JavaFileWrapper(
         val file: File,
+        val root: File,
     ) : LocalFile {
         override val name: String get() = file.name
+        override val relativePath: String get() = file.relativeTo(root).path
         override val lastModified: Long get() = file.lastModified()
 
         override fun openInputStream() = if (file.exists()) file.inputStream() else null
@@ -43,6 +46,7 @@ class SyncManager(
     private class DocumentFileWrapper(
         val context: Context,
         val file: DocumentFile,
+        override val relativePath: String,
     ) : LocalFile {
         override val name: String get() = file.name ?: ""
         override val lastModified: Long get() = file.lastModified()
@@ -110,23 +114,17 @@ class SyncManager(
             Log.d("SyncManager", "Syncing local project at ${projectConfig.uri}")
 
             val localFiles = mutableListOf<LocalFile>()
-            val localDir: DocumentFile? =
-                if (projectConfig.uri.startsWith("content://")) {
-                    DocumentFile.fromTreeUri(context, Uri.parse(projectConfig.uri))?.also { dir ->
-                        dir.listFiles().filter { it.name?.endsWith(".notate") == true }.forEach {
-                            localFiles.add(DocumentFileWrapper(context, it))
-                        }
-                    }
-                } else {
-                    File(projectConfig.uri).also { dir ->
-                        if (dir.exists()) {
-                            dir.listFiles()?.filter { it.extension == "notate" }?.forEach {
-                                localFiles.add(JavaFileWrapper(it))
-                            }
-                        }
-                    }
-                    null
+
+            if (projectConfig.uri.startsWith("content://")) {
+                DocumentFile.fromTreeUri(context, Uri.parse(projectConfig.uri))?.let { rootDir ->
+                    scanDocumentFilesRecursively(context, rootDir, "", localFiles)
                 }
+            } else {
+                val rootDir = File(projectConfig.uri)
+                if (rootDir.exists()) {
+                    scanJavaFilesRecursively(rootDir, rootDir, localFiles)
+                }
+            }
 
             Log.d("SyncManager", "Found ${localFiles.size} local files and ${remoteFiles.size} remote files")
 
@@ -137,8 +135,14 @@ class SyncManager(
 
             // 1. Upload/Update local files to remote
             for (localFile in localFiles) {
+                // Note: For nested files, remoteFiles (which is shallow) won't find a match,
+                // so we defaults to upload/update. This ensures nested files are synced,
+                // relying on the provider to handle overwrite logic.
                 val remoteFile = remoteFiles.find { it.name == localFile.name }
-                val remotePath = "${config.remotePath.trimEnd('/')}/${localFile.name}"
+
+                // Ensure we use forward slashes for remote paths regardless of local OS
+                val cleanRelativePath = localFile.relativePath.replace("\\", "/")
+                val remotePath = "${config.remotePath.trimEnd('/')}/$cleanRelativePath"
 
                 if (remoteFile == null || localFile.lastModified > remoteFile.lastModified) {
                     Log.d(
@@ -245,8 +249,9 @@ class SyncManager(
             val model = InfiniteCanvasModel()
             model.setLoadedState(loadResult.canvasState)
 
-            val pdfName = localFile.name.substringBeforeLast(".") + ".pdf"
-            val remotePdfPath = "${remoteDir.trimEnd('/')}/$pdfName"
+            val cleanRelativePath = localFile.relativePath.replace("\\", "/")
+            val pdfRelativePath = cleanRelativePath.substringBeforeLast(".") + ".pdf"
+            val remotePdfPath = "${remoteDir.trimEnd('/')}/$pdfRelativePath"
 
             val out = ByteArrayOutputStream()
             PdfExporter.export(model, out, isVector = true, callback = null)
@@ -255,6 +260,38 @@ class SyncManager(
             provider.uploadFile(remotePdfPath, pdfInput)
         } catch (e: Exception) {
             Log.e("SyncManager", "Failed to sync PDF for ${localFile.name}", e)
+        }
+    }
+
+    private fun scanDocumentFilesRecursively(
+        context: Context,
+        dir: DocumentFile,
+        relativePath: String,
+        result: MutableList<LocalFile>,
+    ) {
+        dir.listFiles().forEach { file ->
+            val fileName = file.name ?: return@forEach
+            if (file.isDirectory) {
+                val newRelativePath = if (relativePath.isEmpty()) fileName else "$relativePath/$fileName"
+                scanDocumentFilesRecursively(context, file, newRelativePath, result)
+            } else if (fileName.endsWith(".notate")) {
+                val fileRelativePath = if (relativePath.isEmpty()) fileName else "$relativePath/$fileName"
+                result.add(DocumentFileWrapper(context, file, fileRelativePath))
+            }
+        }
+    }
+
+    private fun scanJavaFilesRecursively(
+        file: File,
+        root: File,
+        result: MutableList<LocalFile>,
+    ) {
+        if (file.isDirectory) {
+            file.listFiles()?.forEach { child ->
+                scanJavaFilesRecursively(child, root, result)
+            }
+        } else if (file.extension == "notate") {
+            result.add(JavaFileWrapper(file, root))
         }
     }
 }

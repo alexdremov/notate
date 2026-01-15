@@ -55,7 +55,10 @@ object BackgroundDrawer {
                 if (useCache) {
                     patternCache.drawCached(canvas, style, rect, offsetX, offsetY, style.spacing)
                 } else {
+                    canvas.save()
+                    canvas.clipRect(rect)
                     drawDotsVector(canvas, style, rect, offsetX, offsetY)
+                    canvas.restore()
                 }
             }
 
@@ -64,7 +67,10 @@ object BackgroundDrawer {
                 if (useCache) {
                     patternCache.drawCached(canvas, style, rect, offsetX, offsetY, style.spacing)
                 } else {
+                    canvas.save()
+                    canvas.clipRect(rect)
                     drawLinesVector(canvas, style, rect, offsetX, offsetY)
+                    canvas.restore()
                 }
             }
 
