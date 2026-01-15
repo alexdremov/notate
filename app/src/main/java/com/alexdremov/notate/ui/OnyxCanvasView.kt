@@ -256,6 +256,7 @@ class OnyxCanvasView
         override fun surfaceDestroyed(holder: SurfaceHolder) {
             EpdController.leaveScribbleMode(this)
             touchHelper?.closeRawDrawing()
+            penInputHandler.destroy()
         }
 
         private fun invalidateCanvas() {

@@ -78,7 +78,7 @@ dirtyRect.inset(-10f, -10f) // Add safety padding
 EpdController.invalidate(
     view,
     dirtyRect.left.toInt(), dirtyRect.top.toInt(),
-    dirtyRect.right.toInt(), dirtyRect.bottom.toInt(),
+    right.toInt(), bottom.toInt(),
     UpdateMode.GC // GC removes all ghosting without full-screen flash
 )
 ```
@@ -159,3 +159,99 @@ Use `EpdController.setDisplayScheme(int)` to optimize global device behavior.
 | `PEN_DRAWING` | `2` | Active input |
 | `PEN_PAUSE` | `3` | **Pause during Pan/Zoom** (Prevents stray marks) |
 | `PEN_ERASING` | `4` | Eraser mode |
+
+---
+
+## 7. Advanced Custom Hardware Rendering (`NeoPen`)
+To bypass the limited `TouchHelper` stroke styles and achieve fully customizable hardware rendering (e.g., custom pressure curves, min/max width), use `NeoPen` directly via `NeoPenNative`.
+
+### The Mechanism
+Instead of relying on `TouchHelper`'s internal rendering, we disable it and drive the `NeoPen` native render pipeline manually using raw input events.
+
+### Implementation Recipe
+
+1. **Type Mapping**:
+   `NeoPenNative` uses a different `TouchPoint` class than `TouchHelper`.
+   - `TouchHelper`: `com.onyx.android.sdk.data.note.TouchPoint`
+   - `NeoPenNative`: `com.onyx.android.sdk.base.data.TouchPoint`
+
+2. **Disable Default Rendering**:
+   Configure `TouchHelper` to report input but **not** render.
+   ```kotlin
+   touchHelper.setRawDrawingRenderEnabled(false)
+   ```
+
+3. **Configure `NeoPen`**:
+   Create a `NeoPen` instance with your specific parameters. 
+   **CRITICAL**: You must set `maxTouchPressure` (default is 1.0f, which breaks hardware rendering).
+   ```kotlin
+   val config = NeoPenConfig().apply {
+       type = NeoPenConfig.NEOPEN_PEN_TYPE_FOUNTAIN
+       width = currentTool.width
+       minWidth = 0.5f
+       pressureSensitivity = 0.8f
+       color = Color.BLACK
+       maxTouchPressure = 4096f // Match hardware (e.g. EpdController.getMaxTouchPressure())
+   }
+   // NeoPenNative is a Kotlin object; access methods directly from the class name.
+   val neoPen = NeoPenNative.createPen(config.type, config)
+   ```
+
+4. **Drive the Hardware Render**:
+   In your `TouchHelper` callback, pass converted points to `NeoPenNative`.
+   ```kotlin
+   override fun onRawDrawingTouchPointMoveReceived(point: TouchPoint) {
+       val basePoint = toBasePoint(point)
+       NeoPenNative.onPenMove(neoPen, listOf(basePoint), basePoint, true)
+   }
+
+   override fun onBeginRawDrawing(isEraser: Boolean, point: TouchPoint) {
+       NeoPenNative.onPenDown(neoPen, toBasePoint(point), true)
+   }
+
+   override fun onEndRawDrawing(isEraser: Boolean, point: TouchPoint) {
+       NeoPenNative.onPenUp(neoPen, toBasePoint(point), true)
+   }
+   ```
+
+5. **Cleanup**:
+   Destroy the pen when changing tools or destroying the view.
+   ```kotlin
+   NeoPenNative.destroyPen(neoPen)
+   ```
+
+---
+
+## 8. `NeoPenConfig` Property Reference
+The `NeoPenConfig` class (used by `NeoPenNative`) fine-tunes the native rendering engines.
+
+### Core Configuration
+| Property | Type | Description |
+| :--- | :--- | :--- |
+| `type` | `Int` | Engine ID (2: Fountain, 5: CharcoalV2, 7: Pencil, 8: Ballpoint). |
+| `color` | `Int` | ARGB color. |
+| `width` | `Float` | Maximum stroke width. |
+| `minWidth` | `Float` | Minimum width (at zero pressure). |
+| `maxTouchPressure`| `Float` | Hardware normalization (e.g., 4096.0f). **Must be set.** |
+
+### Dynamic Response
+| Property | Type | Description |
+| :--- | :--- | :--- |
+| `pressureSensitivity` | `Float` | `0.0`-`1.0`. Width response to pressure. |
+| `velocitySensitivity` | `Float` | `0.0`-`1.0`. Speed-dependent thinning. |
+| `smoothLevel` | `Float` | Path smoothing intensity. |
+
+### Stamp & Texture
+| Property | Type | Description |
+| :--- | :--- | :--- |
+| `brushShape` | `Int` | 0: Circle, 1: Ellipse, 2: Rectangle. |
+| `brushSpacing` | `Float` | Step size between stamps (e.g., 0.1). |
+| `tiltEnabled` | `Boolean` | Enables Wacom tilt support. |
+| `tiltScale` | `Float` | Multiplier for tilt-induced width changes. |
+
+---
+
+## 9. Common Pitfalls & Fixes
+- **Unresolved `INSTANCE`**: `NeoPenNative` is a Kotlin `object`. In Kotlin, call `NeoPenNative.method()`. In Java, call `NeoPenNative.INSTANCE.method()`.
+- **Incompatible `TouchPoint`**: Always convert between `sdk.data.note.TouchPoint` and `sdk.base.data.TouchPoint`.
+- **Invisible Ink**: Ensure `maxTouchPressure` is set to a realistic value (> 1.0f) and `setRawDrawingRenderEnabled(false)` is called on `TouchHelper` if using `NeoPenNative` to avoid double-rendering or conflicts.

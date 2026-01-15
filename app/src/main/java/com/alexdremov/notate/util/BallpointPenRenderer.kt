@@ -88,9 +88,9 @@ object BallpointPenRenderer {
 
         // Ballpoint dynamics configuration
         val baseWidth = stroke.width
-        val minWidthScale = 0.9f
+        val minWidthScale = 0.8f
         val maxWidthScale = 1.0f
-        val minAlpha = 225
+        val minAlpha = 210
         val pressureAlphaRange = 255 - minAlpha
 
         // Helper to calculate properties for a point

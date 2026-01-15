@@ -10,3 +10,4 @@ GEMINI.md
 .kotlin
 keystore.properties
 release.keystore
+temp_*

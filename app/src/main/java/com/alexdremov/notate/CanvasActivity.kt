@@ -245,6 +245,12 @@ class CanvasActivity : AppCompatActivity() {
                 }
             }
             launch {
+                // Observe current eraser for stylus button support
+                viewModel.currentEraser.collect { eraser ->
+                    eraser?.let { binding.canvasView.setEraser(it) }
+                }
+            }
+            launch {
                 viewModel.isDrawingEnabled.collect { enabled ->
                     binding.canvasView.setDrawingEnabled(enabled)
                 }

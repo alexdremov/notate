@@ -29,6 +29,9 @@ class DrawingViewModel(
     private val _activeTool = MutableStateFlow(PenTool.defaultPens()[0])
     val activeTool: StateFlow<PenTool> = _activeTool.asStateFlow()
 
+    private val _currentEraser = MutableStateFlow<PenTool?>(null)
+    val currentEraser: StateFlow<PenTool?> = _currentEraser.asStateFlow()
+
     // Canvas State
     private val _scale = MutableStateFlow(1.0f)
     val scale: StateFlow<Float> = _scale.asStateFlow()
@@ -46,6 +49,10 @@ class DrawingViewModel(
     private fun loadTools() {
         val items = PreferencesManager.getToolbarItems(getApplication())
         _toolbarItems.value = items
+
+        // Find and set the first eraser as default eraser
+        val firstEraser = items.firstOrNull { it is ToolbarItem.Eraser } as? ToolbarItem.Eraser
+        firstEraser?.let { _currentEraser.value = it.penTool }
 
         // Set initial active tool if not set
         if (_activeToolId.value.isEmpty()) {
@@ -95,7 +102,10 @@ class DrawingViewModel(
         val penTool =
             when (item) {
                 is ToolbarItem.Pen -> item.penTool
-                is ToolbarItem.Eraser -> item.penTool
+                is ToolbarItem.Eraser -> {
+                    _currentEraser.value = item.penTool
+                    item.penTool
+                }
                 is ToolbarItem.Select -> item.penTool
                 else -> null
             }
@@ -130,6 +140,9 @@ class DrawingViewModel(
 
             if (_activeToolId.value == updatedTool.id) {
                 _activeTool.value = updatedTool
+            }
+            if (updatedTool.type == ToolType.ERASER) {
+                _currentEraser.value = updatedTool
             }
         }
     }

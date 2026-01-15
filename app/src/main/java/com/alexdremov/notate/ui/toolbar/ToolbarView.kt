@@ -460,8 +460,7 @@ fun ToolbarItemWrapper(
                                 .size(12.dp)
                                 .align(Alignment.BottomEnd)
                                 .offset(x = (-4).dp, y = (-4).dp)
-                                .background(Color(item.penTool.color), CircleShape)
-                                .border(1.dp, Color.LightGray, CircleShape),
+                                .background(Color(item.penTool.color), CircleShape),
                     )
                 }
             }

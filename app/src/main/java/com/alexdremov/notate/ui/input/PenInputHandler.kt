@@ -251,6 +251,10 @@ class PenInputHandler(
         }
     }
 
+    fun destroy() {
+
+    }
+
     private var selectionStartX: Float? = null
     private var selectionStartY: Float? = null
 
