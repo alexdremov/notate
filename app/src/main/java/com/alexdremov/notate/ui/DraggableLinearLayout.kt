@@ -47,8 +47,25 @@ class DraggableLinearLayout
 
         var onDown: (() -> Unit)? = null
         var onUp: (() -> Unit)? = null
+        var onLongPress: (() -> Unit)? = null
 
         var isDragEnabled: Boolean = true
+
+        private val longPressRunnable = Runnable {
+            if (!isDragging) {
+                performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
+                onLongPress?.invoke()
+            }
+        }
+
+        private fun scheduleLongPress() {
+            cancelLongPressCheck()
+            postDelayed(longPressRunnable, ViewConfiguration.getLongPressTimeout().toLong())
+        }
+
+        private fun cancelLongPressCheck() {
+            removeCallbacks(longPressRunnable)
+        }
 
         override fun onInterceptTouchEvent(ev: MotionEvent): Boolean {
             if (ev.action == MotionEvent.ACTION_DOWN) {
@@ -62,6 +79,7 @@ class DraggableLinearLayout
                     lastTouchY = ev.rawY
                     isDragging = false
                     onDown?.invoke()
+                    scheduleLongPress()
                     return false
                 }
 
@@ -70,6 +88,7 @@ class DraggableLinearLayout
                     val dy = abs(ev.rawY - lastTouchY)
                     if (dx > touchSlop || dy > touchSlop) {
                         android.util.Log.d("BooxVibesDebug", "DLL.onIntercept: MOVE > Slop, Intercepting!")
+                        cancelLongPressCheck()
                         isDragging = true
                         onDragStart?.invoke()
                         return true
@@ -78,6 +97,7 @@ class DraggableLinearLayout
 
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                     android.util.Log.d("BooxVibesDebug", "DLL.onIntercept: UP/CANCEL")
+                    cancelLongPressCheck()
                     onUp?.invoke()
                     if (isDragging) {
                         isDragging = false
@@ -97,6 +117,7 @@ class DraggableLinearLayout
                     lastTouchX = event.rawX
                     lastTouchY = event.rawY
                     onDown?.invoke()
+                    scheduleLongPress()
                     return true
                 }
 
@@ -105,6 +126,7 @@ class DraggableLinearLayout
                         val dx = abs(event.rawX - lastTouchX)
                         val dy = abs(event.rawY - lastTouchY)
                         if (dx > touchSlop || dy > touchSlop) {
+                            cancelLongPressCheck()
                             isDragging = true
                             onDragStart?.invoke()
                         }
@@ -143,6 +165,7 @@ class DraggableLinearLayout
                 }
 
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    cancelLongPressCheck()
                     onUp?.invoke()
                     if (isDragging) {
                         isDragging = false

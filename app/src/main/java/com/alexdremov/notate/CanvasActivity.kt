@@ -185,19 +185,34 @@ class CanvasActivity : AppCompatActivity() {
 
         // Disable drawing when interacting with toolbar (touch down)
         // This prevents accidental strokes and improves UI responsiveness
+        var isToolbarInteractionActive = false
+        val finishToolbarInteraction = {
+            if (isToolbarInteractionActive) {
+                isToolbarInteractionActive = false
+                if (!viewModel.isEditMode.value) {
+                    viewModel.setDrawingEnabled(true)
+                }
+                com.onyx.android.sdk.api.device.EpdDeviceManager
+                    .exitAnimationUpdate(true)
+            }
+        }
+
         binding.toolbarContainer.onDown = {
-            viewModel.setDrawingEnabled(false)
-            com.onyx.android.sdk.api.device.EpdDeviceManager
-                .enterAnimationUpdate(true)
+            if (!isToolbarInteractionActive) {
+                isToolbarInteractionActive = true
+                viewModel.setDrawingEnabled(false)
+                com.onyx.android.sdk.api.device.EpdDeviceManager
+                    .enterAnimationUpdate(true)
+            }
         }
 
         binding.toolbarContainer.onUp = {
-            // Re-enable drawing only if not in edit mode
-            if (!viewModel.isEditMode.value) {
-                viewModel.setDrawingEnabled(true)
-            }
-            com.onyx.android.sdk.api.device.EpdDeviceManager
-                .exitAnimationUpdate(true)
+            finishToolbarInteraction()
+        }
+
+        binding.toolbarContainer.onLongPress = {
+            finishToolbarInteraction()
+            viewModel.setEditMode(true)
         }
 
         toolbarCoordinator.setup()
