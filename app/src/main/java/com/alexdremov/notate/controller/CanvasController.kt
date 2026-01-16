@@ -76,19 +76,19 @@ interface CanvasController {
     fun prevPage()
 
     // --- Selection & Clipboard ---
-    fun getStrokeAt(
+    fun getItemAt(
         x: Float,
         y: Float,
-    ): Stroke?
+    ): com.alexdremov.notate.model.CanvasItem?
 
-    fun getStrokesInRect(rect: android.graphics.RectF): List<Stroke>
+    fun getItemsInRect(rect: android.graphics.RectF): List<com.alexdremov.notate.model.CanvasItem>
 
     // Simplified Lasso: check if stroke center or bounds are substantially inside path
-    fun getStrokesInPath(path: android.graphics.Path): List<Stroke>
+    fun getItemsInPath(path: android.graphics.Path): List<com.alexdremov.notate.model.CanvasItem>
 
-    fun selectStroke(stroke: Stroke)
+    fun selectItem(item: com.alexdremov.notate.model.CanvasItem)
 
-    fun selectStrokes(strokes: List<Stroke>)
+    fun selectItems(items: List<com.alexdremov.notate.model.CanvasItem>)
 
     fun clearSelection()
 
@@ -99,6 +99,14 @@ interface CanvasController {
     fun paste(
         x: Float,
         y: Float,
+    )
+
+    fun pasteImage(
+        uri: String,
+        x: Float,
+        y: Float,
+        width: Float,
+        height: Float,
     )
 
     fun startMoveSelection()

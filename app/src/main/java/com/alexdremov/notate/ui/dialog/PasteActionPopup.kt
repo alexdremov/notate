@@ -16,6 +16,7 @@ import com.onyx.android.sdk.api.device.epd.UpdateMode
 class PasteActionPopup(
     private val context: Context,
     private val onPaste: () -> Unit,
+    private val onPasteImage: () -> Unit,
 ) {
     private val popupWindow: PopupWindow
     private val view: View
@@ -34,6 +35,11 @@ class PasteActionPopup(
 
         view.findViewById<View>(R.id.btn_paste).setOnClickListener {
             onPaste()
+            dismiss()
+        }
+
+        view.findViewById<View>(R.id.btn_paste_image).setOnClickListener {
+            onPasteImage()
             dismiss()
         }
     }

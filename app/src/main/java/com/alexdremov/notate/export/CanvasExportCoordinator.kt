@@ -70,6 +70,7 @@ class CanvasExportCoordinator(
                 // Open Stream
                 context.contentResolver.openOutputStream(uri)?.use { outputStream ->
                     PdfExporter.export(
+                        context,
                         modelProvider(),
                         outputStream,
                         isVector,
@@ -112,6 +113,7 @@ class CanvasExportCoordinator(
                 // Write to temp file
                 file.outputStream().use { outputStream ->
                     PdfExporter.export(
+                        context,
                         modelProvider(),
                         outputStream,
                         isVector,

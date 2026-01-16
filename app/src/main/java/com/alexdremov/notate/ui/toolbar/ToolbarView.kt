@@ -546,6 +546,7 @@ fun RenderToolbarItemIcon(item: ToolbarItem) {
                 when (item.actionType) {
                     ActionType.UNDO -> R.drawable.ic_undo
                     ActionType.REDO -> R.drawable.ic_redo
+                    ActionType.INSERT_IMAGE -> R.drawable.ic_add
                 }
             Icon(painter = painterResource(iconRes), contentDescription = item.actionType.name, tint = Color.Black)
         }
@@ -631,6 +632,13 @@ fun ToolbarEditPanel(
                 item = ToolbarItem.Action(ActionType.REDO),
                 label = "Redo",
                 onClick = { viewModel.addToolbarItem(ToolbarItem.Action(ActionType.REDO)) },
+            )
+
+            // Add Image
+            AddItemButton(
+                item = ToolbarItem.Action(ActionType.INSERT_IMAGE),
+                label = "Image",
+                onClick = { viewModel.addToolbarItem(ToolbarItem.Action(ActionType.INSERT_IMAGE)) },
             )
 
             // Add Page Nav

@@ -98,7 +98,7 @@ class CanvasRepository(
         data: CanvasData,
     ) = withContext(Dispatchers.IO) {
         // Generate thumbnail
-        val thumbBase64 = ThumbnailGenerator.generateBase64(data)
+        val thumbBase64 = ThumbnailGenerator.generateBase64(data, context)
         val dataWithThumb = data.copy(thumbnail = thumbBase64)
 
         // Encode

@@ -1,17 +1,17 @@
 package com.alexdremov.notate.util
 
-import com.alexdremov.notate.model.Stroke
+import com.alexdremov.notate.model.CanvasItem
 import java.util.ArrayList
 
 object ClipboardManager {
-    private val copiedStrokes = ArrayList<Stroke>()
+    private val copiedItems = ArrayList<CanvasItem>()
 
-    fun copy(strokes: Collection<Stroke>) {
-        copiedStrokes.clear()
-        copiedStrokes.addAll(strokes)
+    fun copy(items: Collection<CanvasItem>) {
+        copiedItems.clear()
+        copiedItems.addAll(items)
     }
 
-    fun getStrokes(): List<Stroke> = ArrayList(copiedStrokes)
+    fun getItems(): List<CanvasItem> = ArrayList(copiedItems)
 
-    fun hasContent() = copiedStrokes.isNotEmpty()
+    fun hasContent() = copiedItems.isNotEmpty()
 }

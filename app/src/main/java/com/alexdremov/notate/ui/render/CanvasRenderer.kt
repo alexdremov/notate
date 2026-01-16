@@ -19,6 +19,7 @@ import com.alexdremov.notate.util.TileManager
  */
 class CanvasRenderer(
     private val model: InfiniteCanvasModel,
+    private val context: android.content.Context,
     private val onTileReady: () -> Unit,
 ) {
     private val tileManager = TileManager(model, this)
@@ -79,11 +80,19 @@ class CanvasRenderer(
     }
 
     /**
+     * Updates cached tiles with a new item (stroke or image).
+     * Renders the item directly onto the cached bitmaps for instant feedback.
+     */
+    fun updateTilesWithItem(item: com.alexdremov.notate.model.CanvasItem) {
+        tileManager.updateTilesWithItem(item)
+    }
+
+    /**
      * Updates cached tiles with a new stroke.
-     * Renders the stroke directly onto the cached bitmaps for instant feedback.
+     * Backwards compatibility.
      */
     fun updateTilesWithStroke(stroke: Stroke) {
-        tileManager.updateTilesWithStroke(stroke)
+        updateTilesWithItem(stroke)
     }
 
     /**
@@ -169,33 +178,37 @@ class CanvasRenderer(
                 strokeMiter = 4.0f
             }
 
-        // We need thread-safe access to strokes from Model
-        model.performRead { allStrokes ->
-            for (stroke in allStrokes) {
-                if (visibleRect != null && !RectF.intersects(visibleRect, stroke.bounds)) continue
+        // We need thread-safe access to items from Model
+        model.performRead { allItems ->
+            for (item in allItems) {
+                if (visibleRect != null && !RectF.intersects(visibleRect, item.bounds)) continue
 
-                paint.color = stroke.color
-                paint.strokeWidth = stroke.width
-                if (quality == RenderQuality.SIMPLE) paint.strokeWidth *= 0.5f
+                if (item is Stroke) {
+                    paint.color = item.color
+                    paint.strokeWidth = item.width
+                    if (quality == RenderQuality.SIMPLE) paint.strokeWidth *= 0.5f
 
-                if (quality != RenderQuality.SIMPLE && stroke.points.isNotEmpty()) {
-                    StrokeRenderer.drawStroke(canvas, paint, stroke)
+                    if (quality != RenderQuality.SIMPLE && item.points.isNotEmpty()) {
+                        StrokeRenderer.drawItem(canvas, item, false, paint, context)
+                    } else {
+                        paint.style = Paint.Style.STROKE
+                        canvas.drawPath(item.path, paint)
+                    }
                 } else {
-                    paint.style = Paint.Style.STROKE
-                    canvas.drawPath(stroke.path, paint)
+                    StrokeRenderer.drawItem(canvas, item, false, paint, context)
                 }
             }
         }
     }
 
     /**
-     * Helper for TileManager to render a single stroke to a tile bitmap.
-     * This encapsulates the specific Paint configuration and StrokeRenderer call used for tile generation.
+     * Helper for TileManager to render a single item to a tile bitmap.
      */
-    fun drawStrokeToCanvas(
+    fun drawItemToCanvas(
         canvas: Canvas,
-        stroke: Stroke,
+        item: com.alexdremov.notate.model.CanvasItem,
         debug: Boolean = false,
+        scale: Float = 1.0f,
     ) {
         val paint =
             Paint().apply {
@@ -207,6 +220,18 @@ class CanvasRenderer(
                 strokeMiter = 4.0f
             }
 
-        StrokeRenderer.drawStroke(canvas, paint, stroke, debug)
+        StrokeRenderer.drawItem(canvas, item, debug, paint, context, scale)
+    }
+
+    /**
+     * Helper for TileManager to render a single stroke to a tile bitmap.
+     * Backwards compatibility.
+     */
+    fun drawStrokeToCanvas(
+        canvas: Canvas,
+        stroke: Stroke,
+        debug: Boolean = false,
+    ) {
+        drawItemToCanvas(canvas, stroke, debug)
     }
 }

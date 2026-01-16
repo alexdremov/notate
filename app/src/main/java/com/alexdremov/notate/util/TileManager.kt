@@ -48,6 +48,7 @@ class TileManager(
     private var lastRenderLevel = -1
     private var lastVisibleRect: RectF? = null
     private var lastScale: Float = 1.0f
+    private var lastVisibleCount = 0
 
     // Debugging
     private val errorMessages = LruCache<TileCache.TileKey, String>(CanvasConfig.ERROR_CACHE_SIZE)
@@ -90,34 +91,39 @@ class TileManager(
         visibleRect: RectF,
         scale: Float,
     ) {
-        this.lastVisibleRect = RectF(visibleRect)
-        this.lastScale = scale
+        com.alexdremov.notate.util.PerformanceProfiler.trace("TileManager.render") {
+            this.lastVisibleRect = RectF(visibleRect)
+            this.lastScale = scale
 
-        val level = calculateLOD(scale)
-        val currentVersion = checkLevelChanged(level)
+            val level = calculateLOD(scale)
+            val currentVersion = checkLevelChanged(level)
 
-        val worldTileSize = calculateWorldTileSize(level)
+            val worldTileSize = calculateWorldTileSize(level)
 
-        // Calculate visible range
-        val startCol = floor(visibleRect.left / worldTileSize).toInt()
-        val endCol = floor(visibleRect.right / worldTileSize).toInt()
-        val startRow = floor(visibleRect.top / worldTileSize).toInt()
-        val endRow = floor(visibleRect.bottom / worldTileSize).toInt()
+            // Calculate visible range
+            val startCol = floor(visibleRect.left / worldTileSize).toInt()
+            val endCol = floor(visibleRect.right / worldTileSize).toInt()
+            val startRow = floor(visibleRect.top / worldTileSize).toInt()
+            val endRow = floor(visibleRect.bottom / worldTileSize).toInt()
 
-        // Cache Management
-        val visibleCount = (endCol - startCol + 1) * (endRow - startRow + 1)
-        tileCache.checkBudgetAndResizeIfNeeded(visibleCount)
-
-        // 1. Draw Visible Tiles
-        for (col in startCol..endCol) {
-            for (row in startRow..endRow) {
-                drawOrQueueTile(canvas, col, row, level, worldTileSize, true, currentVersion, scale)
+            // Cache Management
+            val visibleCount = (endCol - startCol + 1) * (endRow - startRow + 1)
+            if (visibleCount > lastVisibleCount) {
+                tileCache.checkBudgetAndResizeIfNeeded(visibleCount)
+                lastVisibleCount = visibleCount
             }
-        }
 
-        // 2. Pre-cache Neighbors if Idle
-        if (!isInteracting) {
-            queueNeighbors(startCol, endCol, startRow, endRow, level, worldTileSize, currentVersion)
+            // 1. Draw Visible Tiles
+            for (col in startCol..endCol) {
+                for (row in startRow..endRow) {
+                    drawOrQueueTile(canvas, col, row, level, worldTileSize, true, currentVersion, scale)
+                }
+            }
+
+            // 2. Pre-cache Neighbors if Idle
+            if (!isInteracting) {
+                queueNeighbors(startCol, endCol, startRow, endRow, level, worldTileSize, currentVersion)
+            }
         }
     }
 
@@ -222,36 +228,37 @@ class TileManager(
         col: Int,
         row: Int,
         worldSize: Float,
-    ): Bitmap {
-        val bitmap = tileCache.obtainBitmap()
-        bitmap.eraseColor(Color.TRANSPARENT) // Clear potential garbage from reuse
-        val tileCanvas = Canvas(bitmap)
+    ): Bitmap =
+        com.alexdremov.notate.util.PerformanceProfiler.trace("TileManager.generateTileBitmap") {
+            val bitmap = tileCache.obtainBitmap()
+            bitmap.eraseColor(Color.TRANSPARENT) // Clear potential garbage from reuse
+            val tileCanvas = Canvas(bitmap)
 
-        val worldRect = getTileWorldRect(col, row, worldSize)
-        val scale = tileSize.toFloat() / worldSize
+            val worldRect = getTileWorldRect(col, row, worldSize)
+            val scale = tileSize.toFloat() / worldSize
 
-        tileCanvas.save()
-        tileCanvas.scale(scale, scale)
-        tileCanvas.translate(-worldRect.left, -worldRect.top)
+            tileCanvas.save()
+            tileCanvas.scale(scale, scale)
+            tileCanvas.translate(-worldRect.left, -worldRect.top)
 
-        val strokes = canvasModel.queryStrokes(worldRect)
-        strokes.sortWith(compareBy<Stroke> { it.zIndex }.thenBy { it.strokeOrder })
+            val items = canvasModel.queryItems(worldRect)
+            items.sortWith(compareBy<com.alexdremov.notate.model.CanvasItem> { it.zIndex }.thenBy { it.order })
 
-        for (stroke in strokes) {
-            renderer.drawStrokeToCanvas(tileCanvas, stroke)
+            for (item in items) {
+                renderer.drawItemToCanvas(tileCanvas, item, scale = scale)
+            }
+            tileCanvas.restore()
+
+            bitmap
         }
-        tileCanvas.restore()
 
-        return bitmap
-    }
-
-    fun updateTilesWithStroke(stroke: Stroke) {
-        if (stroke.style == com.alexdremov.notate.model.StrokeType.HIGHLIGHTER) {
-            refreshTiles(stroke.bounds)
+    fun updateTilesWithItem(item: com.alexdremov.notate.model.CanvasItem) {
+        if (item is Stroke && item.style == com.alexdremov.notate.model.StrokeType.HIGHLIGHTER) {
+            refreshTiles(item.bounds)
             return
         }
 
-        val bounds = stroke.bounds
+        val bounds = item.bounds
         val snapshot = tileCache.snapshot()
         val version = renderVersion.get()
         val visibleRect = lastVisibleRect
@@ -277,7 +284,7 @@ class TileManager(
                     tileCanvas.save()
                     tileCanvas.scale(scale, scale)
                     tileCanvas.translate(-tileRect.left, -tileRect.top)
-                    renderer.drawStrokeToCanvas(tileCanvas, stroke)
+                    renderer.drawItemToCanvas(tileCanvas, item, scale = scale)
                     tileCanvas.restore()
 
                     // Re-queue to ensure final consistency if background tasks were active
@@ -438,6 +445,7 @@ class TileManager(
         tileCache.clear()
         generatingKeys.clear()
         debugStrokeCounts.clear()
+        lastVisibleCount = 0
     }
 
     // --- Private Helpers ---

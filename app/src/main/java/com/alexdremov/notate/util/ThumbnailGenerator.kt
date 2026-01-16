@@ -10,6 +10,7 @@ import android.util.Base64
 import com.alexdremov.notate.data.CanvasData
 import com.alexdremov.notate.data.CanvasType
 import com.alexdremov.notate.data.StrokeData
+import com.alexdremov.notate.model.CanvasImage
 import com.alexdremov.notate.model.StrokeType
 import java.io.ByteArrayOutputStream
 import kotlin.math.min
@@ -19,9 +20,12 @@ object ThumbnailGenerator {
     private const val THUMB_HEIGHT = 300
     private const val PADDING = 10f
 
-    fun generateBase64(data: CanvasData): String? =
+    fun generateBase64(
+        data: CanvasData,
+        context: android.content.Context,
+    ): String? =
         try {
-            val bitmap = generateBitmap(data)
+            val bitmap = generateBitmap(data, context)
             val outputStream = ByteArrayOutputStream()
             bitmap.compress(Bitmap.CompressFormat.JPEG, 80, outputStream)
             val byteArray = outputStream.toByteArray()
@@ -32,7 +36,10 @@ object ThumbnailGenerator {
             null
         }
 
-    private fun generateBitmap(data: CanvasData): Bitmap {
+    private fun generateBitmap(
+        data: CanvasData,
+        context: android.content.Context,
+    ): Bitmap {
         val bitmap = Bitmap.createBitmap(THUMB_WIDTH, THUMB_HEIGHT, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bitmap)
         canvas.drawColor(Color.WHITE) // Background
@@ -47,7 +54,7 @@ object ThumbnailGenerator {
                 }
 
                 CanvasType.INFINITE -> {
-                    calculateContentBounds(data.strokes)
+                    calculateContentBounds(data)
                 }
             }
 
@@ -71,10 +78,8 @@ object ThumbnailGenerator {
                 strokeJoin = Paint.Join.ROUND
             }
 
-        // Limit stroke count for performance during save
         val strokesToDraw =
             if (data.strokes.size > 2000) {
-                // Simple sampling if too many strokes
                 data.strokes.filterIndexed { index, _ -> index % 2 == 0 }
             } else {
                 data.strokes
@@ -82,6 +87,20 @@ object ThumbnailGenerator {
 
         strokesToDraw.forEach { stroke ->
             drawStroke(canvas, stroke, paint)
+        }
+
+        // 4. Draw Images
+        data.images.forEach { imgData ->
+            val image =
+                CanvasImage(
+                    uri = imgData.uri,
+                    bounds = RectF(imgData.x, imgData.y, imgData.x + imgData.width, imgData.y + imgData.height),
+                    zIndex = imgData.zIndex,
+                    order = imgData.order,
+                    rotation = imgData.rotation,
+                    opacity = imgData.opacity,
+                )
+            StrokeRenderer.drawItem(canvas, image, false, paint, context)
         }
 
         canvas.restore()
@@ -94,7 +113,6 @@ object ThumbnailGenerator {
         paint: Paint,
     ) {
         paint.color = stroke.color
-        // Scale stroke width down slightly for thumbnail clarity
         paint.strokeWidth = stroke.width
 
         if (stroke.style == StrokeType.HIGHLIGHTER) {
@@ -108,11 +126,12 @@ object ThumbnailGenerator {
 
         if (stroke.pointsPacked != null && stroke.pointsPacked.size >= 2) {
             val arr = stroke.pointsPacked
+            val stride = StrokeData.PACKED_POINT_STRIDE
             path.moveTo(arr[0], arr[1])
-            var i = 4
+            var i = stride
             while (i < arr.size) {
                 path.lineTo(arr[i], arr[i + 1])
-                i += 4
+                i += stride
             }
         } else if (stroke.points.isNotEmpty()) {
             val list = stroke.points
@@ -125,8 +144,8 @@ object ThumbnailGenerator {
         canvas.drawPath(path, paint)
     }
 
-    private fun calculateContentBounds(strokes: List<StrokeData>): RectF {
-        if (strokes.isEmpty()) return RectF(0f, 0f, 1000f, 1000f)
+    private fun calculateContentBounds(data: CanvasData): RectF {
+        if (data.strokes.isEmpty() && data.images.isEmpty()) return RectF(0f, 0f, 1000f, 1000f)
 
         var minX = Float.MAX_VALUE
         var minY = Float.MAX_VALUE
@@ -134,11 +153,9 @@ object ThumbnailGenerator {
         var maxY = Float.MIN_VALUE
         var hasContent = false
 
-        // Sample strokes for bounds to be faster
-        strokes.forEach { stroke ->
+        data.strokes.forEach { stroke ->
             if (stroke.pointsPacked != null) {
                 val arr = stroke.pointsPacked
-                // Just check start and end points for speed, or every Nth point
                 var i = 0
                 while (i < arr.size) {
                     val x = arr[i]
@@ -148,7 +165,7 @@ object ThumbnailGenerator {
                     if (y < minY) minY = y
                     if (y > maxY) maxY = y
                     hasContent = true
-                    i += 16 // Skip some points
+                    i += 4 * StrokeData.PACKED_POINT_STRIDE // Skip some points
                 }
             } else {
                 stroke.points.forEach { p ->
@@ -159,6 +176,14 @@ object ThumbnailGenerator {
                     hasContent = true
                 }
             }
+        }
+
+        data.images.forEach { img ->
+            if (img.x < minX) minX = img.x
+            if (img.x + img.width > maxX) maxX = img.x + img.width
+            if (img.y < minY) minY = img.y
+            if (img.y + img.height > maxY) maxY = img.y + img.height
+            hasContent = true
         }
 
         return if (hasContent) {

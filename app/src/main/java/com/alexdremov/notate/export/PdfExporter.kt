@@ -10,6 +10,7 @@ import android.graphics.pdf.PdfDocument
 import com.alexdremov.notate.config.CanvasConfig
 import com.alexdremov.notate.data.CanvasType
 import com.alexdremov.notate.model.BackgroundStyle
+import com.alexdremov.notate.model.CanvasItem
 import com.alexdremov.notate.model.InfiniteCanvasModel
 import com.alexdremov.notate.model.Stroke
 import com.alexdremov.notate.ui.render.BackgroundDrawer
@@ -41,6 +42,7 @@ object PdfExporter {
      * @param callback Optional callback for progress updates.
      */
     suspend fun export(
+        context: android.content.Context,
         model: InfiniteCanvasModel,
         outputStream: OutputStream,
         isVector: Boolean,
@@ -50,7 +52,7 @@ object PdfExporter {
 
         try {
             // Snapshot data from model
-            val strokes = ArrayList<Stroke>()
+            val items = ArrayList<CanvasItem>()
             var bounds = RectF()
             var type = CanvasType.INFINITE
             var pWidth = 0f
@@ -58,7 +60,7 @@ object PdfExporter {
             var bgStyle: BackgroundStyle = BackgroundStyle.Blank()
 
             model.performRead {
-                strokes.addAll(it)
+                items.addAll(it)
                 bounds = model.getContentBounds()
                 type = model.canvasType
                 pWidth = model.pageWidth
@@ -66,15 +68,15 @@ object PdfExporter {
                 bgStyle = model.backgroundStyle
             }
 
-            // Important: Sort strokes by Z-Index (Highlighters first)
-            strokes.sortWith(compareBy<Stroke> { it.zIndex }.thenBy { it.strokeOrder })
+            // Important: Sort items by Z-Index (Highlighters first)
+            items.sortWith(compareBy<CanvasItem> { it.zIndex }.thenBy { it.order })
 
             currentCoroutineContext().ensureActive()
 
             if (type == CanvasType.FIXED_PAGES) {
-                exportFixedPages(pdfDocument, strokes, bounds, pWidth, pHeight, bgStyle, isVector, callback)
+                exportFixedPages(pdfDocument, items, bounds, pWidth, pHeight, bgStyle, isVector, callback, context)
             } else {
-                exportInfiniteCanvas(pdfDocument, strokes, bounds, bgStyle, isVector, callback)
+                exportInfiniteCanvas(pdfDocument, items, bounds, bgStyle, isVector, callback, context)
             }
 
             currentCoroutineContext().ensureActive()
@@ -93,13 +95,14 @@ object PdfExporter {
 
     private suspend fun exportFixedPages(
         doc: PdfDocument,
-        strokes: List<Stroke>,
+        items: List<CanvasItem>,
         contentBounds: RectF,
         pageWidth: Float,
         pageHeight: Float,
         bgStyle: BackgroundStyle,
         isVector: Boolean,
         callback: ProgressCallback?,
+        context: android.content.Context,
     ) {
         val pageFullHeight = pageHeight + CanvasConfig.PAGE_SPACING
         // Determine last page index based on content
@@ -133,29 +136,20 @@ object PdfExporter {
             // Draw Pattern
             // We need to clip to avoid drawing outside
             canvas.save()
-            // Pattern expects to be drawn in world coordinates or we translate context?
-            // BackgroundDrawer draws in current canvas coords but uses rect for pattern alignment.
-            // We want the pattern to look continuous or per-page?
-            // FixedPageLayout renders per-page with offsets.
-            // Let's translate the canvas so (0,0) is the top-left of the page in world space?
-            // No, the PDF page is (0..W, 0..H).
-            // The world content for this page is at (0, topOffset).
-            // So we translate canvas by -topOffset.
             canvas.translate(0f, -topOffset)
 
             // Draw Pattern
             val pageWorldRect = RectF(0f, topOffset, pageWidth, topOffset + pageHeight)
             BackgroundDrawer.draw(canvas, bgStyle, pageWorldRect, 0f, topOffset, forceVector = isVector) // Pass offset to align pattern
 
-            // Draw Strokes
-            // Optimization: Filter strokes that intersect this page
-            // Since we have the list, we iterate. (Quadtree would be faster but we copied list).
-            val visibleStrokes = strokes.filter { RectF.intersects(it.bounds, pageWorldRect) }
+            // Draw Items
+            // Optimization: Filter items that intersect this page
+            val visibleItems = items.filter { RectF.intersects(it.bounds, pageWorldRect) }
 
             if (isVector) {
-                renderVectorStrokes(canvas, visibleStrokes, paint)
+                renderVectorItems(canvas, visibleItems, paint, context)
             } else {
-                renderBitmapStrokes(canvas, visibleStrokes, pageWorldRect, paint)
+                renderBitmapItems(canvas, visibleItems, pageWorldRect, paint, context)
             }
 
             canvas.restore()
@@ -165,11 +159,12 @@ object PdfExporter {
 
     private suspend fun exportInfiniteCanvas(
         doc: PdfDocument,
-        strokes: List<Stroke>,
+        items: List<CanvasItem>,
         contentBounds: RectF,
         bgStyle: BackgroundStyle,
         isVector: Boolean,
         callback: ProgressCallback?,
+        context: android.content.Context,
     ) {
         val padding = 50f
         val bounds =
@@ -211,55 +206,48 @@ object PdfExporter {
             }
 
         if (isVector) {
-            renderVectorStrokes(canvas, strokes, paint)
+            renderVectorItems(canvas, items, paint, context)
         } else {
             // For infinite canvas, bitmap might be huge.
-            // We should check size.
-            // If > 4000x4000, maybe scale down? Or render in tiles?
-            // Drawing a huge bitmap to PDF canvas works if memory allows.
-            // Let's try direct bitmap render. If bounds are massive, we might crash.
             // Limit to 4096 dim.
             if (width > 4096 || height > 4096) {
                 val scale = 4096f / max(width, height)
                 canvas.save()
                 canvas.scale(scale, scale)
-                renderBitmapStrokes(canvas, strokes, bounds, paint) // Render to bitmap of scaled size?
-                // renderBitmapStrokes creates a bitmap of `bounds` size.
-                // We need to tell it to create a smaller bitmap.
-                // Let's just default to Vector for huge canvases or use a Tiled approach?
-                // Tiled approach for PDF:
-                // Draw multiple bitmaps onto the PDF canvas.
-                renderTiledBitmap(canvas, strokes, bounds, paint)
+                renderTiledBitmap(canvas, items, bounds, paint, context)
                 canvas.restore()
             } else {
-                renderBitmapStrokes(canvas, strokes, bounds, paint)
+                renderBitmapItems(canvas, items, bounds, paint, context)
             }
         }
 
         doc.finishPage(page)
     }
 
-    private fun renderVectorStrokes(
+    private fun renderVectorItems(
         canvas: Canvas,
-        strokes: List<Stroke>,
+        items: List<CanvasItem>,
         paint: Paint,
+        context: android.content.Context,
     ) {
-        for (stroke in strokes) {
-            paint.color = stroke.color
-            paint.strokeWidth = stroke.width
-            // Vector render using StrokeRenderer with forced vector mode
-            StrokeRenderer.drawStroke(canvas, paint, stroke, forceVector = true)
+        for (item in items) {
+            if (item is Stroke) {
+                paint.color = item.color
+                paint.strokeWidth = item.width
+                StrokeRenderer.drawStroke(canvas, paint, item, forceVector = true)
+            } else {
+                StrokeRenderer.drawItem(canvas, item, false, paint, context)
+            }
         }
     }
 
-    private fun renderBitmapStrokes(
+    private fun renderBitmapItems(
         canvas: Canvas,
-        strokes: List<Stroke>,
+        items: List<CanvasItem>,
         bounds: RectF,
         paint: Paint,
+        context: android.content.Context,
     ) {
-        // Create a bitmap for the content
-        // This ensures pixel-perfect rendering of brushes like Charcoal/Marker
         val w = bounds.width().toInt().coerceAtLeast(1)
         val h = bounds.height().toInt().coerceAtLeast(1)
 
@@ -270,20 +258,13 @@ object PdfExporter {
             // We need to translate bmpCanvas so that `bounds.left` is at 0
             bmpCanvas.translate(-bounds.left, -bounds.top)
 
-            for (stroke in strokes) {
-                paint.color = stroke.color
-                paint.strokeWidth = stroke.width
-                StrokeRenderer.drawStroke(bmpCanvas, paint, stroke)
+            for (item in items) {
+                if (item is Stroke) {
+                    paint.color = item.color
+                    paint.strokeWidth = item.width
+                }
+                StrokeRenderer.drawItem(bmpCanvas, item, false, paint, context)
             }
-
-            // Draw bitmap to PDF canvas
-            // The PDF canvas is already translated to world coordinates if called from Infinite/Fixed
-            // BUT wait.
-            // In `exportFixedPages`, canvas is translated by `-topOffset` (World -> Page).
-            // `bounds` is in World coords.
-            // If we draw the bitmap at `bounds.left, bounds.top`, it should align.
-            // Because `bmpCanvas` was translated by `-bounds.left`, `drawStroke` (World Coords) drew to (0,0) of Bitmap.
-            // So Bitmap (0,0) corresponds to World (bounds.left, bounds.top).
 
             canvas.drawBitmap(bitmap, bounds.left, bounds.top, null)
 
@@ -291,15 +272,16 @@ object PdfExporter {
         } catch (e: OutOfMemoryError) {
             // Fallback to vector if OOM
             System.gc()
-            renderVectorStrokes(canvas, strokes, paint)
+            renderVectorItems(canvas, items, paint, context)
         }
     }
 
     private fun renderTiledBitmap(
         canvas: Canvas,
-        strokes: List<Stroke>,
+        items: List<CanvasItem>,
         bounds: RectF,
         paint: Paint,
+        context: android.content.Context,
     ) {
         val tileSize = 2048
         val cols = ceil(bounds.width() / tileSize).toInt()
@@ -313,9 +295,9 @@ object PdfExporter {
                 val bottom = min(top + tileSize, bounds.bottom)
                 val tileRect = RectF(left, top, right, bottom)
 
-                val tileStrokes = strokes.filter { RectF.intersects(it.bounds, tileRect) }
-                if (tileStrokes.isNotEmpty()) {
-                    renderBitmapStrokes(canvas, tileStrokes, tileRect, paint)
+                val tileItems = items.filter { RectF.intersects(it.bounds, tileRect) }
+                if (tileItems.isNotEmpty()) {
+                    renderBitmapItems(canvas, tileItems, tileRect, paint, context)
                 }
             }
         }

@@ -15,7 +15,9 @@ object CanvasConfig {
     const val MIN_ZOOM_LEVEL = -10
     const val MAX_ZOOM_LEVEL = 10
     const val LOD_BIAS = 0.5f // Switch to lower resolution sooner
-    const val CACHE_MEMORY_PERCENT = 0.8 // of heap
+    const val CACHE_MEMORY_PERCENT = 0.65 // of heap
+    const val IMAGE_CACHE_MEMORY_PERCENT = 0.25 // of heap
+    const val IMAGE_METADATA_CACHE_SIZE = 200
     const val ERROR_CACHE_SIZE = 100
     const val NEIGHBOR_PRECACHE_THRESHOLD_PERCENT = 0.9
     const val NEIGHBOR_COUNT = 2
@@ -32,6 +34,10 @@ object CanvasConfig {
     const val DEBUG_TEXT_OFFSET_X_BASE = 10f
     const val DEBUG_TEXT_LINE_HEIGHT_BASE = 40f
     const val DEBUG_ERROR_MSG_CHUNK_SIZE = 30
+
+    // Profiling
+    const val DEBUG_ENABLE_PROFILING = false
+    const val PROFILING_INTERVAL_MS = 2000L
 
     // UI / Minimap
     const val MINIMAP_WIDTH = 300f

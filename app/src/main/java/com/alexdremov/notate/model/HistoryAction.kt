@@ -2,16 +2,16 @@ package com.alexdremov.notate.model
 
 sealed class HistoryAction {
     data class Add(
-        val strokes: List<Stroke>,
+        val items: List<CanvasItem>,
     ) : HistoryAction()
 
     data class Remove(
-        val strokes: List<Stroke>,
+        val items: List<CanvasItem>,
     ) : HistoryAction()
 
     data class Replace(
-        val removed: List<Stroke>,
-        val added: List<Stroke>,
+        val removed: List<CanvasItem>,
+        val added: List<CanvasItem>,
     ) : HistoryAction()
 
     data class Batch(

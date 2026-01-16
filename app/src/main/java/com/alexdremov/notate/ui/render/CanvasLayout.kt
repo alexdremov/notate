@@ -4,6 +4,7 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Matrix
 import android.graphics.Paint
+import android.graphics.Path
 import android.graphics.RectF
 import com.alexdremov.notate.config.CanvasConfig
 import com.alexdremov.notate.model.BackgroundStyle
@@ -41,27 +42,29 @@ class InfiniteLayout : CanvasLayout {
         tileManager: TileManager,
         renderer: CanvasRenderer,
     ) {
-        canvas.save()
-        canvas.concat(matrix)
+        com.alexdremov.notate.util.PerformanceProfiler.trace("InfiniteLayout.render") {
+            canvas.save()
+            canvas.concat(matrix)
 
-        // Draw Infinite Background Pattern
-        // If visibleRect is null (export whole canvas), we calculate content bounds
-        val drawRect = visibleRect ?: model.getContentBounds()
+            // Draw Infinite Background Pattern
+            // If visibleRect is null (export whole canvas), we calculate content bounds
+            val drawRect = visibleRect ?: model.getContentBounds()
 
-        // We only draw background if we have a valid rect.
-        // For infinite export, usually we want a background behind content.
-        if (!drawRect.isEmpty) {
-            BackgroundDrawer.draw(canvas, model.backgroundStyle, drawRect)
+            // We only draw background if we have a valid rect.
+            // For infinite export, usually we want a background behind content.
+            if (!drawRect.isEmpty) {
+                BackgroundDrawer.draw(canvas, model.backgroundStyle, drawRect)
+            }
+
+            val useDirectVectors = visibleRect == null
+            if (useDirectVectors) {
+                renderer.renderDirectVectors(canvas, matrix, visibleRect, quality)
+            } else {
+                tileManager.render(canvas, visibleRect!!, zoomLevel)
+            }
+
+            canvas.restore()
         }
-
-        val useDirectVectors = visibleRect == null
-        if (useDirectVectors) {
-            renderer.renderDirectVectors(canvas, matrix, visibleRect, quality)
-        } else {
-            tileManager.render(canvas, visibleRect!!, zoomLevel)
-        }
-
-        canvas.restore()
     }
 }
 
@@ -92,54 +95,66 @@ class FixedPageLayout(
         tileManager: TileManager,
         renderer: CanvasRenderer,
     ) {
-        canvas.save()
-        canvas.concat(matrix)
+        com.alexdremov.notate.util.PerformanceProfiler.trace("FixedPageLayout.render") {
+            canvas.save()
+            canvas.concat(matrix)
 
-        if (visibleRect != null) {
-            val pageFullHeight = pageHeight + CanvasConfig.PAGE_SPACING
-            val firstPageIdx = floor(visibleRect.top / pageFullHeight).toInt().coerceAtLeast(0)
-            val lastPageIdx = floor(visibleRect.bottom / pageFullHeight).toInt()
+            if (visibleRect != null) {
+                val pageFullHeight = pageHeight + CanvasConfig.PAGE_SPACING
+                val firstPageIdx = floor(visibleRect.top / pageFullHeight).toInt().coerceAtLeast(0)
+                val lastPageIdx = floor(visibleRect.bottom / pageFullHeight).toInt()
 
-            for (i in firstPageIdx..lastPageIdx) {
-                val top = i * pageFullHeight
-                val pageRect = RectF(0f, top, pageWidth, top + pageHeight)
+                val contentClipPath = Path()
 
-                // 1. Draw Page Background (White Base)
-                canvas.drawRect(pageRect, bgPaint)
+                // 1. Draw Page Backgrounds & Borders first
+                for (i in firstPageIdx..lastPageIdx) {
+                    val top = i * pageFullHeight
+                    val pageRect = RectF(0f, top, pageWidth, top + pageHeight)
 
-                // 2. Render content CLIPPED to this page
-                canvas.save()
-                canvas.clipRect(pageRect)
+                    // Add to clip path for content rendering later
+                    contentClipPath.addRect(pageRect, Path.Direction.CW)
 
-                // Draw Pattern inside the page (now clipped)
-                // Apply padding and alignment logic using Helper
-                val style = model.backgroundStyle
-                val patternArea = PatternLayoutHelper.calculatePatternArea(pageRect, style)
+                    // Draw White Page Base
+                    canvas.drawRect(pageRect, bgPaint)
 
-                // We intersect the pattern area with visible rect to avoid drawing pattern outside viewport
-                val bgIntersection = RectF(patternArea)
-                if (bgIntersection.intersect(visibleRect)) {
-                    val (offsetX, offsetY) = PatternLayoutHelper.calculateOffsets(patternArea, style)
-                    BackgroundDrawer.draw(canvas, style, bgIntersection, offsetX, offsetY)
+                    // Draw Pattern inside the page
+                    // We clip individually here for the pattern to ensure clean edges per page
+                    canvas.save()
+                    canvas.clipRect(pageRect)
+
+                    val style = model.backgroundStyle
+                    val patternArea = PatternLayoutHelper.calculatePatternArea(pageRect, style)
+
+                    // Optimize pattern drawing by intersecting with visible area
+                    val bgIntersection = RectF(patternArea)
+                    if (bgIntersection.intersect(visibleRect)) {
+                        val (offsetX, offsetY) = PatternLayoutHelper.calculateOffsets(patternArea, style)
+                        BackgroundDrawer.draw(canvas, style, bgIntersection, offsetX, offsetY)
+                    }
+
+                    canvas.restore()
+
+                    // Draw Page Border
+                    canvas.drawRect(pageRect, borderPaint)
                 }
 
-                val intersection = RectF(pageRect)
-                if (intersection.intersect(visibleRect)) {
-                    tileManager.render(canvas, intersection, zoomLevel)
+                // 2. Render Content (Tiles)
+                // We call TileManager ONCE with the full visible rect.
+                // But we clip the canvas to the union of all page rects to prevent content bleeding into spacing.
+                if (!contentClipPath.isEmpty) {
+                    canvas.save()
+                    canvas.clipPath(contentClipPath)
+                    tileManager.render(canvas, visibleRect, zoomLevel)
+                    canvas.restore()
                 }
-
-                canvas.restore()
-
-                // 4. Draw Page Border
-                canvas.drawRect(pageRect, borderPaint)
+            } else {
+                // Fallback for full export / minimap if rect is null (unbounded)
+                renderPagesBackgroundForExport(canvas, model, model.getContentBounds())
+                renderer.renderDirectVectors(canvas, matrix, visibleRect, quality)
             }
-        } else {
-            // Fallback for full export / minimap if rect is null (unbounded)
-            renderPagesBackgroundForExport(canvas, model, model.getContentBounds())
-            renderer.renderDirectVectors(canvas, matrix, visibleRect, quality)
-        }
 
-        canvas.restore()
+            canvas.restore()
+        }
     }
 
     private fun renderPagesBackgroundForExport(

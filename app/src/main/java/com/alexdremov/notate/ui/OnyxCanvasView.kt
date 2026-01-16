@@ -19,7 +19,6 @@ import com.alexdremov.notate.model.PenTool
 import com.alexdremov.notate.ui.input.PenInputHandler
 import com.alexdremov.notate.ui.interaction.ViewportInteractor
 import com.alexdremov.notate.ui.render.CanvasRenderer
-import com.alexdremov.notate.ui.render.MinimapDrawer
 import com.alexdremov.notate.ui.render.RenderQuality
 import com.alexdremov.notate.ui.render.SelectionOverlayDrawer
 import com.alexdremov.notate.ui.selection.SelectionInteractor
@@ -39,23 +38,23 @@ class OnyxCanvasView
         // --- Components ---
         private var touchHelper: TouchHelper? = null
         private val canvasModel = InfiniteCanvasModel()
-        private val canvasRenderer = CanvasRenderer(canvasModel) { invalidateCanvas() }
+        private val canvasRenderer = CanvasRenderer(canvasModel, context.applicationContext) { invalidateCanvas() }
         private val canvasController = CanvasControllerImpl(canvasModel, canvasRenderer)
 
         // --- Drawers ---
-        private val minimapDrawer = MinimapDrawer(this, canvasModel, canvasRenderer) { invalidateCanvas() }
         private val selectionOverlayDrawer = SelectionOverlayDrawer(canvasController.getSelectionManager(), canvasRenderer)
 
         // --- Interaction Handlers ---
         private val matrix = Matrix()
         private val inverseMatrix = Matrix()
+        var onViewportChanged: (() -> Unit)? = null
 
         private val viewportInteractor =
             ViewportInteractor(
                 context,
                 matrix,
                 invalidateCallback = {
-                    minimapDrawer.show()
+                    onViewportChanged?.invoke()
                     invalidateCanvas()
                 },
                 onScaleChanged = { updateTouchHelperTool() },
@@ -78,12 +77,21 @@ class OnyxCanvasView
         private val penInputHandler: PenInputHandler
 
         // --- State ---
+
         private var currentTool: PenTool = PenTool.defaultPens()[0]
+
         private val exclusionRects = ArrayList<Rect>()
+
         var onStrokeStarted: (() -> Unit)? = null
+
         var onContentChanged: (() -> Unit)? = null
 
+        var minimapDrawer: com.alexdremov.notate.ui.render.MinimapDrawer? = null
+
+        var onRequestInsertImage: (() -> Unit)? = null
+
         private var actionPopup: com.alexdremov.notate.ui.dialog.SelectionActionPopup? = null
+
         private var pastePopup: com.alexdremov.notate.ui.dialog.PasteActionPopup? = null
         private lateinit var gestureDetector: android.view.GestureDetector
 
@@ -126,7 +134,6 @@ class OnyxCanvasView
                     inverseMatrix,
                     onStrokeStarted = { onStrokeStarted?.invoke() },
                     onStrokeFinished = {
-                        minimapDrawer.setDirty()
                         drawContent()
                         onContentChanged?.invoke()
                     },
@@ -135,7 +142,6 @@ class OnyxCanvasView
             setupGestureDetectors()
 
             canvasController.setOnContentChangedListener {
-                minimapDrawer.setDirty()
                 onContentChanged?.invoke()
             }
         }
@@ -156,23 +162,23 @@ class OnyxCanvasView
                             val worldX = pts[0]
                             val worldY = pts[1]
 
-                            val stroke = canvasController.getStrokeAt(worldX, worldY)
+                            val item = canvasController.getItemAt(worldX, worldY)
 
-                            if (stroke != null) {
+                            if (item != null) {
                                 canvasController.clearSelection()
-                                canvasController.selectStroke(stroke)
+                                canvasController.selectItem(item)
                                 // Hand off to Interactor to start drag
                                 selectionInteractor.onLongPressDragStart(e.x, e.y)
                                 performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
-                            } else if (com.alexdremov.notate.util.ClipboardManager
-                                    .hasContent()
-                            ) {
-                                // Show Contextual Paste Bubble instead of instant paste
+                            } else {
+                                // Show Contextual Menu (Paste / Insert Image)
                                 if (pastePopup == null) {
                                     pastePopup =
-                                        com.alexdremov.notate.ui.dialog.PasteActionPopup(context) {
-                                            canvasController.paste(worldX, worldY)
-                                        }
+                                        com.alexdremov.notate.ui.dialog.PasteActionPopup(
+                                            context,
+                                            onPaste = { canvasController.paste(worldX, worldY) },
+                                            onPasteImage = { onRequestInsertImage?.invoke() },
+                                        )
                                 }
                                 pastePopup?.show(this@OnyxCanvasView, e.x, e.y)
                                 performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
@@ -264,31 +270,35 @@ class OnyxCanvasView
         }
 
         private fun drawContent() {
-            val cv = holder.lockCanvas() ?: return
-            try {
-                val bgColor = if (canvasModel.canvasType == CanvasType.FIXED_PAGES) Color.rgb(250, 250, 250) else Color.WHITE
-                cv.drawColor(bgColor)
+            com.alexdremov.notate.util.PerformanceProfiler.trace("OnyxCanvasView.drawContent") {
+                val cv = holder.lockCanvas() ?: return
+                try {
+                    val bgColor = if (canvasModel.canvasType == CanvasType.FIXED_PAGES) Color.rgb(250, 250, 250) else Color.WHITE
+                    cv.drawColor(bgColor)
 
-                val visibleRect = RectF(0f, 0f, width.toFloat(), height.toFloat())
-                matrix.invert(inverseMatrix)
-                inverseMatrix.mapRect(visibleRect)
+                    val visibleRect = RectF(0f, 0f, width.toFloat(), height.toFloat())
+                    matrix.invert(inverseMatrix)
+                    inverseMatrix.mapRect(visibleRect)
 
-                canvasRenderer.render(cv, matrix, visibleRect, RenderQuality.HIGH, viewportInteractor.getCurrentScale())
-                selectionOverlayDrawer.draw(cv, matrix, viewportInteractor.getCurrentScale())
-                minimapDrawer.draw(cv, matrix, inverseMatrix, viewportInteractor.getCurrentScale())
+                    canvasRenderer.render(cv, matrix, visibleRect, RenderQuality.HIGH, viewportInteractor.getCurrentScale())
+                    selectionOverlayDrawer.draw(cv, matrix, viewportInteractor.getCurrentScale())
 
-                if (CanvasConfig.DEBUG_SHOW_RAM_USAGE) {
-                    val runtime = Runtime.getRuntime()
-                    val text = "RAM: ${(runtime.totalMemory() - runtime.freeMemory()) / 1048576L}MB"
-                    val debugPaint =
-                        android.graphics.Paint().apply {
-                            color = Color.RED
-                            textSize = 40f
-                        }
-                    cv.drawText(text, 20f, height - 20f, debugPaint)
+                    if (CanvasConfig.DEBUG_SHOW_RAM_USAGE) {
+                        val runtime = Runtime.getRuntime()
+                        val text = "RAM: ${(runtime.totalMemory() - runtime.freeMemory()) / 1048576L}MB"
+                        val debugPaint =
+                            android.graphics.Paint().apply {
+                                color = Color.RED
+                                textSize = 40f
+                            }
+                        cv.drawText(text, 20f, height - 20f, debugPaint)
+                    }
+
+                    com.alexdremov.notate.util.PerformanceProfiler
+                        .printReportIfNeeded()
+                } finally {
+                    holder.unlockCanvasAndPost(cv)
                 }
-            } finally {
-                holder.unlockCanvasAndPost(cv)
             }
         }
 
@@ -297,6 +307,12 @@ class OnyxCanvasView
 
         fun getModel() = canvasModel
 
+        fun getRenderer() = canvasRenderer
+
+        fun getViewportMatrix(outMatrix: Matrix) {
+            outMatrix.set(matrix)
+        }
+
         fun getCurrentScale() = viewportInteractor.getCurrentScale()
 
         fun scrollByOffset(
@@ -304,7 +320,7 @@ class OnyxCanvasView
             dy: Float,
         ) {
             matrix.postTranslate(dx, dy)
-            minimapDrawer.show()
+            onViewportChanged?.invoke()
             invalidateCanvas()
         }
 
@@ -326,7 +342,7 @@ class OnyxCanvasView
 
             canvasRenderer.updateLayoutStrategy()
             canvasRenderer.clearTiles()
-            minimapDrawer.setDirty()
+
             drawContent()
         }
 
@@ -339,7 +355,7 @@ class OnyxCanvasView
 
             canvasRenderer.updateLayoutStrategy()
             canvasRenderer.clearTiles()
-            minimapDrawer.setDirty()
+
             drawContent()
         }
 
@@ -389,8 +405,9 @@ class OnyxCanvasView
         fun clear() {
             canvasModel.clear()
             canvasRenderer.clearTiles()
-            minimapDrawer.setDirty()
+            minimapDrawer?.setDirty()
             drawContent()
+
             performHardRefresh()
             onContentChanged?.invoke()
         }
@@ -479,11 +496,17 @@ class OnyxCanvasView
 
         private fun refreshAfterEdit() {
             val visibleRect = RectF(0f, 0f, width.toFloat(), height.toFloat())
+
             matrix.invert(inverseMatrix)
+
             inverseMatrix.mapRect(visibleRect)
+
             canvasRenderer.refreshTiles(viewportInteractor.getCurrentScale(), visibleRect)
-            minimapDrawer.setDirty()
+
+            minimapDrawer?.setDirty()
+
             drawContent()
+
             performHardRefresh()
         }
     }

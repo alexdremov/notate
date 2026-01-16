@@ -54,6 +54,7 @@ sealed class ToolbarItem {
 enum class ActionType {
     UNDO,
     REDO,
+    INSERT_IMAGE,
 }
 
 @Serializable

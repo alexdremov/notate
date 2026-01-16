@@ -2,17 +2,21 @@ package com.alexdremov.notate.controller
 
 import android.graphics.Matrix
 import android.graphics.RectF
-import com.alexdremov.notate.model.Stroke
+import com.alexdremov.notate.model.CanvasItem
 import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Manages the state of the active selection.
- * Holds the selected strokes and the transient transformation matrix.
+ * Holds the selected items and the transient transformation matrix.
  * Thread-safe.
  */
 class SelectionManager {
-    private val _selectedStrokes = ConcurrentHashMap.newKeySet<Stroke>()
-    val selectedStrokes: Set<Stroke> get() = _selectedStrokes
+    private val _selectedItems = ConcurrentHashMap.newKeySet<CanvasItem>()
+    val selectedItems: Set<CanvasItem> get() = _selectedItems
+
+    // Backwards compatibility for callers expecting Stroke
+    val selectedStrokes: Set<com.alexdremov.notate.model.Stroke>
+        get() = _selectedItems.filterIsInstance<com.alexdremov.notate.model.Stroke>().toSet()
 
     // Current transformation applied to the selection (transient)
     val transformMatrix = Matrix()
@@ -20,37 +24,37 @@ class SelectionManager {
     // Bounding box of the original selection (before transform)
     private val selectionBounds = RectF()
 
-    fun select(stroke: Stroke) {
-        _selectedStrokes.add(stroke)
+    fun select(item: CanvasItem) {
+        _selectedItems.add(item)
         recomputeBounds()
     }
 
-    fun selectAll(strokes: List<Stroke>) {
-        _selectedStrokes.addAll(strokes)
+    fun selectAll(items: List<CanvasItem>) {
+        _selectedItems.addAll(items)
         recomputeBounds()
     }
 
-    fun deselect(stroke: Stroke) {
-        _selectedStrokes.remove(stroke)
+    fun deselect(item: CanvasItem) {
+        _selectedItems.remove(item)
         recomputeBounds()
     }
 
     fun clearSelection() {
-        _selectedStrokes.clear()
+        _selectedItems.clear()
         transformMatrix.reset()
         selectionBounds.setEmpty()
     }
 
-    fun hasSelection() = _selectedStrokes.isNotEmpty()
+    fun hasSelection() = _selectedItems.isNotEmpty()
 
-    fun isSelected(stroke: Stroke) = _selectedStrokes.contains(stroke)
+    fun isSelected(item: CanvasItem) = _selectedItems.contains(item)
 
     private fun recomputeBounds() {
-        if (_selectedStrokes.isEmpty()) {
+        if (_selectedItems.isEmpty()) {
             selectionBounds.setEmpty()
             return
         }
-        val iter = _selectedStrokes.iterator()
+        val iter = _selectedItems.iterator()
         if (iter.hasNext()) {
             selectionBounds.set(iter.next().bounds)
         }

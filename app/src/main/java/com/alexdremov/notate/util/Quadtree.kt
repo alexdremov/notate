@@ -1,7 +1,7 @@
 package com.alexdremov.notate.util
 
 import android.graphics.RectF
-import com.alexdremov.notate.model.Stroke
+import com.alexdremov.notate.model.CanvasItem
 import java.util.ArrayList
 
 class Quadtree(
@@ -13,13 +13,13 @@ class Quadtree(
         private const val MAX_LEVELS = 20 // Increased for infinite expansion
     }
 
-    private val strokes = ArrayList<Stroke>()
+    private val items = ArrayList<CanvasItem>()
     private val nodes = arrayOfNulls<Quadtree>(4)
 
     fun getBounds(): RectF = bounds
 
     fun clear() {
-        strokes.clear()
+        items.clear()
         for (i in nodes.indices) {
             nodes[i]?.clear()
             nodes[i] = null
@@ -64,26 +64,23 @@ class Quadtree(
     }
 
     /**
-     * Inserts a stroke into the Quadtree.
+     * Inserts an item into the Quadtree.
      * @return The root of the tree (which might be a new parent if grown).
      */
-    fun insert(stroke: Stroke): Quadtree {
-        // If stroke is outside current root bounds, grow upwards
-        if (!bounds.contains(stroke.bounds)) {
-            return grow(stroke.bounds).insert(stroke)
+    fun insert(item: CanvasItem): Quadtree {
+        // If item is outside current root bounds, grow upwards
+        if (!bounds.contains(item.bounds)) {
+            return grow(item.bounds).insert(item)
         }
 
-        insertInternal(stroke)
+        insertInternal(item)
         return this
     }
 
     private fun grow(target: RectF): Quadtree {
-        // Determine direction to grow based on where the target is
-        // We double the size in the direction of the target
         val centerX = bounds.centerX()
         val centerY = bounds.centerY()
 
-        // Simple heuristic: If mostly Left/Top, grow Left/Top.
         val growRight = target.centerX() > centerX
         val growBottom = target.centerY() > centerY
 
@@ -94,70 +91,47 @@ class Quadtree(
         val newY = if (growBottom) bounds.top else bounds.top - bounds.height()
 
         val newBounds = RectF(newX, newY, newX + newWidth, newY + newHeight)
-        val newRoot = Quadtree(level - 1, newBounds) // New root is one level higher (lower number)
+        val newRoot = Quadtree(level - 1, newBounds)
 
-        // Force split to create children
         newRoot.split()
-
-        // Determine which child 'this' becomes
-        // If we grew Right (expanded East), 'this' was West (Left).
-        // If we grew Bottom (expanded South), 'this' was North (Top).
-        // 0: NW, 1: NE, 2: SW, 3: SE
-
-        // If we grew Right, we kept Left. 'this' is Left.
-        // If we grew Bottom, we kept Top. 'this' is Top.
-        // Left-Top = 0
 
         val childIndex =
             when {
                 growRight && growBottom -> 0
-
-                // We expanded East and South. 'this' is NW.
                 !growRight && growBottom -> 1
-
-                // We expanded West and South. 'this' is NE.
                 growRight && !growBottom -> 2
-
-                // We expanded East and North. 'this' is SW.
-                else -> 3 // We expanded West and North. 'this' is SE.
+                else -> 3
             }
 
-        // Replace the empty child with 'this'
-        // We must update 'this' level to match the new depth relative to root?
-        // Actually, if we use relative depth, 'this' level is fine if we just increment it?
-        // But 'this' is immutable mostly.
-        // Let's just slot it in. The 'level' param is mostly for split depth limit.
-        // If we construct 'newRoot' with level-1, then 'this' (at level) is consistent.
-
         newRoot.nodes[childIndex] = this
-        this.level = newRoot.level + 1 // Maintain level consistency
+        this.level = newRoot.level + 1
 
         return newRoot
     }
 
-    private fun insertInternal(stroke: Stroke) {
+    private fun insertInternal(item: CanvasItem) {
         if (nodes[0] != null) {
-            val index = getIndex(stroke.bounds)
+            val index = getIndex(item.bounds)
             if (index != -1) {
-                nodes[index]?.insertInternal(stroke)
+                nodes[index]?.insertInternal(item)
                 return
             }
         }
 
-        strokes.add(stroke)
+        items.add(item)
 
-        if (strokes.size > MAX_OBJECTS && level < MAX_LEVELS) {
+        if (items.size > MAX_OBJECTS && level < MAX_LEVELS) {
             if (nodes[0] == null) {
                 split()
             }
 
             var i = 0
-            while (i < strokes.size) {
-                val existingStroke = strokes[i]
-                val index = getIndex(existingStroke.bounds)
+            while (i < items.size) {
+                val existingItem = items[i]
+                val index = getIndex(existingItem.bounds)
                 if (index != -1) {
-                    strokes.removeAt(i)
-                    nodes[index]?.insertInternal(existingStroke)
+                    items.removeAt(i)
+                    nodes[index]?.insertInternal(existingItem)
                 } else {
                     i++
                 }
@@ -166,10 +140,9 @@ class Quadtree(
     }
 
     fun retrieve(
-        returnObjects: ArrayList<Stroke>,
+        returnObjects: ArrayList<CanvasItem>,
         viewport: RectF,
     ) {
-        // Optimization: If viewport doesn't intersect this node, abort
         if (!RectF.intersects(bounds, viewport)) {
             return
         }
@@ -178,7 +151,6 @@ class Quadtree(
         if (index != -1 && nodes[0] != null) {
             nodes[index]?.retrieve(returnObjects, viewport)
         } else if (nodes[0] != null) {
-            // Viewport overlaps multiple quadrants, search all intersecting nodes
             for (i in nodes.indices) {
                 if (nodes[i] != null && RectF.intersects(nodes[i]!!.bounds, viewport)) {
                     nodes[i]?.retrieve(returnObjects, viewport)
@@ -186,9 +158,9 @@ class Quadtree(
             }
         }
 
-        for (stroke in strokes) {
-            if (RectF.intersects(stroke.bounds, viewport)) {
-                returnObjects.add(stroke)
+        for (item in items) {
+            if (RectF.intersects(item.bounds, viewport)) {
+                returnObjects.add(item)
             }
         }
     }
@@ -197,49 +169,53 @@ class Quadtree(
         x: Float,
         y: Float,
         tolerance: Float,
-    ): Stroke? {
+    ): CanvasItem? {
         val searchRect = RectF(x - tolerance, y - tolerance, x + tolerance, y + tolerance)
-        val potentialStrokes = ArrayList<Stroke>()
-        retrieve(potentialStrokes, searchRect)
+        val potentialItems = ArrayList<CanvasItem>()
+        retrieve(potentialItems, searchRect)
 
-        var closestStroke: Stroke? = null
+        var closestItem: CanvasItem? = null
         var minDistance = Float.MAX_VALUE
 
-        for (stroke in potentialStrokes) {
-            val dist = StrokeGeometry.distPointToStroke(x, y, stroke)
-            // effective tolerance considers stroke width + touch fuzziness
-            val effectiveTolerance = tolerance + (stroke.width / 2f)
+        for (item in potentialItems) {
+            val dist = item.distanceToPoint(x, y)
 
-            if (dist <= effectiveTolerance && dist < minDistance) {
-                minDistance = dist
-                closestStroke = stroke
+            if (dist <= tolerance) {
+                if (dist < minDistance) {
+                    minDistance = dist
+                    closestItem = item
+                } else if (dist == minDistance) {
+                    // Tie-breaker: Prefer higher Z-index, then higher order (newer/topmost)
+                    if (closestItem != null) {
+                        if (item.zIndex > closestItem.zIndex) {
+                            closestItem = item
+                        } else if (item.zIndex == closestItem.zIndex && item.order > closestItem.order) {
+                            closestItem = item
+                        }
+                    } else {
+                        closestItem = item
+                    }
+                }
             }
         }
-        return closestStroke
+        return closestItem
     }
 
     /**
-     * Removes a stroke from the Quadtree.
-     * @return true if the stroke was found and removed, false otherwise.
+     * Removes an item from the Quadtree.
+     * @return true if the item was found and removed, false otherwise.
      */
-    fun remove(stroke: Stroke): Boolean {
-        // 1. Check if it's in this node's local list
-        // We use the exact object reference for removal
-        if (strokes.remove(stroke)) {
+    fun remove(item: CanvasItem): Boolean {
+        if (items.remove(item)) {
             return true
         }
 
-        // 2. If not in local list, check appropriate child node
         if (nodes[0] != null) {
-            val index = getIndex(stroke.bounds)
+            val index = getIndex(item.bounds)
             if (index != -1) {
-                return nodes[index]?.remove(stroke) == true
+                return nodes[index]?.remove(item) == true
             }
         }
-
-        // If index is -1, it means the stroke doesn't fit into any quadrant
-        // completely. In that case, it MUST be in 'strokes' list (per insertion logic).
-        // Since we already checked 'strokes' and didn't find it, it's not in this branch.
         return false
     }
 }

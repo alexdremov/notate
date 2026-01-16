@@ -34,6 +34,30 @@ data class CanvasData(
     val pageHeight: Float = 0f,
     @ProtoNumber(10)
     val backgroundStyle: BackgroundStyle = BackgroundStyle.Blank(),
+    @ProtoNumber(11)
+    val images: List<CanvasImageData> = emptyList(),
+)
+
+@Serializable
+data class CanvasImageData(
+    @ProtoNumber(1)
+    val uri: String,
+    @ProtoNumber(2)
+    val x: Float,
+    @ProtoNumber(3)
+    val y: Float,
+    @ProtoNumber(4)
+    val width: Float,
+    @ProtoNumber(5)
+    val height: Float,
+    @ProtoNumber(6)
+    val zIndex: Float,
+    @ProtoNumber(7)
+    val order: Long,
+    @ProtoNumber(8)
+    val rotation: Float = 0f,
+    @ProtoNumber(9)
+    val opacity: Float = 1.0f,
 )
 
 @Serializable
@@ -55,6 +79,10 @@ data class StrokeData(
     @ProtoNumber(8)
     val zIndex: Float = 0f,
 ) {
+    companion object {
+        const val PACKED_POINT_STRIDE = 6
+    }
+
     override fun equals(other: Any?): Boolean {
         if (this === other) return true
         if (javaClass != other?.javaClass) return false

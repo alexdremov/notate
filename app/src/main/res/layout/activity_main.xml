@@ -30,6 +30,16 @@
         android:elevation="6dp"
         android:padding="2dp" />
 
+    <!-- 2.5 Minimap -->
+    <com.alexdremov.notate.ui.MinimapView
+        android:id="@+id/minimapView"
+        android:layout_width="200dp"
+        android:layout_height="200dp"
+        android:layout_gravity="end|top"
+        android:layout_marginTop="16dp"
+        android:layout_marginEnd="16dp"
+        android:elevation="6dp" />
+
     <!-- 3. Scrim (Overlay Layer) -->
     <View
         android:id="@+id/sidebar_scrim"

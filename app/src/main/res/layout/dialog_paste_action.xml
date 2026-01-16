@@ -19,4 +19,22 @@
         android:textSize="16sp"
         android:textStyle="bold" />
 
+    <View
+        android:layout_width="1dp"
+        android:layout_height="match_parent"
+        android:layout_marginHorizontal="8dp"
+        android:background="#CCCCCC" />
+
+    <TextView
+        android:id="@+id/btn_paste_image"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:background="?attr/selectableItemBackground"
+        android:paddingHorizontal="12dp"
+        android:paddingVertical="8dp"
+        android:text="Paste Image"
+        android:textColor="@android:color/black"
+        android:textSize="16sp"
+        android:textStyle="bold" />
+
 </LinearLayout>

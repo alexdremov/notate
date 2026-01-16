@@ -80,6 +80,63 @@ class CanvasActivity : AppCompatActivity() {
             }
         }
 
+    private val imagePickerLauncher =
+        registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+            if (uri != null) {
+                // Persistent permission
+                try {
+                    contentResolver.takePersistableUriPermission(
+                        uri,
+                        android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION,
+                    )
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+
+                val matrix = android.graphics.Matrix()
+                binding.canvasView.getViewportMatrix(matrix)
+                val values = FloatArray(9)
+                matrix.getValues(values)
+                val tx = values[android.graphics.Matrix.MTRANS_X]
+                val ty = values[android.graphics.Matrix.MTRANS_Y]
+                val scale = values[android.graphics.Matrix.MSCALE_X] // Uniform scale assumption
+
+                // Calculate dimensions
+                var width = 400f
+                var height = 400f
+                try {
+                    val options = android.graphics.BitmapFactory.Options()
+                    options.inJustDecodeBounds = true
+                    contentResolver.openInputStream(uri)?.use {
+                        android.graphics.BitmapFactory.decodeStream(it, null, options)
+                    }
+                    if (options.outWidth > 0 && options.outHeight > 0) {
+                        width = options.outWidth.toFloat()
+                        height = options.outHeight.toFloat()
+                        val maxDim = 800f
+                        if (width > maxDim || height > maxDim) {
+                            val s = kotlin.math.min(maxDim / width, maxDim / height)
+                            width *= s
+                            height *= s
+                        }
+                    }
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+
+                // Calculate center in World Coordinates
+                // Screen Center = (Width/2, Height/2)
+                // World = (Screen - Translate) / Scale
+                val screenCenterX = binding.canvasView.width / 2f
+                val screenCenterY = binding.canvasView.height / 2f
+
+                val worldX = (screenCenterX - tx) / scale
+                val worldY = (screenCenterY - ty) / scale
+
+                binding.canvasView.getController().pasteImage(uri.toString(), worldX, worldY, width, height)
+            }
+        }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -175,8 +232,17 @@ class CanvasActivity : AppCompatActivity() {
                         },
                         onActionClick = { action ->
                             when (action) {
-                                com.alexdremov.notate.model.ActionType.UNDO -> binding.canvasView.undo()
-                                com.alexdremov.notate.model.ActionType.REDO -> binding.canvasView.redo()
+                                com.alexdremov.notate.model.ActionType.UNDO -> {
+                                    binding.canvasView.undo()
+                                }
+
+                                com.alexdremov.notate.model.ActionType.REDO -> {
+                                    binding.canvasView.redo()
+                                }
+
+                                com.alexdremov.notate.model.ActionType.INSERT_IMAGE -> {
+                                    imagePickerLauncher.launch(arrayOf("image/*"))
+                                }
                             }
                         },
                         onOpenSidebar = {
@@ -231,7 +297,12 @@ class CanvasActivity : AppCompatActivity() {
             }
         }
 
+        binding.canvasView.onRequestInsertImage = {
+            imagePickerLauncher.launch(arrayOf("image/*"))
+        }
+
         binding.canvasView.setCursorView(binding.cursorView)
+        binding.minimapView.setup(binding.canvasView)
 
         // ViewModel observation
         lifecycleScope.launch {

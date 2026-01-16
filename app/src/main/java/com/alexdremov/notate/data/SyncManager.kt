@@ -254,7 +254,7 @@ class SyncManager(
             val remotePdfPath = "${remoteDir.trimEnd('/')}/$pdfRelativePath"
 
             val out = ByteArrayOutputStream()
-            PdfExporter.export(model, out, isVector = true, callback = null)
+            PdfExporter.export(context, model, out, isVector = true, callback = null)
 
             val pdfInput = ByteArrayInputStream(out.toByteArray())
             provider.uploadFile(remotePdfPath, pdfInput)

@@ -18,7 +18,7 @@ object CanvasSerializer {
     private const val TAG = "CanvasSerializer"
 
     fun toData(
-        allStrokes: List<Stroke>,
+        allItems: List<com.alexdremov.notate.model.CanvasItem>,
         canvasType: CanvasType,
         pageWidth: Float,
         pageHeight: Float,
@@ -27,37 +27,63 @@ object CanvasSerializer {
         offsetX: Float,
         offsetY: Float,
     ): CanvasData {
-        val strokeDataList =
-            allStrokes.map { stroke ->
-                val count = stroke.points.size
-                val floats = FloatArray(count * 6)
-                val longs = LongArray(count)
+        val strokeDataList = ArrayList<StrokeData>()
+        val imageDataList = ArrayList<CanvasImageData>()
 
-                for (i in 0 until count) {
-                    val p = stroke.points[i]
-                    floats[i * 6] = p.x
-                    floats[i * 6 + 1] = p.y
-                    floats[i * 6 + 2] = p.pressure
-                    floats[i * 6 + 3] = p.size
-                    floats[i * 6 + 4] = p.tiltX.toFloat()
-                    floats[i * 6 + 5] = p.tiltY.toFloat()
-                    longs[i] = p.timestamp
+        for (item in allItems) {
+            when (item) {
+                is Stroke -> {
+                    val count = item.points.size
+                    val floats = FloatArray(count * 6)
+                    val longs = LongArray(count)
+
+                    for (i in 0 until count) {
+                        val p = item.points[i]
+                        floats[i * 6] = p.x
+                        floats[i * 6 + 1] = p.y
+                        floats[i * 6 + 2] = p.pressure
+                        floats[i * 6 + 3] = p.size
+                        floats[i * 6 + 4] = p.tiltX.toFloat()
+                        floats[i * 6 + 5] = p.tiltY.toFloat()
+                        longs[i] = p.timestamp
+                    }
+
+                    strokeDataList.add(
+                        StrokeData(
+                            points = emptyList(),
+                            pointsPacked = floats,
+                            timestampsPacked = longs,
+                            color = item.color,
+                            width = item.width,
+                            style = item.style,
+                            strokeOrder = item.strokeOrder,
+                            zIndex = item.zIndex,
+                        ),
+                    )
                 }
 
-                StrokeData(
-                    points = emptyList(),
-                    pointsPacked = floats,
-                    timestampsPacked = longs,
-                    color = stroke.color,
-                    width = stroke.width,
-                    style = stroke.style,
-                    strokeOrder = stroke.strokeOrder,
-                    zIndex = stroke.zIndex,
-                )
+                is com.alexdremov.notate.model.CanvasImage -> {
+                    imageDataList.add(
+                        CanvasImageData(
+                            uri = item.uri,
+                            x = item.bounds.left,
+                            y = item.bounds.top,
+                            width = item.bounds.width(),
+                            height = item.bounds.height(),
+                            zIndex = item.zIndex,
+                            order = item.order,
+                            rotation = item.rotation,
+                            opacity = item.opacity,
+                        ),
+                    )
+                }
             }
+        }
+
         return CanvasData(
             version = 3,
             strokes = strokeDataList,
+            images = imageDataList,
             canvasType = canvasType,
             pageWidth = pageWidth,
             pageHeight = pageHeight,
@@ -70,12 +96,13 @@ object CanvasSerializer {
 
     fun fromData(
         data: CanvasData,
-        onStrokeLoaded: (Stroke) -> Unit,
+        onItemLoaded: (com.alexdremov.notate.model.CanvasItem) -> Unit,
     ) {
         val sysPressure = EpdController.getMaxTouchPressure()
         val defaultMaxPressure = if (sysPressure > 0f) sysPressure else 4096f
 
         try {
+            // Load Strokes
             data.strokes.forEach { sData ->
                 val points = ArrayList<TouchPoint>()
 
@@ -135,7 +162,7 @@ object CanvasSerializer {
 
                 val bounds = StrokeGeometry.computeStrokeBounds(path, sData.width, sData.style)
 
-                onStrokeLoaded(
+                onItemLoaded(
                     Stroke(
                         path = path,
                         points = points,
@@ -148,13 +175,27 @@ object CanvasSerializer {
                     ),
                 )
             }
+
+            // Load Images
+            data.images.forEach { iData ->
+                onItemLoaded(
+                    com.alexdremov.notate.model.CanvasImage(
+                        uri = iData.uri,
+                        bounds = RectF(iData.x, iData.y, iData.x + iData.width, iData.y + iData.height),
+                        zIndex = iData.zIndex,
+                        order = iData.order,
+                        rotation = iData.rotation,
+                        opacity = iData.opacity,
+                    ),
+                )
+            }
         } catch (e: Exception) {
             Log.e(TAG, "Error loading canvas data", e)
         }
     }
 
     data class LoadedCanvasState(
-        val strokes: List<Stroke>,
+        val items: List<com.alexdremov.notate.model.CanvasItem>,
         val quadtree: com.alexdremov.notate.util.Quadtree,
         val contentBounds: RectF,
         val nextStrokeOrder: Long,
@@ -178,9 +219,7 @@ object CanvasSerializer {
             val sysPressure = EpdController.getMaxTouchPressure()
             val defaultMaxPressure = if (sysPressure > 0f) sysPressure else 4096f
 
-            // 1. Parallel Processing: Reconstruct Paths & Bounds
-            // We chunk the work to avoid creating too many coroutines overhead for huge stroke counts,
-            // though for <10k strokes, individual async might be fine. Let's just map async.
+            // 1. Parallel Processing: Reconstruct Paths & Bounds for Strokes
             val deferredStrokes =
                 data.strokes.map { sData ->
                     async(kotlinx.coroutines.Dispatchers.Default) {
@@ -263,19 +302,34 @@ object CanvasSerializer {
                     }
                 }
 
-            val strokes = deferredStrokes.mapNotNull { it.await() }.toMutableList()
+            val strokes = deferredStrokes.mapNotNull { it.await() }
+
+            // Load Images (simple mapping, no async needed usually, but consistent)
+            val images =
+                data.images.map { iData ->
+                    com.alexdremov.notate.model.CanvasImage(
+                        uri = iData.uri,
+                        bounds = RectF(iData.x, iData.y, iData.x + iData.width, iData.y + iData.height),
+                        zIndex = iData.zIndex,
+                        order = iData.order,
+                        rotation = iData.rotation,
+                        opacity = iData.opacity,
+                    )
+                }
+
+            val items = (strokes + images).toMutableList()
             val parallelTime = System.currentTimeMillis()
 
             // 2. Compute Global Bounds & Max Order
             val contentBounds = RectF()
             var nextStrokeOrder: Long = 0
 
-            if (strokes.isNotEmpty()) {
-                contentBounds.set(strokes[0].bounds)
-                for (s in strokes) {
-                    contentBounds.union(s.bounds)
-                    if (s.strokeOrder >= nextStrokeOrder) {
-                        nextStrokeOrder = s.strokeOrder + 1
+            if (items.isNotEmpty()) {
+                contentBounds.set(items[0].bounds)
+                for (item in items) {
+                    contentBounds.union(item.bounds)
+                    if (item.order >= nextStrokeOrder) {
+                        nextStrokeOrder = item.order + 1
                     }
                 }
             }
@@ -293,20 +347,20 @@ object CanvasSerializer {
                 com.alexdremov.notate.util
                     .Quadtree(0, qBounds)
 
-            // 4. Batch Insert (Sequential but fast as bounds are pre-set)
-            for (s in strokes) {
-                quadtree = quadtree.insert(s)
+            // 4. Batch Insert
+            for (item in items) {
+                quadtree = quadtree.insert(item)
             }
             val insertTime = System.currentTimeMillis()
 
-            Log.d(TAG, "Canvas Load Stats: Strokes=${strokes.size}")
+            Log.d(TAG, "Canvas Load Stats: Items=${items.size}")
             Log.d(TAG, "  Parallel Parse: ${parallelTime - startTime}ms")
             Log.d(TAG, "  Bounds Calc:    ${boundsTime - parallelTime}ms")
             Log.d(TAG, "  Quadtree Build: ${insertTime - boundsTime}ms")
             Log.d(TAG, "  Total Parse:    ${insertTime - startTime}ms")
 
             LoadedCanvasState(
-                strokes = strokes,
+                items = items,
                 quadtree = quadtree,
                 contentBounds = contentBounds,
                 nextStrokeOrder = nextStrokeOrder,

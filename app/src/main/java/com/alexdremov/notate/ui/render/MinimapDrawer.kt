@@ -66,6 +66,8 @@ class MinimapDrawer(
         matrix: Matrix,
         inverseMatrix: Matrix,
         currentScale: Float,
+        canvasWidth: Int,
+        canvasHeight: Int,
     ) {
         if (!isMinimapVisible) return
 
@@ -74,7 +76,7 @@ class MinimapDrawer(
         val padding = CanvasConfig.MINIMAP_PADDING
 
         // 1. Calculate World Viewport
-        val viewportRect = RectF(0f, 0f, width, height)
+        val viewportRect = RectF(0f, 0f, canvasWidth.toFloat(), canvasHeight.toFloat())
         matrix.invert(inverseMatrix) // Assumes caller updates matrix/inverse
         inverseMatrix.mapRect(viewportRect)
 

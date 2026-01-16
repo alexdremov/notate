@@ -37,6 +37,10 @@ class TileCache(
     // Main LRU Cache
     private val memoryCache: LruCache<TileKey, Bitmap>
 
+    private val maxSafeSize: Int by lazy {
+        (Runtime.getRuntime().maxMemory() * CanvasConfig.CACHE_MEMORY_PERCENT).toInt()
+    }
+
     init {
         // Calculate initial cache size using config (e.g., 25% for starting buffer)
         val maxMemory = Runtime.getRuntime().maxMemory()
@@ -115,12 +119,13 @@ class TileCache(
 
         // If we are pressured, check if we can expand
         val targetSize = (currentUsage + anticipatedUsage * 1.5).toInt()
-        val maxSafeSize = (Runtime.getRuntime().maxMemory() * 0.8).toInt()
 
         if (targetSize > memoryCache.maxSize() && memoryCache.maxSize() < maxSafeSize) {
             val newSize = min(targetSize, maxSafeSize)
-            memoryCache.resize(newSize)
-            Log.i("TileCache", "Resized cache to ${newSize / (1024 * 1024)} MB")
+            if (newSize != memoryCache.maxSize()) {
+                memoryCache.resize(newSize)
+                Log.i("TileCache", "Resized cache to ${newSize / (1024 * 1024)} MB")
+            }
         }
     }
 

@@ -427,8 +427,8 @@ class PenInputHandler(
                 // Transform path to World
                 val worldPath = Path()
                 lassoPath.transform(inverseMatrix, worldPath)
-                val strokes = controller.getStrokesInPath(worldPath)
-                controller.selectStrokes(strokes)
+                val items = controller.getItemsInPath(worldPath)
+                controller.selectItems(items)
 
                 // Trigger refresh to clear the HW drawn dashed line
                 refreshHandler.postDelayed(refreshRunnable, 50)
@@ -458,8 +458,8 @@ class PenInputHandler(
                 // inverseMatrix: Screen -> World.
                 inverseMatrix.mapRect(worldRect, screenRect)
 
-                val strokes = controller.getStrokesInRect(worldRect)
-                controller.selectStrokes(strokes)
+                val items = controller.getItemsInRect(worldRect)
+                controller.selectItems(items)
 
                 selectionStartX = null
                 selectionStartY = null

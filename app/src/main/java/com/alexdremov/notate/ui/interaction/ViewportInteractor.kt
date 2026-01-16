@@ -50,90 +50,97 @@ class ViewportInteractor(
             },
         )
 
-    fun onTouchEvent(event: MotionEvent): Boolean {
-        // Pass to ScaleDetector
-        scaleDetector.onTouchEvent(event)
+    fun onTouchEvent(event: MotionEvent): Boolean =
+        com.alexdremov.notate.util.PerformanceProfiler.trace("ViewportInteractor.onTouchEvent") {
+            // Pass to ScaleDetector
+            scaleDetector.onTouchEvent(event)
 
-        // Handle Panning
-        when (event.actionMasked) {
-            MotionEvent.ACTION_DOWN -> {
-                // Determine focus point (if multi-touch, though ACTION_DOWN is usually single)
-                lastTouchX = event.x
-                lastTouchY = event.y
-                isPanning = false
-                isInteracting = true
-                hasPerformedScale = false
-            }
-
-            MotionEvent.ACTION_POINTER_DOWN -> {
-                // Update focus point to avoid jump
-                updateFocusPoint(event)
-            }
-
-            MotionEvent.ACTION_POINTER_UP -> {
-                // Update focus point to avoid jump
-                updateFocusPoint(event)
-            }
-
-            MotionEvent.ACTION_MOVE -> {
-                val focusX = getFocusX(event)
-                val focusY = getFocusY(event)
-
-                if (!isInteracting) {
-                    // Safety: if we missed DOWN (e.g. intercepted), re-init
-                    lastTouchX = focusX
-                    lastTouchY = focusY
+            // Handle Panning
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    // Determine focus point (if multi-touch, though ACTION_DOWN is usually single)
+                    lastTouchX = event.x
+                    lastTouchY = event.y
+                    isPanning = false
                     isInteracting = true
+                    hasPerformedScale = false
                 }
 
-                val dx = focusX - lastTouchX
-                val dy = focusY - lastTouchY
+                MotionEvent.ACTION_POINTER_DOWN -> {
+                    // Update focus point to avoid jump
+                    updateFocusPoint(event)
+                }
 
-                if (!isPanning) {
-                    if (hypot(dx, dy) > touchSlop) {
-                        isPanning = true
-                        startInteraction()
+                MotionEvent.ACTION_POINTER_UP -> {
+                    // Update focus point to avoid jump
+                    updateFocusPoint(event)
+                }
+
+                MotionEvent.ACTION_MOVE -> {
+                    val focusX = getFocusX(event)
+                    val focusY = getFocusY(event)
+
+                    if (!isInteracting) {
+                        // Safety: if we missed DOWN (e.g. intercepted), re-init
+                        lastTouchX = focusX
+                        lastTouchY = focusY
+                        isInteracting = true
+                    }
+
+                    val dx = focusX - lastTouchX
+                    val dy = focusY - lastTouchY
+
+                    if (!isPanning) {
+                        if (hypot(dx, dy) > touchSlop) {
+                            isPanning = true
+                            startInteraction()
+                        }
+                    }
+
+                    if (isPanning) {
+                        matrix.postTranslate(dx, dy)
+                        com.alexdremov.notate.util.PerformanceProfiler.trace("ViewportInteractor.invalidateCallback") {
+                            invalidateCallback()
+                        }
+                        lastTouchX = focusX
+                        lastTouchY = focusY
                     }
                 }
 
-                if (isPanning) {
-                    matrix.postTranslate(dx, dy)
-                    invalidateCallback()
-                    lastTouchX = focusX
-                    lastTouchY = focusY
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    if (isPanning || isInteracting) {
+                        endInteraction()
+                    }
+                    isPanning = false
+                    isInteracting = false
                 }
             }
 
-            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                if (isPanning || isInteracting) {
-                    endInteraction()
-                }
-                isPanning = false
-                isInteracting = false
-            }
+            isPanning || isInteracting
         }
-
-        return isPanning || isInteracting
-    }
 
     private fun handleScale(detector: ScaleGestureDetector) {
-        var scaleFactor = detector.scaleFactor
-        val newScale = currentScale * scaleFactor
+        com.alexdremov.notate.util.PerformanceProfiler.trace("ViewportInteractor.handleScale") {
+            var scaleFactor = detector.scaleFactor
+            val newScale = currentScale * scaleFactor
 
-        // Clamp scale
-        if (newScale < CanvasConfig.MIN_SCALE) {
-            scaleFactor = CanvasConfig.MIN_SCALE / currentScale
-            currentScale = CanvasConfig.MIN_SCALE
-        } else if (newScale > CanvasConfig.MAX_SCALE) {
-            scaleFactor = CanvasConfig.MAX_SCALE / currentScale
-            currentScale = CanvasConfig.MAX_SCALE
-        } else {
-            currentScale = newScale
+            // Clamp scale
+            if (newScale < CanvasConfig.MIN_SCALE) {
+                scaleFactor = CanvasConfig.MIN_SCALE / currentScale
+                currentScale = CanvasConfig.MIN_SCALE
+            } else if (newScale > CanvasConfig.MAX_SCALE) {
+                scaleFactor = CanvasConfig.MAX_SCALE / currentScale
+                currentScale = CanvasConfig.MAX_SCALE
+            } else {
+                currentScale = newScale
+            }
+
+            matrix.postScale(scaleFactor, scaleFactor, detector.focusX, detector.focusY)
+            com.alexdremov.notate.util.PerformanceProfiler.trace("ViewportInteractor.invalidateCallback") {
+                invalidateCallback()
+            }
+            onScaleChanged()
         }
-
-        matrix.postScale(scaleFactor, scaleFactor, detector.focusX, detector.focusY)
-        invalidateCallback()
-        onScaleChanged()
     }
 
     private fun updateFocusPoint(event: MotionEvent) {

@@ -173,6 +173,22 @@ object StrokeRenderer {
             strokeWidth = 1f
         }
 
+    fun drawItem(
+        canvas: Canvas,
+        item: com.alexdremov.notate.model.CanvasItem,
+        debug: Boolean = false,
+        paint: Paint = Paint(), // Optional paint to reuse
+        context: android.content.Context? = null,
+        scale: Float = 1.0f,
+    ) {
+        com.alexdremov.notate.util.PerformanceProfiler.trace("StrokeRenderer.drawItem") {
+            when (item) {
+                is Stroke -> drawStroke(canvas, paint, item, debug)
+                is com.alexdremov.notate.model.CanvasImage -> ImageRenderer.draw(canvas, paint, item, context, scale)
+            }
+        }
+    }
+
     fun drawStroke(
         canvas: Canvas,
         paint: Paint,
@@ -180,68 +196,70 @@ object StrokeRenderer {
         debug: Boolean = false,
         forceVector: Boolean = false,
     ) {
-        if (stroke.points.isEmpty()) {
-            DashStrategy.render(canvas, paint, stroke, 0f) // Fallback
-            return
-        }
-
-        if (CanvasConfig.DEBUG_USE_SIMPLE_RENDERER) {
-            SimplePathStrategy.render(canvas, paint, stroke, 0f)
-            return
-        }
-
-        val maxPressure = getSafeMaxPressure(stroke)
-        val displayColor = calculateDisplayColor(stroke)
-
-        // Setup Paint
-        paint.reset()
-        paint.apply {
-            color = displayColor
-            strokeWidth = stroke.width
-            style = Paint.Style.STROKE
-            strokeCap = Paint.Cap.ROUND
-            strokeJoin = Paint.Join.ROUND
-            pathEffect = null
-            shader = null
-            colorFilter = null
-            isAntiAlias = true
-            isDither = true
-        }
-
-        // Dispatch to Strategy
-        val strategy =
-            if (forceVector) {
-                when (stroke.style) {
-                    StrokeType.FOUNTAIN -> FountainStrategy
-
-                    StrokeType.HIGHLIGHTER -> HighlighterStrategy
-
-                    StrokeType.DASH -> DashStrategy
-
-                    // Complex types (Ballpoint, Charcoal, Brush) fallback to Simple Path for Vector PDF
-                    else -> SimplePathStrategy
-                }
-            } else {
-                when (stroke.style) {
-                    StrokeType.FOUNTAIN -> FountainStrategy
-                    StrokeType.BALLPOINT -> BallpointStrategy
-                    StrokeType.CHARCOAL -> CharcoalStrategy
-                    StrokeType.BRUSH -> BrushStrategy
-                    StrokeType.HIGHLIGHTER -> HighlighterStrategy
-                    StrokeType.DASH -> DashStrategy
-                    else -> SimplePathStrategy
-                }
+        com.alexdremov.notate.util.PerformanceProfiler.trace("StrokeRenderer.drawStroke") {
+            if (stroke.points.isEmpty()) {
+                DashStrategy.render(canvas, paint, stroke, 0f) // Fallback
+                return@trace
             }
 
-        try {
-            strategy.render(canvas, paint, stroke, maxPressure)
-        } catch (e: Exception) {
-            // Fallback on error
-            paint.style = Paint.Style.STROKE
-            drawPath(canvas, paint, stroke.points)
-        }
+            if (CanvasConfig.DEBUG_USE_SIMPLE_RENDERER) {
+                SimplePathStrategy.render(canvas, paint, stroke, 0f)
+                return@trace
+            }
 
-        if (debug || CanvasConfig.DEBUG_SHOW_BOUNDING_BOX) drawDebugBounds(canvas, stroke.bounds)
+            val maxPressure = getSafeMaxPressure(stroke)
+            val displayColor = calculateDisplayColor(stroke)
+
+            // Setup Paint
+            paint.reset()
+            paint.apply {
+                color = displayColor
+                strokeWidth = stroke.width
+                style = Paint.Style.STROKE
+                strokeCap = Paint.Cap.ROUND
+                strokeJoin = Paint.Join.ROUND
+                pathEffect = null
+                shader = null
+                colorFilter = null
+                isAntiAlias = true
+                isDither = true
+            }
+
+            // Dispatch to Strategy
+            val strategy =
+                if (forceVector) {
+                    when (stroke.style) {
+                        StrokeType.FOUNTAIN -> FountainStrategy
+
+                        StrokeType.HIGHLIGHTER -> HighlighterStrategy
+
+                        StrokeType.DASH -> DashStrategy
+
+                        // Complex types (Ballpoint, Charcoal, Brush) fallback to Simple Path for Vector PDF
+                        else -> SimplePathStrategy
+                    }
+                } else {
+                    when (stroke.style) {
+                        StrokeType.FOUNTAIN -> FountainStrategy
+                        StrokeType.BALLPOINT -> BallpointStrategy
+                        StrokeType.CHARCOAL -> CharcoalStrategy
+                        StrokeType.BRUSH -> BrushStrategy
+                        StrokeType.HIGHLIGHTER -> HighlighterStrategy
+                        StrokeType.DASH -> DashStrategy
+                        else -> SimplePathStrategy
+                    }
+                }
+
+            try {
+                strategy.render(canvas, paint, stroke, maxPressure)
+            } catch (e: Exception) {
+                // Fallback on error
+                paint.style = Paint.Style.STROKE
+                drawPath(canvas, paint, stroke.points)
+            }
+
+            if (debug || CanvasConfig.DEBUG_SHOW_BOUNDING_BOX) drawDebugBounds(canvas, stroke.bounds)
+        }
     }
 
     // --- Helpers ---
