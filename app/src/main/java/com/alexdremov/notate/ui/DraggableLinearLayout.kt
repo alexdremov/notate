@@ -51,12 +51,13 @@ class DraggableLinearLayout
 
         var isDragEnabled: Boolean = true
 
-        private val longPressRunnable = Runnable {
-            if (!isDragging) {
-                performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
-                onLongPress?.invoke()
+        private val longPressRunnable =
+            Runnable {
+                if (!isDragging) {
+                    performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
+                    onLongPress?.invoke()
+                }
             }
-        }
 
         private fun scheduleLongPress() {
             cancelLongPressCheck()

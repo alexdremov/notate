@@ -24,10 +24,10 @@ object CanvasConfig {
     const val THREAD_POOL_SIZE = 4
 
     // Debugging
-    const val DEBUG_USE_SIMPLE_RENDERER = false
-    const val DEBUG_SHOW_RAM_USAGE = false
-    const val DEBUG_SHOW_TILES = false
-    const val DEBUG_SHOW_BOUNDING_BOX = false
+    var DEBUG_USE_SIMPLE_RENDERER = false
+    var DEBUG_SHOW_RAM_USAGE = false
+    var DEBUG_SHOW_TILES = false
+    var DEBUG_SHOW_BOUNDING_BOX = false
     const val DEBUG_TEXT_SIZE_BASE = 40f
     const val DEBUG_STROKE_WIDTH_BASE = 2f
     const val DEBUG_TEXT_OFFSET_Y_BASE = 50f
@@ -36,7 +36,7 @@ object CanvasConfig {
     const val DEBUG_ERROR_MSG_CHUNK_SIZE = 30
 
     // Profiling
-    const val DEBUG_ENABLE_PROFILING = false
+    var DEBUG_ENABLE_PROFILING = false
     const val PROFILING_INTERVAL_MS = 2000L
 
     // UI / Minimap

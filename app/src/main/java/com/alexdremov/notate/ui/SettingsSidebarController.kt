@@ -58,6 +58,10 @@ class SettingsSidebarController(
         mainMenuView.findViewById<View>(R.id.menu_item_edit_toolbar).setOnClickListener {
             onEditToolbar()
         }
+
+        mainMenuView.findViewById<View>(R.id.menu_item_debug).setOnClickListener {
+            showDebugMenu()
+        }
     }
 
     private fun showWritingMenu() {
@@ -177,6 +181,50 @@ class SettingsSidebarController(
         btnShare.setOnClickListener {
             val isVector = rgMode.checkedRadioButtonId == R.id.rb_vector
             onExportRequest(ExportAction.Share(isVector))
+        }
+    }
+
+    private fun showDebugMenu() {
+        contentFrame.removeAllViews()
+        val debugView = LayoutInflater.from(context).inflate(R.layout.sidebar_debug_menu, contentFrame, false)
+        contentFrame.addView(debugView)
+
+        tvTitle.text = "Debug"
+        btnBack.visibility = View.VISIBLE
+
+        debugView.findViewById<Switch>(R.id.switch_debug_simple_renderer).apply {
+            isChecked = CanvasConfig.DEBUG_USE_SIMPLE_RENDERER
+            setOnCheckedChangeListener { _, isChecked ->
+                CanvasConfig.DEBUG_USE_SIMPLE_RENDERER = isChecked
+            }
+        }
+
+        debugView.findViewById<Switch>(R.id.switch_debug_ram_usage).apply {
+            isChecked = CanvasConfig.DEBUG_SHOW_RAM_USAGE
+            setOnCheckedChangeListener { _, isChecked ->
+                CanvasConfig.DEBUG_SHOW_RAM_USAGE = isChecked
+            }
+        }
+
+        debugView.findViewById<Switch>(R.id.switch_debug_show_tiles).apply {
+            isChecked = CanvasConfig.DEBUG_SHOW_TILES
+            setOnCheckedChangeListener { _, isChecked ->
+                CanvasConfig.DEBUG_SHOW_TILES = isChecked
+            }
+        }
+
+        debugView.findViewById<Switch>(R.id.switch_debug_bounding_box).apply {
+            isChecked = CanvasConfig.DEBUG_SHOW_BOUNDING_BOX
+            setOnCheckedChangeListener { _, isChecked ->
+                CanvasConfig.DEBUG_SHOW_BOUNDING_BOX = isChecked
+            }
+        }
+
+        debugView.findViewById<Switch>(R.id.switch_debug_profiling).apply {
+            isChecked = CanvasConfig.DEBUG_ENABLE_PROFILING
+            setOnCheckedChangeListener { _, isChecked ->
+                CanvasConfig.DEBUG_ENABLE_PROFILING = isChecked
+            }
         }
     }
 
