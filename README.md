@@ -10,12 +10,8 @@
 ## About Notate
 
 Notate is an open-source note-taking application engineered specifically for **Onyx Boox E-Ink devices**.
-It addresses the common trade-off in E-Ink development—latency vs. feature set—by implementing a **Hybrid Rendering Pipeline**.
-
-The app decouples input from persistence: your pen strokes are rendered instantly via the device's hardware overlay (Direct Update mode) for zero-latency feedback,
-while a background thread commits them to a robust, tiled infinite canvas.
-This ensures that writing feels like paper, but digital capabilities (infinite zoom, layers, smart editing) remain fully accessible.
-
+The app implements a clean UI to streamline handwritten note-taking, with a focus on **performance** and **ergonomics**
+without sacrificing extensive functionality.
 
 ## ✨ Features
 

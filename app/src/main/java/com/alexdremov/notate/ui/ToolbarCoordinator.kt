@@ -27,7 +27,10 @@ class ToolbarCoordinator(
     private var lastParentWidth = 0
     private var lastParentHeight = 0
 
+    private var savedPosition: Pair<Int, Int>? = null
+
     var onOrientationChanged: (() -> Unit)? = null
+    var onDragStateChanged: ((Boolean) -> Unit)? = null
 
     fun setup() {
         // 1. Monitor layout changes to detect rotation
@@ -55,10 +58,18 @@ class ToolbarCoordinator(
         }
 
         toolbarContainer.onDragStart = {
+            onDragStateChanged?.invoke(true)
             EpdDeviceManager.enterAnimationUpdate(true)
         }
 
         toolbarContainer.onDragEnd = {
+            // If user manually dragged, we should update our "saved" anchor to this new spot
+            val lp = toolbarContainer.layoutParams as? ViewGroup.MarginLayoutParams
+            if (lp != null) {
+                savedPosition = Pair(lp.leftMargin, lp.topMargin)
+            }
+
+            onDragStateChanged?.invoke(false)
             EpdDeviceManager.exitAnimationUpdate(true)
         }
 
@@ -71,6 +82,22 @@ class ToolbarCoordinator(
         }
 
         resetToTopLeft()
+    }
+
+    fun savePosition() {
+        val lp = toolbarContainer.layoutParams as? ViewGroup.MarginLayoutParams ?: return
+        savedPosition = Pair(lp.leftMargin, lp.topMargin)
+    }
+
+    fun restorePosition() {
+        val pos = savedPosition ?: return
+        val lp = toolbarContainer.layoutParams as? ViewGroup.MarginLayoutParams ?: return
+        lp.leftMargin = pos.first
+        lp.topMargin = pos.second
+        toolbarContainer.layoutParams = lp
+        // We might need to ensure it's on screen if screen rotated, but resetToTopLeft handles rotation
+        // Just in case, clamp lightly? No, restore EXACTLY as requested.
+        updateExclusionRect()
     }
 
     private fun resetToTopLeft() {
@@ -121,6 +148,51 @@ class ToolbarCoordinator(
                         toolbarContainer.layoutParams = lp
                     }
                 }
+                ensureOnScreen()
+            }
+        }
+    }
+
+    fun ensureOnScreen() {
+        toolbarContainer.post {
+            val lp = toolbarContainer.layoutParams as? ViewGroup.MarginLayoutParams ?: return@post
+            val parentWidth = rootView.width
+            val parentHeight = rootView.height
+
+            if (parentWidth == 0 || parentHeight == 0) return@post
+
+            // Measure unconstrained to get the desired size
+            toolbarContainer.measure(
+                View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
+                View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
+            )
+            val width = toolbarContainer.measuredWidth
+            val height = toolbarContainer.measuredHeight
+
+            var newLeft = lp.leftMargin
+            var newTop = lp.topMargin
+
+            // Clamp X
+            if (newLeft + width > parentWidth) {
+                newLeft = (parentWidth - width).coerceAtLeast(0)
+            }
+            if (newLeft < 0) {
+                newLeft = 0
+            }
+
+            // Clamp Y
+            if (newTop + height > parentHeight) {
+                newTop = (parentHeight - height).coerceAtLeast(0)
+            }
+            if (newTop < 0) {
+                newTop = 0
+            }
+
+            if (newLeft != lp.leftMargin || newTop != lp.topMargin) {
+                lp.leftMargin = newLeft
+                lp.topMargin = newTop
+                toolbarContainer.layoutParams = lp
+                updateExclusionRect()
             }
         }
     }

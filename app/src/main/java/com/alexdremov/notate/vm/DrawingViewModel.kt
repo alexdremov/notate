@@ -45,11 +45,17 @@ class DrawingViewModel(
     private val _isCollapsibleToolbar = MutableStateFlow(false)
     val isCollapsibleToolbar: StateFlow<Boolean> = _isCollapsibleToolbar.asStateFlow()
 
+    private val _isToolbarCollapsed = MutableStateFlow(false)
+    val isToolbarCollapsed: StateFlow<Boolean> = _isToolbarCollapsed.asStateFlow()
+
     private val _toolbarCollapseTimeout = MutableStateFlow(3000L)
     val toolbarCollapseTimeout: StateFlow<Long> = _toolbarCollapseTimeout.asStateFlow()
 
     private val _isPenPopupOpen = MutableStateFlow(false)
     val isPenPopupOpen: StateFlow<Boolean> = _isPenPopupOpen.asStateFlow()
+
+    private val _isToolbarDragging = MutableStateFlow(false)
+    val isToolbarDragging: StateFlow<Boolean> = _isToolbarDragging.asStateFlow()
 
     init {
         loadTools()
@@ -97,6 +103,19 @@ class DrawingViewModel(
     fun setCollapsibleToolbar(enabled: Boolean) {
         _isCollapsibleToolbar.value = enabled
         PreferencesManager.setCollapsibleToolbarEnabled(getApplication(), enabled)
+        if (enabled) {
+            setToolbarCollapsed(true)
+        } else {
+            setToolbarCollapsed(false)
+        }
+    }
+
+    fun setToolbarCollapsed(collapsed: Boolean) {
+        _isToolbarCollapsed.value = collapsed
+    }
+
+    fun setToolbarDragging(dragging: Boolean) {
+        _isToolbarDragging.value = dragging
     }
 
     fun setToolbarCollapseTimeout(timeoutMs: Long) {

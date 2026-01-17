@@ -182,6 +182,9 @@ class CanvasActivity : AppCompatActivity() {
         toolbarCoordinator.onOrientationChanged = {
             isToolbarHorizontal.value = toolbarCoordinator.getOrientation() == LinearLayout.HORIZONTAL
         }
+        toolbarCoordinator.onDragStateChanged = { isDragging ->
+            viewModel.setToolbarDragging(isDragging)
+        }
 
         // Disable drawing when interacting with toolbar (touch down)
         // This prevents accidental strokes and improves UI responsiveness
@@ -212,7 +215,10 @@ class CanvasActivity : AppCompatActivity() {
 
         binding.toolbarContainer.onLongPress = {
             finishToolbarInteraction()
-            viewModel.setEditMode(true)
+            // Bug Fix: Do not allow edit mode if toolbar is collapsed
+            if (!viewModel.isToolbarCollapsed.value) {
+                viewModel.setEditMode(true)
+            }
         }
 
         toolbarCoordinator.setup()
@@ -263,6 +269,15 @@ class CanvasActivity : AppCompatActivity() {
                         onOpenSidebar = {
                             sidebarCoordinator.open()
                             sidebarController.showMainMenu()
+                        },
+                        onToolbarExpandStart = {
+                            toolbarCoordinator.savePosition()
+                        },
+                        onToolbarExpanded = {
+                            toolbarCoordinator.ensureOnScreen()
+                        },
+                        onToolbarCollapsed = {
+                            toolbarCoordinator.restorePosition()
                         },
                     )
                 }
