@@ -14,34 +14,42 @@ object BackgroundDrawer {
             isAntiAlias = true
         }
 
-    private val fillPaint =
-        Paint().apply {
-            style = Paint.Style.FILL
-            isAntiAlias = true
-        }
+    // Threshold: Use Batched Vector rendering for up to this many primitives.
+    // Batched rendering (drawLines/drawPoints) is extremely fast on Android.
+    private const val MAX_PRIMITIVES = 20000
+    private const val VECTOR_RENDER_THRESHOLD = 20000
 
-    // Threshold: If we need to draw more than this many primitives, switch to Bitmap Cache
-    // to save CPU cycles. Otherwise, use Vector to save GPU Fill Rate.
-    private const val MAX_PRIMITIVES = 10000
-    private const val VECTOR_RENDER_THRESHOLD = 4000
-
-    // Component for handling BitmapShader caching
+    // Component for handling BitmapShader caching (Fallback for extreme density)
     private val patternCache = BackgroundPatternCache()
 
     fun draw(
         canvas: Canvas,
         style: BackgroundStyle,
         rect: RectF,
+        zoomLevel: Float = 1f,
         offsetX: Float = 0f,
         offsetY: Float = 0f,
         forceVector: Boolean = false,
     ) {
         if (rect.isEmpty || !rect.left.isFinite() || !rect.right.isFinite() || !rect.top.isFinite() || !rect.bottom.isFinite()) return
 
+        // 0. Density Check (LOD)
+        // If the pattern is too dense (visually < 10px), it creates noise and kills performance.
+        val spacing =
+            when (style) {
+                is BackgroundStyle.Dots -> style.spacing
+                is BackgroundStyle.Lines -> style.spacing
+                is BackgroundStyle.Grid -> style.spacing
+                else -> 0f
+            }
+
+        if (spacing > 0 && (spacing * zoomLevel) < 10f) {
+            return
+        }
+
         // Rendering Strategy:
-        // 1. Force Vector (PDF Export): Always use vector primitives.
-        // 2. Dense Pattern (Screen): Use Bitmap Cache to avoid thousands of CPU draw calls.
-        // 3. Sparse Pattern (Screen): Use Vector to avoid expensive GPU full-screen texture fills.
+        // 1. Batched Vector: Default for Screen & PDF. Uses drawLines/drawPoints for O(1) JNI calls.
+        // 2. Bitmap Cache: Fallback if primitive count exceeds buffer limits (20k).
 
         val useCache = !forceVector && shouldUseCache(style, rect)
 
@@ -57,7 +65,7 @@ object BackgroundDrawer {
                 } else {
                     canvas.save()
                     canvas.clipRect(rect)
-                    drawDotsVector(canvas, style, rect, offsetX, offsetY)
+                    drawDotsVector(canvas, style, rect, offsetX, offsetY, forceVector)
                     canvas.restore()
                 }
             }
@@ -69,7 +77,7 @@ object BackgroundDrawer {
                 } else {
                     canvas.save()
                     canvas.clipRect(rect)
-                    drawLinesVector(canvas, style, rect, offsetX, offsetY)
+                    drawLinesVector(canvas, style, rect, offsetX, offsetY, forceVector)
                     canvas.restore()
                 }
             }
@@ -79,7 +87,7 @@ object BackgroundDrawer {
                 if (useCache) {
                     patternCache.drawCached(canvas, style, rect, offsetX, offsetY, style.spacing)
                 } else {
-                    drawGridVector(canvas, style, rect, offsetX, offsetY)
+                    drawGridVector(canvas, style, rect, offsetX, offsetY, forceVector)
                 }
             }
         }
@@ -94,6 +102,7 @@ object BackgroundDrawer {
 
         if (width <= 0 || height <= 0) return false
 
+        // Calculate estimated primitives
         return when (style) {
             is BackgroundStyle.Dots -> {
                 if (style.spacing <= 0.1f) return true
@@ -121,7 +130,7 @@ object BackgroundDrawer {
         }
     }
 
-    // --- Vector Renderers ---
+    // --- Vector Renderers (Batched) ---
 
     private fun drawDotsVector(
         canvas: Canvas,
@@ -129,14 +138,22 @@ object BackgroundDrawer {
         rect: RectF,
         offsetX: Float,
         offsetY: Float,
+        force: Boolean,
     ) {
-        fillPaint.color = style.color
-
         val spacing = style.spacing
         val startX = floor((rect.left - offsetX) / spacing) * spacing + offsetX
         val startY = floor((rect.top - offsetY) / spacing) * spacing + offsetY
 
-        var primitivesDrawn = 0
+        // Estimate count to allocate buffer
+        val cols = ((rect.right + spacing - startX) / spacing).toInt().coerceAtLeast(0) + 1
+        val rows = ((rect.bottom + spacing - startY) / spacing).toInt().coerceAtLeast(0) + 1
+        val maxPoints = cols * rows
+
+        if (!force && maxPoints > MAX_PRIMITIVES) return // Should have used cache
+
+        val pts = FloatArray(maxPoints * 2)
+        var count = 0
+
         var x = startX
         while (x < rect.right + spacing) {
             var y = startY
@@ -144,15 +161,22 @@ object BackgroundDrawer {
                 if (y >= rect.top - spacing && y <= rect.bottom + spacing &&
                     x >= rect.left - spacing && x <= rect.right + spacing
                 ) {
-                    canvas.drawCircle(x, y, style.radius, fillPaint)
-                    primitivesDrawn++
-                    if (primitivesDrawn > MAX_PRIMITIVES) return
+                    if (count + 1 < pts.size) {
+                        pts[count++] = x
+                        pts[count++] = y
+                    }
                 }
                 y += spacing
             }
             x += spacing
-            if (primitivesDrawn > MAX_PRIMITIVES) return
         }
+
+        // Draw batched points as circles
+        paint.color = style.color
+        paint.style = Paint.Style.FILL
+        paint.strokeCap = Paint.Cap.ROUND
+        paint.strokeWidth = style.radius * 2
+        canvas.drawPoints(pts, 0, count, paint)
     }
 
     private fun drawLinesVector(
@@ -161,23 +185,35 @@ object BackgroundDrawer {
         rect: RectF,
         offsetX: Float,
         offsetY: Float,
+        force: Boolean,
     ) {
-        paint.color = style.color
-        paint.strokeWidth = style.thickness
-
         val spacing = style.spacing
         val startY = floor((rect.top - offsetY) / spacing) * spacing + offsetY
 
+        val rows = ((rect.bottom + spacing - startY) / spacing).toInt().coerceAtLeast(0) + 1
+        if (!force && rows > MAX_PRIMITIVES) return
+
+        val pts = FloatArray(rows * 4)
+        var count = 0
+
         var y = startY
-        var linesDrawn = 0
         while (y < rect.bottom + spacing) {
             if (y >= rect.top - spacing) {
-                canvas.drawLine(rect.left, y, rect.right, y, paint)
-                linesDrawn++
-                if (linesDrawn > MAX_PRIMITIVES) return
+                if (count + 3 < pts.size) {
+                    pts[count++] = rect.left
+                    pts[count++] = y
+                    pts[count++] = rect.right
+                    pts[count++] = y
+                }
             }
             y += spacing
         }
+
+        paint.color = style.color
+        paint.style = Paint.Style.STROKE
+        paint.strokeCap = Paint.Cap.BUTT
+        paint.strokeWidth = style.thickness
+        canvas.drawLines(pts, 0, count, paint)
     }
 
     private fun drawGridVector(
@@ -186,35 +222,56 @@ object BackgroundDrawer {
         rect: RectF,
         offsetX: Float,
         offsetY: Float,
+        force: Boolean,
     ) {
-        paint.color = style.color
-        paint.strokeWidth = style.thickness
-
-        var primitivesDrawn = 0
         val spacing = style.spacing
 
-        // Vertical Lines
+        // Vertical
         val startX = floor((rect.left - offsetX) / spacing) * spacing + offsetX
+        val cols = ((rect.right + spacing - startX) / spacing).toInt().coerceAtLeast(0) + 1
+
+        // Horizontal
+        val startY = floor((rect.top - offsetY) / spacing) * spacing + offsetY
+        val rows = ((rect.bottom + spacing - startY) / spacing).toInt().coerceAtLeast(0) + 1
+
+        val totalLines = cols + rows
+        if (!force && totalLines > MAX_PRIMITIVES) return
+
+        val pts = FloatArray(totalLines * 4)
+        var count = 0
+
+        // Vertical Loop
         var x = startX
         while (x < rect.right + spacing) {
             if (x >= rect.left - spacing) {
-                canvas.drawLine(x, rect.top, x, rect.bottom, paint)
-                primitivesDrawn++
-                if (primitivesDrawn > MAX_PRIMITIVES) return
+                if (count + 3 < pts.size) {
+                    pts[count++] = x
+                    pts[count++] = rect.top
+                    pts[count++] = x
+                    pts[count++] = rect.bottom
+                }
             }
             x += spacing
         }
 
-        // Horizontal Lines
-        val startY = floor((rect.top - offsetY) / spacing) * spacing + offsetY
+        // Horizontal Loop
         var y = startY
         while (y < rect.bottom + spacing) {
             if (y >= rect.top - spacing) {
-                canvas.drawLine(rect.left, y, rect.right, y, paint)
-                primitivesDrawn++
-                if (primitivesDrawn > MAX_PRIMITIVES) return
+                if (count + 3 < pts.size) {
+                    pts[count++] = rect.left
+                    pts[count++] = y
+                    pts[count++] = rect.right
+                    pts[count++] = y
+                }
             }
             y += spacing
         }
+
+        paint.color = style.color
+        paint.style = Paint.Style.STROKE
+        paint.strokeCap = Paint.Cap.BUTT
+        paint.strokeWidth = style.thickness
+        canvas.drawLines(pts, 0, count, paint)
     }
 }

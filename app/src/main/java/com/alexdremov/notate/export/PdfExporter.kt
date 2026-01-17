@@ -14,6 +14,7 @@ import com.alexdremov.notate.model.CanvasItem
 import com.alexdremov.notate.model.InfiniteCanvasModel
 import com.alexdremov.notate.model.Stroke
 import com.alexdremov.notate.ui.render.BackgroundDrawer
+import com.alexdremov.notate.ui.render.background.PatternLayoutHelper
 import com.alexdremov.notate.util.StrokeRenderer
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
@@ -140,7 +141,10 @@ object PdfExporter {
 
             // Draw Pattern
             val pageWorldRect = RectF(0f, topOffset, pageWidth, topOffset + pageHeight)
-            BackgroundDrawer.draw(canvas, bgStyle, pageWorldRect, 0f, topOffset, forceVector = isVector) // Pass offset to align pattern
+            val patternArea = PatternLayoutHelper.calculatePatternArea(pageWorldRect, bgStyle)
+            val (offsetX, offsetY) = PatternLayoutHelper.calculateOffsets(patternArea, bgStyle)
+
+            BackgroundDrawer.draw(canvas, bgStyle, patternArea, 0f, offsetX, offsetY, forceVector = isVector)
 
             // Draw Items
             // Optimization: Filter items that intersect this page

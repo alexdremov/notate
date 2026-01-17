@@ -22,7 +22,7 @@ class BackgroundPatternCache {
 
     private val shaderPaint =
         Paint().apply {
-            isAntiAlias = true
+            isAntiAlias = false
             isFilterBitmap = true
         }
 

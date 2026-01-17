@@ -53,7 +53,7 @@ class InfiniteLayout : CanvasLayout {
             // We only draw background if we have a valid rect.
             // For infinite export, usually we want a background behind content.
             if (!drawRect.isEmpty) {
-                BackgroundDrawer.draw(canvas, model.backgroundStyle, drawRect)
+                BackgroundDrawer.draw(canvas, model.backgroundStyle, drawRect, zoomLevel = zoomLevel)
             }
 
             val useDirectVectors = visibleRect == null
@@ -129,7 +129,7 @@ class FixedPageLayout(
                     val bgIntersection = RectF(patternArea)
                     if (bgIntersection.intersect(visibleRect)) {
                         val (offsetX, offsetY) = PatternLayoutHelper.calculateOffsets(patternArea, style)
-                        BackgroundDrawer.draw(canvas, style, bgIntersection, offsetX, offsetY)
+                        BackgroundDrawer.draw(canvas, style, bgIntersection, zoomLevel = zoomLevel, offsetX = offsetX, offsetY = offsetY)
                     }
 
                     canvas.restore()
