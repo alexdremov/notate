@@ -42,10 +42,13 @@ jobs:
     - name: Build Release APK
       run: ./gradlew assembleRelease
 
+    - name: Rename APK
+      run: mv app/build/outputs/apk/release/app-release.apk notate-${{ github.ref_name }}.apk
+
     - name: Create Release
       uses: softprops/action-gh-release@v1
       with:
-        files: app/build/outputs/apk/release/app-release.apk
+        files: notate-${{ github.ref_name }}.apk
         draft: true
         prerelease: false
         generate_release_notes: true
