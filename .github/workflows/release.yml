@@ -5,6 +5,7 @@ on:
     tags:
       - 'v*'
 
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -31,7 +32,7 @@ jobs:
         KEYSTORE_PROPERTIES: ${{ secrets.KEYSTORE_PROPERTIES }}
       run: |
         echo "$KEYSTORE_BASE64" | base64 --decode > release.keystore
-        
+
         # Create keystore.properties
         # We point to ../release.keystore because this property is read by the :app module
         echo "storeFile=../release.keystore" > keystore.properties
