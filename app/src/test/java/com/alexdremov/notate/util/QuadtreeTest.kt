@@ -2,17 +2,18 @@ package com.alexdremov.notate.util
 
 import android.graphics.Path
 import android.graphics.RectF
-import androidx.test.ext.junit.runners.AndroidJUnit4
+import com.alexdremov.notate.model.CanvasItem
 import com.alexdremov.notate.model.Stroke
 import com.alexdremov.notate.model.StrokeType
 import com.onyx.android.sdk.data.note.TouchPoint
 import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import java.util.ArrayList
 
-@RunWith(AndroidJUnit4::class)
+@RunWith(RobolectricTestRunner::class)
 @Config(manifest = Config.NONE, sdk = [33])
 class QuadtreeTest {
     private fun createStroke(
@@ -45,7 +46,7 @@ class QuadtreeTest {
 
         quadtree.insert(stroke)
 
-        val results = ArrayList<Stroke>()
+        val results = ArrayList<CanvasItem>()
         quadtree.retrieve(results, RectF(0f, 0f, 200f, 200f))
 
         assertEquals(1, results.size)
@@ -60,7 +61,7 @@ class QuadtreeTest {
 
         quadtree.insert(stroke)
 
-        val results = ArrayList<Stroke>()
+        val results = ArrayList<CanvasItem>()
         quadtree.retrieve(results, RectF(500f, 500f, 600f, 600f))
 
         assertEquals(0, results.size)
@@ -77,7 +78,7 @@ class QuadtreeTest {
         // This should trigger growth and return a new root
         quadtree = quadtree.insert(outsideStroke)
 
-        val results = ArrayList<Stroke>()
+        val results = ArrayList<CanvasItem>()
         // Search around the new area
         quadtree.retrieve(results, RectF(400f, 400f, 600f, 600f))
 
@@ -99,7 +100,7 @@ class QuadtreeTest {
         val removed = quadtree.remove(stroke)
         assertTrue(removed)
 
-        val results = ArrayList<Stroke>()
+        val results = ArrayList<CanvasItem>()
         quadtree.retrieve(results, rootBounds)
         assertTrue(results.isEmpty())
     }

@@ -134,6 +134,7 @@ class OnyxCanvasView
                     inverseMatrix,
                     onStrokeStarted = { onStrokeStarted?.invoke() },
                     onStrokeFinished = {
+                        minimapDrawer?.setDirty()
                         drawContent()
                         onContentChanged?.invoke()
                     },

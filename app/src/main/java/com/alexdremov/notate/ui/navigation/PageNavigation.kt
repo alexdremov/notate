@@ -1,8 +1,8 @@
 package com.alexdremov.notate.ui.navigation
 
+import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Canvas
-import android.graphics.Paint
 import android.graphics.RectF
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -21,14 +21,15 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.alexdremov.notate.controller.CanvasController
 import com.alexdremov.notate.model.InfiniteCanvasModel
-import com.alexdremov.notate.model.Stroke
+import com.alexdremov.notate.ui.render.CanvasRenderer
+import com.alexdremov.notate.ui.render.RenderQuality
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.math.min
 
@@ -38,18 +39,19 @@ object PageThumbnailGenerator {
         pageIndex: Int,
         width: Int,
         height: Int,
+        context: Context,
     ): Bitmap {
         val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bitmap)
         canvas.drawColor(android.graphics.Color.WHITE)
 
         // 1. Get Page Bounds from Model
-        // We need to access model, but model methods for page bounds are specific.
-        // Assuming model.getPageBounds(index) exists (I added it earlier).
         val pageRect = model.getPageBounds(pageIndex)
 
-        // 2. Query strokes
-        val strokes = model.queryStrokes(pageRect)
+        // 2. Query all items (Strokes + Images)
+        val items = model.queryItems(pageRect)
+        // Sort items by Z-Index/Order for correct layering
+        items.sortWith(compareBy<com.alexdremov.notate.model.CanvasItem> { it.zIndex }.thenBy { it.order })
 
         // 3. Setup Matrix to fit pageRect into width/height
         val scaleX = width.toFloat() / pageRect.width()
@@ -60,20 +62,16 @@ object PageThumbnailGenerator {
         canvas.scale(scale, scale)
         canvas.translate(-pageRect.left, -pageRect.top)
 
-        // 4. Draw Strokes
-        val paint =
-            Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                style = Paint.Style.STROKE
-                strokeCap = Paint.Cap.ROUND
-                strokeJoin = Paint.Join.ROUND
-            }
-
-        strokes.forEach { stroke ->
-            paint.color = stroke.color
-            paint.strokeWidth = stroke.width
-            // Use stroke.path directly if available
-            canvas.drawPath(stroke.path, paint)
-        }
+        // 4. Delegate Rendering to Shared Logic
+        // We use RenderQuality.SIMPLE for fast vector drawing of strokes
+        CanvasRenderer.renderItems(
+            canvas = canvas,
+            items = items,
+            visibleRect = pageRect, // Optimization: clip to page
+            quality = RenderQuality.SIMPLE,
+            viewScale = scale,
+            context = context,
+        )
 
         canvas.restore()
         return bitmap
@@ -334,10 +332,11 @@ fun PageThumbnailItem(
     onClick: () -> Unit,
 ) {
     var thumbnail by remember { mutableStateOf<Bitmap?>(null) }
+    val context = LocalContext.current
 
     LaunchedEffect(pageIndex) {
         withContext(Dispatchers.Default) {
-            thumbnail = PageThumbnailGenerator.generatePageThumbnail(model, pageIndex, 300, 424)
+            thumbnail = PageThumbnailGenerator.generatePageThumbnail(model, pageIndex, 300, 424, context)
         }
     }
 

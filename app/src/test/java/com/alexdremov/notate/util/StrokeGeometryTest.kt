@@ -2,16 +2,16 @@ package com.alexdremov.notate.util
 
 import android.graphics.Path
 import android.graphics.RectF
-import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.alexdremov.notate.model.Stroke
 import com.alexdremov.notate.model.StrokeType
 import com.onyx.android.sdk.data.note.TouchPoint
 import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
-@RunWith(AndroidJUnit4::class)
+@RunWith(RobolectricTestRunner::class)
 @Config(manifest = Config.NONE, sdk = [33])
 class StrokeGeometryTest {
     private fun createStroke(

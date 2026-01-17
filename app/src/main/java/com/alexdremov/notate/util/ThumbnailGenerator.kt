@@ -86,7 +86,7 @@ object ThumbnailGenerator {
             }
 
         strokesToDraw.forEach { stroke ->
-            drawStroke(canvas, stroke, paint)
+            drawStroke(canvas, stroke, paint, scale)
         }
 
         // 4. Draw Images
@@ -100,7 +100,7 @@ object ThumbnailGenerator {
                     rotation = imgData.rotation,
                     opacity = imgData.opacity,
                 )
-            StrokeRenderer.drawItem(canvas, image, false, paint, context)
+            StrokeRenderer.drawItem(canvas, image, false, paint, context, scale)
         }
 
         canvas.restore()
@@ -111,16 +111,23 @@ object ThumbnailGenerator {
         canvas: Canvas,
         stroke: StrokeData,
         paint: Paint,
+        viewScale: Float,
     ) {
         paint.color = stroke.color
-        paint.strokeWidth = stroke.width
+
+        // Ensure visibility on minimap/thumbnail (large canvases)
+        val minPixels = 1.0f
+        val minWidth = minPixels / viewScale
+        var targetWidth = kotlin.math.max(stroke.width, minWidth)
 
         if (stroke.style == StrokeType.HIGHLIGHTER) {
             paint.alpha = 80
-            paint.strokeWidth = stroke.width * 1.5f
+            targetWidth *= 1.5f
         } else {
             paint.alpha = 255
         }
+
+        paint.strokeWidth = targetWidth
 
         val path = Path()
 

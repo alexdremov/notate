@@ -6,7 +6,6 @@ import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.RectF
-import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.alexdremov.notate.model.Stroke
 import com.alexdremov.notate.model.StrokeType
 import com.alexdremov.notate.testutil.SnapshotVerifier
@@ -23,11 +22,12 @@ import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 import kotlin.math.sin
 
-@RunWith(AndroidJUnit4::class)
+@RunWith(RobolectricTestRunner::class)
 @Config(manifest = Config.NONE, sdk = [33])
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 class RenderingSnapshotTest {

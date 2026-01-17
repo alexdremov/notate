@@ -4,8 +4,8 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.RectF
 import android.os.Looper
-import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.alexdremov.notate.config.CanvasConfig
+import com.alexdremov.notate.model.CanvasItem
 import com.alexdremov.notate.model.InfiniteCanvasModel
 import com.alexdremov.notate.model.Stroke
 import com.alexdremov.notate.ui.render.CanvasRenderer
@@ -19,13 +19,14 @@ import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
 import org.robolectric.Shadows
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 
-@RunWith(AndroidJUnit4::class)
+@RunWith(RobolectricTestRunner::class)
 @Config(sdk = [33])
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 class TileManagerTest {
@@ -60,7 +61,7 @@ class TileManagerTest {
         val scale = 1.0f
 
         // Mock querying strokes
-        every { mockModel.queryStrokes(any()) } returns ArrayList<Stroke>()
+        every { mockModel.queryItems(any()) } returns ArrayList<CanvasItem>()
 
         // Act
         tileManager.render(canvas, visibleRect, scale)
@@ -72,7 +73,7 @@ class TileManagerTest {
         // (0,1) -> ...
         // (1,1) -> ...
         // Should generate 4 tiles
-        verify(atLeast = 4) { mockModel.queryStrokes(any()) }
+        verify(atLeast = 4) { mockModel.queryItems(any()) }
     }
 
     @Test
@@ -90,7 +91,7 @@ class TileManagerTest {
         tileManager.refreshTiles(visibleRect)
 
         // Verify: Should trigger regeneration (queryStrokes) again
-        verify(atLeast = 1) { mockModel.queryStrokes(any()) }
+        verify(atLeast = 1) { mockModel.queryItems(any()) }
     }
 
     @Test
@@ -131,11 +132,11 @@ class TileManagerTest {
         every { stroke.style } returns com.alexdremov.notate.model.StrokeType.FOUNTAIN
 
         // Act
-        tileManager.updateTilesWithStroke(stroke)
+        tileManager.updateTilesWithItem(stroke)
 
         // Verify
         // Should call renderer to draw stroke onto the cached bitmap
-        verify { mockRenderer.drawStrokeToCanvas(any(), stroke) }
+        verify { mockRenderer.drawItemToCanvas(any(), stroke, any()) }
     }
 
     @Test
@@ -146,7 +147,7 @@ class TileManagerTest {
         val visibleRect = RectF(0f, 0f, 200f, 200f)
         tileManager.forceRefreshVisibleTiles(visibleRect, 1.0f)
 
-        verify(atLeast = 1) { mockModel.queryStrokes(any()) }
+        verify(atLeast = 1) { mockModel.queryItems(any()) }
     }
 
     @Test
@@ -163,7 +164,7 @@ class TileManagerTest {
         io.mockk.clearMocks(mockModel, answers = false, recordedCalls = true, childMocks = false)
         tileManager.render(canvas, visibleRect, 1.0f)
 
-        verify(atLeast = 1) { mockModel.queryStrokes(any()) }
+        verify(atLeast = 1) { mockModel.queryItems(any()) }
     }
 
     @Test
@@ -173,13 +174,13 @@ class TileManagerTest {
         val canvas = mockk<Canvas>(relaxed = true)
 
         // Force error
-        every { mockModel.queryStrokes(any()) } throws RuntimeException("Generation failed")
+        every { mockModel.queryItems(any()) } throws RuntimeException("Generation failed")
 
         // Act
         tileManager.render(canvas, visibleRect, 1.0f)
 
         // Verify that it tried to generate
-        verify { mockModel.queryStrokes(any()) }
+        verify { mockModel.queryItems(any()) }
 
         // And that subsequent renders don't crash (it should have cached an error bitmap or handled it)
         // With DirectExecutor, the catch block runs immediately.

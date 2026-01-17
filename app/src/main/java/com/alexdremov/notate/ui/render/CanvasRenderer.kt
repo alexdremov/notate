@@ -154,7 +154,8 @@ class CanvasRenderer(
     ) {
         canvas.save()
         canvas.setMatrix(matrix)
-        renderDirectVectorsInternal(canvas, visibleRect, quality)
+        val viewScale = matrix.mapRadius(1.0f)
+        renderDirectVectorsInternal(canvas, visibleRect, quality, viewScale)
         canvas.restore()
     }
 
@@ -167,26 +168,48 @@ class CanvasRenderer(
         canvas: Canvas,
         visibleRect: RectF?,
         quality: RenderQuality,
+        viewScale: Float = 1.0f,
     ) {
-        val paint =
-            Paint().apply {
-                isAntiAlias = true
-                isDither = true
-                style = Paint.Style.STROKE
-                strokeJoin = Paint.Join.ROUND
-                strokeCap = Paint.Cap.ROUND
-                strokeMiter = 4.0f
-            }
-
         // We need thread-safe access to items from Model
         model.performRead { allItems ->
-            for (item in allItems) {
+            renderItems(canvas, allItems, visibleRect, quality, viewScale, context)
+        }
+    }
+
+    companion object {
+        fun renderItems(
+            canvas: Canvas,
+            items: List<com.alexdremov.notate.model.CanvasItem>,
+            visibleRect: RectF?,
+            quality: RenderQuality,
+            viewScale: Float,
+            context: android.content.Context?,
+        ) {
+            val paint =
+                Paint().apply {
+                    isAntiAlias = true
+                    isDither = true
+                    style = Paint.Style.STROKE
+                    strokeJoin = Paint.Join.ROUND
+                    strokeCap = Paint.Cap.ROUND
+                    strokeMiter = 4.0f
+                }
+
+            for (item in items) {
                 if (visibleRect != null && !RectF.intersects(visibleRect, item.bounds)) continue
 
                 if (item is Stroke) {
                     paint.color = item.color
-                    paint.strokeWidth = item.width
-                    if (quality == RenderQuality.SIMPLE) paint.strokeWidth *= 0.5f
+
+                    var targetWidth = item.width
+                    if (quality == RenderQuality.SIMPLE) {
+                        // Ensure visibility on minimap (large canvases)
+                        val minPixels = 1.0f
+                        val minWidth = minPixels / viewScale
+                        targetWidth = kotlin.math.max(targetWidth * 0.5f, minWidth)
+                    }
+
+                    paint.strokeWidth = targetWidth
 
                     if (quality != RenderQuality.SIMPLE && item.points.isNotEmpty()) {
                         StrokeRenderer.drawItem(canvas, item, false, paint, context)
@@ -195,7 +218,7 @@ class CanvasRenderer(
                         canvas.drawPath(item.path, paint)
                     }
                 } else {
-                    StrokeRenderer.drawItem(canvas, item, false, paint, context)
+                    StrokeRenderer.drawItem(canvas, item, false, paint, context, viewScale)
                 }
             }
         }
