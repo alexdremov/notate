@@ -40,6 +40,8 @@ object PreferencesManager {
     private const val KEY_SHAPE_PERFECTION_DELAY = "shape_perfection_delay"
     private const val KEY_ANGLE_SNAPPING = "angle_snapping_enabled"
     private const val KEY_AXIS_LOCKING = "axis_locking_enabled"
+    private const val KEY_COLLAPSIBLE_TOOLBAR = "collapsible_toolbar_enabled"
+    private const val KEY_TOOLBAR_COLLAPSE_TIMEOUT = "toolbar_collapse_timeout"
 
     private val protoBuf = ProtoBuf
 
@@ -52,6 +54,26 @@ object PreferencesManager {
         enabled: Boolean,
     ) {
         getPrefs(context).edit().putBoolean(KEY_SCRIBBLE_TO_ERASE, enabled).apply()
+    }
+
+    fun isCollapsibleToolbarEnabled(context: Context): Boolean = getPrefs(context).getBoolean(KEY_COLLAPSIBLE_TOOLBAR, false)
+
+    fun setCollapsibleToolbarEnabled(
+        context: Context,
+        enabled: Boolean,
+    ) {
+        getPrefs(context).edit().putBoolean(KEY_COLLAPSIBLE_TOOLBAR, enabled).apply()
+    }
+
+    fun getToolbarCollapseTimeout(context: Context): Long {
+        return getPrefs(context).getLong(KEY_TOOLBAR_COLLAPSE_TIMEOUT, 3000L) // Default 3000ms
+    }
+
+    fun setToolbarCollapseTimeout(
+        context: Context,
+        timeoutMs: Long,
+    ) {
+        getPrefs(context).edit().putLong(KEY_TOOLBAR_COLLAPSE_TIMEOUT, timeoutMs).apply()
     }
 
     fun isAngleSnappingEnabled(context: Context): Boolean = getPrefs(context).getBoolean(KEY_ANGLE_SNAPPING, true)

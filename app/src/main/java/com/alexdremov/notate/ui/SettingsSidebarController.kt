@@ -159,6 +159,60 @@ class SettingsSidebarController(
                 }
             },
         )
+
+        // --- Toolbar Auto-Collapse ---
+        val tvTimeoutLabel: TextView = writingView.findViewById(R.id.tv_toolbar_timeout_label)
+        val seekbarTimeout: SeekBar = writingView.findViewById(R.id.seekbar_toolbar_timeout)
+
+        val minTimeout = 1000L
+        val maxTimeout = 10000L
+
+        val updateTimeoutUI = {
+            val timeout =
+                com.alexdremov.notate.data.PreferencesManager
+                    .getToolbarCollapseTimeout(context)
+            val isCollapsible =
+                com.alexdremov.notate.data.PreferencesManager
+                    .isCollapsibleToolbarEnabled(context)
+
+            val seconds = timeout / 1000f
+            tvTimeoutLabel.text = "Collapse after %.1fs of inactivity.".format(seconds)
+
+            // Disable if feature not active
+            seekbarTimeout.isEnabled = isCollapsible
+            tvTimeoutLabel.alpha = if (isCollapsible) 1.0f else 0.5f
+
+            val progress = ((timeout - minTimeout).toFloat() / (maxTimeout - minTimeout) * 100).toInt()
+            seekbarTimeout.progress = progress
+        }
+
+        updateTimeoutUI()
+
+        seekbarTimeout.setOnSeekBarChangeListener(
+            object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(
+                    seekBar: SeekBar?,
+                    progress: Int,
+                    fromUser: Boolean,
+                ) {
+                    if (fromUser) {
+                        val timeout = minTimeout + (progress / 100f * (maxTimeout - minTimeout)).toLong()
+                        val seconds = timeout / 1000f
+                        tvTimeoutLabel.text = "Collapse after %.1fs of inactivity.".format(seconds)
+                    }
+                }
+
+                override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+
+                override fun onStopTrackingTouch(seekBar: SeekBar?) {
+                    val progress = seekBar?.progress ?: 0
+                    val timeout = minTimeout + (progress / 100f * (maxTimeout - minTimeout)).toLong()
+                    com.alexdremov.notate.data.PreferencesManager
+                        .setToolbarCollapseTimeout(context, timeout)
+                    updateTimeoutUI()
+                }
+            },
+        )
     }
 
     private fun showExportMenu() {

@@ -52,6 +52,7 @@ import com.alexdremov.notate.model.*
 import com.alexdremov.notate.model.InfiniteCanvasModel
 import com.alexdremov.notate.ui.navigation.CompactPageNavigation
 import com.alexdremov.notate.vm.DrawingViewModel
+import kotlinx.coroutines.delay
 import java.util.Collections
 import kotlin.math.roundToInt
 
@@ -69,8 +70,45 @@ fun MainToolbar(
     val activeToolId by viewModel.activeToolId.collectAsState()
     val isEditMode by viewModel.isEditMode.collectAsState()
     val isFixedPageMode by viewModel.isFixedPageMode.collectAsState()
+    val isCollapsible by viewModel.isCollapsibleToolbar.collectAsState()
+    val collapseTimeout by viewModel.toolbarCollapseTimeout.collectAsState()
+    val isPenPopupOpen by viewModel.isPenPopupOpen.collectAsState()
 
     // --- State ---
+    // Collapsed State (Local)
+    var isCollapsed by remember { mutableStateOf(isCollapsible) }
+
+    // Interaction timestamp for auto-collapse
+    var lastInteractionTime by remember { mutableLongStateOf(System.currentTimeMillis()) }
+
+    // Reset to collapsed when the feature is enabled
+    LaunchedEffect(isCollapsible) {
+        if (isCollapsible) {
+            isCollapsed = true
+        } else {
+            isCollapsed = false
+        }
+    }
+
+    // Auto-Collapse Logic
+    LaunchedEffect(isCollapsed, isCollapsible, lastInteractionTime, collapseTimeout, isPenPopupOpen) {
+        if (isCollapsible && !isCollapsed && !isEditMode && !isPenPopupOpen) {
+            delay(collapseTimeout)
+            // Check if user is still interacting?
+            // The logic here is: wait for timeout. If lastInteractionTime hasn't changed (which recomposes this),
+            // then we collapse.
+            // Wait, recomposition cancels this coroutine. So if lastInteractionTime updates,
+            // this effect restarts, resetting the timer.
+            // So simply delay(timeout) -> collapse is correct.
+            isCollapsed = true
+        }
+    }
+
+    // Helper to tick interaction
+    val onInteraction = {
+        lastInteractionTime = System.currentTimeMillis()
+    }
+
     // Filter items based on mode
     val effectiveItems =
         remember(items, isFixedPageMode) {
@@ -102,164 +140,279 @@ fun MainToolbar(
         modifier =
             Modifier
                 .wrapContentSize() // Wrap content to allow DraggableLinearLayout to size correctly
-                .padding(0.dp),
-    ) {
-        val density = LocalDensity.current
-
-        // We render items in a layout (Row/Column).
-        // To allow z-index reordering without changing the underlying tree order (which kills state),
-        // we use a Box and manual offsets for the Ghost, OR we stick to the "Swap List" approach
-        // which forces recomposition but is robust.
-
-        // Let's stick to the "Swap List" approach but with better coordinate handling.
-
-        val layoutModifier =
-            if (isHorizontal) {
-                Modifier
-                    .wrapContentSize()
-                    .padding(2.dp)
-            } else {
-                Modifier
-                    .wrapContentSize()
-                    .padding(2.dp)
-            }
-
-        // Layout Container
-        if (isHorizontal) {
-            Row(
-                modifier = layoutModifier,
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                DraggableItems(
-                    items = localItems,
-                    draggingItem = draggingItem,
-                    isEditMode = isEditMode,
-                    activeToolId = activeToolId,
-                    canvasController = canvasController,
-                    canvasModel = canvasModel,
-                    isHorizontal = true,
-                    onSlotPositioned = { index, center -> slotCenters[index] = center },
-                    onDragStart = { item ->
-                        draggingItem = item
-                        dragOffset = Offset.Zero
-                    },
-                    onDrag = { delta ->
-                        dragOffset += delta
-
-                        // Check for swaps
-                        // We need to know where the dragging item IS relative to the container.
-                        // We assume the drag started at the center of the item's slot.
-                        // So Current Position = SlotCenter[originalIndex] + dragOffset
-
-                        val originalIndex = localItems.indexOf(draggingItem)
-                        if (originalIndex != -1) {
-                            val originalCenter = slotCenters[originalIndex] ?: Offset.Zero
-                            val currentCenter = originalCenter + dragOffset
-
-                            // Find closest slot
-                            var closestIndex = originalIndex
-                            var minDistance = Float.MAX_VALUE
-
-                            slotCenters.forEach { (index, center) ->
-                                val dist = (center - currentCenter).getDistance()
-                                if (dist < minDistance) {
-                                    minDistance = dist
-                                    closestIndex = index
-                                }
-                            }
-
-                            // Trigger Swap
-                            if (closestIndex != originalIndex) {
-                                val newList = localItems.toMutableList()
-                                Collections.swap(newList, originalIndex, closestIndex)
-                                localItems = newList
-
-                                // Adjust dragOffset so the item doesn't jump visualy
-                                // New Center is slotCenters[closestIndex] (approx, assuming layout updated)
-                                // We want Current Position to remain same.
-                                // Current = OldCenter + OldDragOffset
-                                // Current = NewCenter + NewDragOffset
-                                // NewDragOffset = OldCenter + OldDragOffset - NewCenter
-
-                                val oldSlotCenter = slotCenters[originalIndex] ?: Offset.Zero
-                                val newSlotCenter = slotCenters[closestIndex] ?: Offset.Zero
-                                dragOffset = (oldSlotCenter + dragOffset) - newSlotCenter
+                .padding(0.dp)
+                .pointerInput(Unit) {
+                    awaitPointerEventScope {
+                        while (true) {
+                            val event = awaitPointerEvent()
+                            // On ANY pointer input in the toolbar area, reset the timer
+                            if (event.changes.any { it.pressed } ||
+                                event.type == androidx.compose.ui.input.pointer.PointerEventType.Move ||
+                                event.type == androidx.compose.ui.input.pointer.PointerEventType.Enter
+                            ) {
+                                onInteraction()
                             }
                         }
-                    },
-                    onDragEnd = {
-                        viewModel.setToolbarItems(localItems)
-                        draggingItem = null
-                        dragOffset = Offset.Zero
-                    },
-                    onToolClick = onToolClick,
-                    onActionClick = onActionClick,
-                    onRemove = { viewModel.removeToolbarItem(it) },
+                    }
+                },
+    ) {
+        if (isCollapsible && isCollapsed && !isEditMode) {
+            // --- Collapsed State (Small Circle with Dot) ---
+            Box(
+                modifier =
+                    Modifier
+                        .size(32.dp) // Smaller size
+                        .clip(CircleShape)
+                        .background(Color.White)
+                        .border(1.dp, Color.Black, CircleShape)
+                        .pointerInput(Unit) {
+                            awaitPointerEventScope {
+                                while (true) {
+                                    val event = awaitPointerEvent()
+                                    // Detect Hover Entry
+                                    if (event.type == androidx.compose.ui.input.pointer.PointerEventType.Enter) {
+                                        isCollapsed = false
+                                        onInteraction()
+                                    }
+                                }
+                            }
+                        }.clickable {
+                            isCollapsed = false
+                            onInteraction()
+                        },
+                contentAlignment = Alignment.Center,
+            ) {
+                // Dot
+                Box(
+                    modifier =
+                        Modifier
+                            .size(8.dp)
+                            .background(Color.Black, CircleShape),
                 )
-
-                SettingsButton(onClick = onOpenSidebar)
             }
         } else {
-            Column(
-                modifier = layoutModifier,
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                DraggableItems(
-                    items = localItems,
-                    draggingItem = draggingItem,
-                    isEditMode = isEditMode,
-                    activeToolId = activeToolId,
-                    canvasController = canvasController,
-                    canvasModel = canvasModel,
-                    isHorizontal = false,
-                    onSlotPositioned = { index, center -> slotCenters[index] = center },
-                    onDragStart = { item ->
-                        draggingItem = item
-                        dragOffset = Offset.Zero
-                    },
-                    onDrag = { delta ->
-                        dragOffset += delta
+            // --- Expanded (Normal) State ---
+            val density = LocalDensity.current
+            val layoutModifier =
+                if (isHorizontal) {
+                    Modifier
+                        .wrapContentSize()
+                        .padding(2.dp)
+                } else {
+                    Modifier
+                        .wrapContentSize()
+                        .padding(2.dp)
+                }
 
-                        val originalIndex = localItems.indexOf(draggingItem)
-                        if (originalIndex != -1) {
-                            val originalCenter = slotCenters[originalIndex] ?: Offset.Zero
-                            val currentCenter = originalCenter + dragOffset
+            // Layout Container
+            if (isHorizontal) {
+                Row(
+                    modifier = layoutModifier,
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    DraggableItems(
+                        items = localItems,
+                        draggingItem = draggingItem,
+                        isEditMode = isEditMode,
+                        activeToolId = activeToolId,
+                        canvasController = canvasController,
+                        canvasModel = canvasModel,
+                        isHorizontal = true,
+                        onSlotPositioned = { index, center -> slotCenters[index] = center },
+                        onDragStart = { item ->
+                            draggingItem = item
+                            dragOffset = Offset.Zero
+                            onInteraction()
+                        },
+                        onDrag = { delta ->
+                            dragOffset += delta
+                            onInteraction()
 
-                            var closestIndex = originalIndex
-                            var minDistance = Float.MAX_VALUE
+                            // Check for swaps
+                            val originalIndex = localItems.indexOf(draggingItem)
+                            if (originalIndex != -1) {
+                                val originalCenter = slotCenters[originalIndex] ?: Offset.Zero
+                                val currentCenter = originalCenter + dragOffset
 
-                            slotCenters.forEach { (index, center) ->
-                                val dist = (center - currentCenter).getDistance()
-                                if (dist < minDistance) {
-                                    minDistance = dist
-                                    closestIndex = index
+                                // Find closest slot
+                                var closestIndex = originalIndex
+                                var minDistance = Float.MAX_VALUE
+
+                                slotCenters.forEach { (index, center) ->
+                                    val dist = (center - currentCenter).getDistance()
+                                    if (dist < minDistance) {
+                                        minDistance = dist
+                                        closestIndex = index
+                                    }
+                                }
+
+                                // Trigger Swap
+                                if (closestIndex != originalIndex) {
+                                    val newList = localItems.toMutableList()
+                                    Collections.swap(newList, originalIndex, closestIndex)
+                                    localItems = newList
+                                    val oldSlotCenter = slotCenters[originalIndex] ?: Offset.Zero
+                                    val newSlotCenter = slotCenters[closestIndex] ?: Offset.Zero
+                                    dragOffset = (oldSlotCenter + dragOffset) - newSlotCenter
                                 }
                             }
+                        },
+                        onDragEnd = {
+                            viewModel.setToolbarItems(localItems)
+                            draggingItem = null
+                            dragOffset = Offset.Zero
+                            onInteraction()
+                        },
+                        onToolClick = { item, rect ->
+                            // Interaction for logic, BUT if tool changed, trigger collapse
+                            // Wait, onToolClick logic in CanvasActivity handles the selection.
+                            // We can detect selection change by observing activeToolId OR handle it here if it's a new selection.
 
-                            if (closestIndex != originalIndex) {
-                                val newList = localItems.toMutableList()
-                                Collections.swap(newList, originalIndex, closestIndex)
-                                localItems = newList
+                            val isSameTool = activeToolId == item.id
+                            onToolClick(item, rect)
 
-                                val oldSlotCenter = slotCenters[originalIndex] ?: Offset.Zero
-                                val newSlotCenter = slotCenters[closestIndex] ?: Offset.Zero
-                                dragOffset = (oldSlotCenter + dragOffset) - newSlotCenter
+                            if (isCollapsible && !isSameTool) {
+                                // Immediate Collapse on tool switch
+                                isCollapsed = true
+                            } else {
+                                onInteraction()
                             }
-                        }
-                    },
-                    onDragEnd = {
-                        viewModel.setToolbarItems(localItems)
-                        draggingItem = null
-                        dragOffset = Offset.Zero
-                    },
-                    onToolClick = onToolClick,
-                    onActionClick = onActionClick,
-                    onRemove = { viewModel.removeToolbarItem(it) },
-                )
+                        },
+                        onActionClick = { action ->
+                            onInteraction()
+                            onActionClick(action)
+                        },
+                        onRemove = {
+                            onInteraction()
+                            viewModel.removeToolbarItem(it)
+                        },
+                    )
 
-                SettingsButton(onClick = onOpenSidebar)
+                    SettingsButton(onClick = {
+                        onInteraction()
+                        onOpenSidebar()
+                    })
+
+                    if (isCollapsible && !isEditMode) {
+                        // Minimize Button
+                        Box(
+                            modifier =
+                                Modifier
+                                    .size(48.dp)
+                                    .clip(CircleShape)
+                                    .clickable { isCollapsed = true },
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(
+                                painter = painterResource(R.drawable.ic_chevron_right), // Reuse existing chevron
+                                contentDescription = "Minimize",
+                                tint = Color.Black,
+                                modifier = Modifier.rotate(180f), // Point Left/Inwards
+                            )
+                        }
+                    }
+                }
+            } else {
+                Column(
+                    modifier = layoutModifier,
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    DraggableItems(
+                        items = localItems,
+                        draggingItem = draggingItem,
+                        isEditMode = isEditMode,
+                        activeToolId = activeToolId,
+                        canvasController = canvasController,
+                        canvasModel = canvasModel,
+                        isHorizontal = false,
+                        onSlotPositioned = { index, center -> slotCenters[index] = center },
+                        onDragStart = { item ->
+                            draggingItem = item
+                            dragOffset = Offset.Zero
+                            onInteraction()
+                        },
+                        onDrag = { delta ->
+                            dragOffset += delta
+                            onInteraction()
+
+                            val originalIndex = localItems.indexOf(draggingItem)
+                            if (originalIndex != -1) {
+                                val originalCenter = slotCenters[originalIndex] ?: Offset.Zero
+                                val currentCenter = originalCenter + dragOffset
+
+                                var closestIndex = originalIndex
+                                var minDistance = Float.MAX_VALUE
+
+                                slotCenters.forEach { (index, center) ->
+                                    val dist = (center - currentCenter).getDistance()
+                                    if (dist < minDistance) {
+                                        minDistance = dist
+                                        closestIndex = index
+                                    }
+                                }
+
+                                if (closestIndex != originalIndex) {
+                                    val newList = localItems.toMutableList()
+                                    Collections.swap(newList, originalIndex, closestIndex)
+                                    localItems = newList
+                                    val oldSlotCenter = slotCenters[originalIndex] ?: Offset.Zero
+                                    val newSlotCenter = slotCenters[closestIndex] ?: Offset.Zero
+                                    dragOffset = (oldSlotCenter + dragOffset) - newSlotCenter
+                                }
+                            }
+                        },
+                        onDragEnd = {
+                            viewModel.setToolbarItems(localItems)
+                            draggingItem = null
+                            dragOffset = Offset.Zero
+                            onInteraction()
+                        },
+                        onToolClick = { item, rect ->
+                            val isSameTool = activeToolId == item.id
+                            onToolClick(item, rect)
+
+                            if (isCollapsible && !isSameTool) {
+                                isCollapsed = true
+                            } else {
+                                onInteraction()
+                            }
+                        },
+                        onActionClick = { action ->
+                            onInteraction()
+                            onActionClick(action)
+                        },
+                        onRemove = {
+                            onInteraction()
+                            viewModel.removeToolbarItem(it)
+                        },
+                    )
+
+                    SettingsButton(onClick = {
+                        onInteraction()
+                        onOpenSidebar()
+                    })
+
+                    if (isCollapsible && !isEditMode) {
+                        // Minimize Button
+                        Box(
+                            modifier =
+                                Modifier
+                                    .size(48.dp)
+                                    .clip(CircleShape)
+                                    .clickable { isCollapsed = true },
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(
+                                painter = painterResource(R.drawable.ic_chevron_right),
+                                contentDescription = "Minimize",
+                                tint = Color.Black,
+                                modifier = Modifier.rotate(270f), // Point Up/Inwards for Vertical
+                            )
+                        }
+                    }
+                }
             }
         }
 

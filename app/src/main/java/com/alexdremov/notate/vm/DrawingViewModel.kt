@@ -42,8 +42,19 @@ class DrawingViewModel(
     private val _isFixedPageMode = MutableStateFlow(false)
     val isFixedPageMode: StateFlow<Boolean> = _isFixedPageMode.asStateFlow()
 
+    private val _isCollapsibleToolbar = MutableStateFlow(false)
+    val isCollapsibleToolbar: StateFlow<Boolean> = _isCollapsibleToolbar.asStateFlow()
+
+    private val _toolbarCollapseTimeout = MutableStateFlow(3000L)
+    val toolbarCollapseTimeout: StateFlow<Long> = _toolbarCollapseTimeout.asStateFlow()
+
+    private val _isPenPopupOpen = MutableStateFlow(false)
+    val isPenPopupOpen: StateFlow<Boolean> = _isPenPopupOpen.asStateFlow()
+
     init {
         loadTools()
+        _isCollapsibleToolbar.value = PreferencesManager.isCollapsibleToolbarEnabled(getApplication())
+        _toolbarCollapseTimeout.value = PreferencesManager.getToolbarCollapseTimeout(getApplication())
     }
 
     private fun loadTools() {
@@ -81,6 +92,20 @@ class DrawingViewModel(
         } else {
             setDrawingEnabled(true)
         }
+    }
+
+    fun setCollapsibleToolbar(enabled: Boolean) {
+        _isCollapsibleToolbar.value = enabled
+        PreferencesManager.setCollapsibleToolbarEnabled(getApplication(), enabled)
+    }
+
+    fun setToolbarCollapseTimeout(timeoutMs: Long) {
+        _toolbarCollapseTimeout.value = timeoutMs
+        PreferencesManager.setToolbarCollapseTimeout(getApplication(), timeoutMs)
+    }
+
+    fun setPenPopupOpen(isOpen: Boolean) {
+        _isPenPopupOpen.value = isOpen
     }
 
     fun selectTool(id: String) {

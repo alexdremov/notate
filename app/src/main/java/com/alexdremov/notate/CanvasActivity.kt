@@ -523,11 +523,13 @@ class CanvasActivity : AppCompatActivity() {
                         com.alexdremov.notate.util.EpdFastModeController
                             .exitFastMode()
                         activePenPopup = null
+                        viewModel.setPenPopupOpen(false)
                         updateDrawingEnabledState()
                     },
                 )
 
             activePenPopup = popup
+            viewModel.setPenPopupOpen(true)
             updateDrawingEnabledState()
 
             com.alexdremov.notate.util.EpdFastModeController
