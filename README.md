@@ -3,8 +3,8 @@
 **Beautiful High-Performance Infinite Canvas for Onyx Boox e-ink devices**
 
 <p align="center">
-    <img width="256px" src="assets/infinite.jpeg">
-    <img width="256px" src="assets/finite.jpeg">
+    <img width="400px" src="assets/infinite.jpeg">
+    <img width="400px" src="assets/finite.jpeg">
 </p>
 
 ## About Notate
