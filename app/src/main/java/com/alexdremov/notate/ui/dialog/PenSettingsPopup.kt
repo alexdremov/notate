@@ -263,12 +263,20 @@ class PenSettingsPopup(
         // Initialize selection UI state
         updateStyleSelection(currentTool.strokeType)
 
+        // --- Color Name ---
+        binding.tvColorName.text =
+            com.alexdremov.notate.util.ColorNamer
+                .getColorName(currentTool.color)
+
         // --- Favorites RecyclerView ---
         colorAdapter =
             ColorAdapter(
                 colors = favorites,
                 onColorSelected = { color ->
                     updateTool { it.copy(color = color) }
+                    binding.tvColorName.text =
+                        com.alexdremov.notate.util.ColorNamer
+                            .getColorName(color)
                 },
                 onAddClicked = {
                     binding.viewFlipper.displayedChild = 1 // Go to Presets Page (Index 1)
@@ -480,6 +488,9 @@ class PenSettingsPopup(
 
         // Set Initial Color
         binding.colorPickerView.setInitialColor(currentTool.color)
+        binding.tvColorDescription.text =
+            com.alexdremov.notate.util.ColorNamer
+                .getColorName(currentTool.color)
 
         // Realtime Preview Listener
         binding.colorPickerView.setColorListener(
@@ -492,6 +503,9 @@ class PenSettingsPopup(
                         setStroke(context.dpToPx(1), Color.LTGRAY)
                     }
                 binding.viewCurrentColorPreview.background = shape
+                binding.tvColorDescription.text =
+                    com.alexdremov.notate.util.ColorNamer
+                        .getColorName(color)
             },
         )
 
@@ -508,6 +522,9 @@ class PenSettingsPopup(
             PreferencesManager.saveFavoriteColors(context, favorites) // Save new color
         }
         updateTool { it.copy(color = color) }
+        binding.tvColorName.text =
+            com.alexdremov.notate.util.ColorNamer
+                .getColorName(color)
 
         // Return to Main Page
         binding.viewFlipper.displayedChild = 0

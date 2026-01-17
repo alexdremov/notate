@@ -155,14 +155,29 @@
                     android:layout_marginTop="8dp" />
 
                 <!-- Color Palette -->
-                <TextView
-                    android:id="@+id/tvColorLabel"
-                    android:layout_width="wrap_content"
+                <RelativeLayout
+                    android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:text="Color"
-                    android:textSize="14sp"
-                    android:textColor="#666666"
-                    android:layout_marginTop="16dp" />
+                    android:layout_marginTop="16dp">
+
+                    <TextView
+                        android:id="@+id/tvColorLabel"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Color"
+                        android:textSize="14sp"
+                        android:textColor="#666666" />
+
+                    <TextView
+                        android:id="@+id/tvColorName"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_alignParentEnd="true"
+                        android:text="Black"
+                        android:textSize="14sp"
+                        android:textStyle="bold"
+                        android:textColor="#000000" />
+                </RelativeLayout>
 
                 <androidx.recyclerview.widget.RecyclerView
                     android:id="@+id/recyclerColors"
@@ -299,6 +314,16 @@
                         android:layout_centerVertical="true"
                         android:background="@drawable/bg_tool_selected" />
                 </RelativeLayout>
+
+                <TextView
+                    android:id="@+id/tvColorDescription"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Dark Blue"
+                    android:gravity="center"
+                    android:textSize="14sp"
+                    android:textColor="#666666"
+                    android:layout_marginBottom="8dp"/>
 
                 <com.skydoves.colorpickerview.ColorPickerView
                     android:id="@+id/colorPickerView"
