@@ -60,6 +60,7 @@ class InfiniteCanvasModel {
     var viewportScale: Float = 1.0f
     var viewportOffsetX: Float = 0f
     var viewportOffsetY: Float = 0f
+    var toolbarItems: List<ToolbarItem> = emptyList()
 
     /**
      * Updates the background style of the canvas.
@@ -439,6 +440,7 @@ class InfiniteCanvasModel {
                 viewportScale,
                 viewportOffsetX,
                 viewportOffsetY,
+                toolbarItems,
             )
         }
 
@@ -459,6 +461,7 @@ class InfiniteCanvasModel {
             viewportScale = state.viewportScale
             viewportOffsetX = state.viewportOffsetX
             viewportOffsetY = state.viewportOffsetY
+            toolbarItems = state.toolbarItems
         }
     }
 
@@ -488,6 +491,7 @@ class InfiniteCanvasModel {
             viewportScale = data.zoomLevel
             viewportOffsetX = data.offsetX
             viewportOffsetY = data.offsetY
+            toolbarItems = data.toolbarItems
 
             CanvasSerializer.fromData(data) { item ->
                 if (item.order >= nextOrder) nextOrder = item.order + 1

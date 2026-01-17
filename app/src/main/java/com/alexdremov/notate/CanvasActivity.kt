@@ -386,6 +386,12 @@ class CanvasActivity : AppCompatActivity() {
                     val isFixed = result.canvasState.canvasType == com.alexdremov.notate.data.CanvasType.FIXED_PAGES
                     isFixedPageState?.value = isFixed
                     viewModel.setFixedPageMode(isFixed)
+
+                    // Restore Toolbar Configuration
+                    if (result.canvasState.toolbarItems.isNotEmpty()) {
+                        viewModel.setToolbarItems(result.canvasState.toolbarItems)
+                    }
+
                     val tUiEnd = System.currentTimeMillis()
                     android.util.Log.d("CanvasActivity", "  UI Load: ${tUiEnd - tUiStart}ms")
 
@@ -427,7 +433,10 @@ class CanvasActivity : AppCompatActivity() {
     private fun saveCanvas() {
         val path = currentCanvasPath ?: return
         android.util.Log.d("CanvasActivity", "Saving canvas to $path")
-        val rawData = binding.canvasView.getCanvasData()
+        val rawData =
+            binding.canvasView.getCanvasData().copy(
+                toolbarItems = viewModel.toolbarItems.value,
+            )
 
         lifecycleScope.launch(Dispatchers.Default) {
             withContext(NonCancellable) {

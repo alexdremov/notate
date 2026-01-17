@@ -17,3 +17,6 @@
 # Google Error Prone Annotations
 -dontwarn com.google.errorprone.annotations.**
 -dontwarn javax.lang.model.element.Modifier
+
+# Guava / Java 8 Reflection (Fix for R8 errors)
+-dontwarn java.lang.reflect.AnnotatedType

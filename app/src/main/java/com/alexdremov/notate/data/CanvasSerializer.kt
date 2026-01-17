@@ -26,6 +26,7 @@ object CanvasSerializer {
         zoomLevel: Float,
         offsetX: Float,
         offsetY: Float,
+        toolbarItems: List<com.alexdremov.notate.model.ToolbarItem> = emptyList(),
     ): CanvasData {
         val strokeDataList = ArrayList<StrokeData>()
         val imageDataList = ArrayList<CanvasImageData>()
@@ -91,6 +92,7 @@ object CanvasSerializer {
             zoomLevel = zoomLevel,
             offsetX = offsetX,
             offsetY = offsetY,
+            toolbarItems = toolbarItems,
         )
     }
 
@@ -206,6 +208,7 @@ object CanvasSerializer {
         val viewportScale: Float,
         val viewportOffsetX: Float,
         val viewportOffsetY: Float,
+        val toolbarItems: List<com.alexdremov.notate.model.ToolbarItem> = emptyList(),
     )
 
     /**
@@ -371,6 +374,7 @@ object CanvasSerializer {
                 viewportScale = data.zoomLevel,
                 viewportOffsetX = data.offsetX,
                 viewportOffsetY = data.offsetY,
+                toolbarItems = data.toolbarItems,
             )
         }
 }

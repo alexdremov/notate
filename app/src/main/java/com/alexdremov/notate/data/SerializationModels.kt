@@ -36,6 +36,8 @@ data class CanvasData(
     val backgroundStyle: BackgroundStyle = BackgroundStyle.Blank(),
     @ProtoNumber(11)
     val images: List<CanvasImageData> = emptyList(),
+    @ProtoNumber(12)
+    val toolbarItems: List<com.alexdremov.notate.model.ToolbarItem> = emptyList(),
 )
 
 @Serializable
