@@ -19,19 +19,22 @@ without sacrificing extensive functionality.
 |---------|-------------|
 | ⚡ **Zero-Latency Input** | Leverages the Onyx `EpdController` to write directly to the hardware frame buffer |
 | ♾️ **Infinite Canvas** | An endless workspace with zoom from 1% to 1000% using tiles + level-of-detail optimizations |
-| 📐 **Shape Recognition** | Draw and hold to snap rough strokes into perfect geometric shapes: lines, triangles, rectangles, circles, pentagons, hexagons |
-| 📄 **Backgrounds** | Blank, ruled, grid, or dots background |
+| 📐 **Shape Recognition** | Draw and hold to snap rough strokes into perfect geometric shapes:  lines, triangles, rectangles, circles, pentagons, hexagons |
+| 📄 **Backgrounds** | Blank, ruled, grid, or dots—customizable spacing, thickness, color, and padding |
 | ✏️ **Scribble-to-Erase** | Quickly erase content by scribbling over it—detects zig-zag gesture density and velocity |
 | 🧴 **Smart Erasers** | Stroke eraser, standard (partial) eraser, and lasso eraser modes |
 | 📝 **Images** | Paste images seamlessly into the canvas |
-|  **Selection** | Select, copy and move groups of strokes or images |
-| 🧭 **Fixed Pages Mode** | Page Mode emulation with visual grid to help structure notes in pages |
-| 🎨 **Deep Customization** | Pen styles (Fountain, Ballpoint, Fineliner, Highlighter), colors, and stroke sizes |
+| 🔲 **Selection** | Rectangle and lasso selection modes to select, copy, and move strokes or images |
+| 🧭 **Fixed Pages Mode** | Page Mode emulation with visual grid and thumbnail navigation |
+| 🎨 **Deep Customization** | Pen styles (Fountain, Ballpoint, Fineliner, Highlighter, Brush, Charcoal), colors, and stroke sizes |
+| 🛠️ **Customizable Toolbar** | Add, remove, and reorder toolbar items; supports collapsible auto-hide mode |
 | ⏪ **Undo/Redo** | Unlimited undo/redo history |
+| 📁 **Project Organization** | File browser with projects, folders, thumbnails, rename, duplicate, and delete |
+| 🗺️ **Minimap** | Overview minimap showing viewport position within the canvas |
 | 📱 **Beautiful UI** | A clean, intuitive interface with floating toolbars and sidebar |
-| 📤 **Export Options** | Export to PDF (vector or raster) |
-| ☁️ **Cloud Sync** | Google Drive / WEBDAV integration for instant backup and sync |
-
+| 📐 **Drawing Aids** | Angle snapping and axis locking for precise lines |
+| 📤 **Export & Share** | Export to PDF (vector or raster) and share directly |
+| ☁️ **Cloud Sync** | Google Drive / WebDAV integration with optional PDF sync |
 
 ## 🎮 Gestures & Controls
 
