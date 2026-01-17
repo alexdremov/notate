@@ -38,18 +38,32 @@ without sacrificing extensive functionality.
 
 ## 🎮 Gestures & Controls
 
+### Stylus (Pen) Input
 | Gesture | Action |
 |---------|--------|
 | **Draw** | Standard pen input |
-| **Hold** | Triggers shape recognition (configurable) |
+| **Hold (Dwell)** | Triggers shape recognition (configurable) |
 | **Scribble** | Triggers erase mode over scribbled area (configurable) |
-| **Button** | Toggle Eraser |
-| **Pan** | Drag anywhere to move the viewport |
-| **Pinch** | Zoom in and out |
-| **Double Tap** | Undo the last action |
-| **Tap UI** | Interact with floating toolbar or sidebar |
-| **Longpress** | Select strokes or objects or paste objects by longpressing to empty area |
+| **Pen Button** | Toggle Eraser temporarily while held |
+| **Eraser Tail** | Flip stylus to use eraser mode |
 
+### Finger Gestures
+| Gesture | Action |
+|---------|--------|
+| **Pan (1 finger)** | Drag to move the viewport |
+| **Pinch (2 fingers)** | Zoom in and out |
+| **Long Press on Object** | Select stroke or image, then drag to move |
+| **Long Press on Empty Area** | Open paste/insert image menu |
+| **Tap Outside Selection** | Deselect current selection |
+| **Tap UI** | Interact with floating toolbar or sidebar |
+
+### Selection Transforms (after selecting)
+| Gesture | Action |
+|---------|--------|
+| **Drag Selection** | Move selected items |
+| **Drag Corner Handle** | Scale selection from opposite corner |
+| **Drag Rotation Handle** | Rotate selection with angle snapping (configurable) |
+| **Two-Finger Pinch/Rotate** | Scale and rotate selection simultaneously |
 ---
 
 ## 📦 Installation
