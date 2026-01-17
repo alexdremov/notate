@@ -68,6 +68,7 @@ object CanvasConfig {
     const val PAGE_A4_HEIGHT = 3508f
     const val PAGE_SPACING = 100f // Gap between pages
     val PAGE_BACKGROUND_COLOR = Color.WHITE
+    val FIXED_PAGE_CANVAS_BG_COLOR = Color.rgb(226, 226, 226) // Slightly gray, outside pages
 
     // Fountain Pen Rendering
     const val FOUNTAIN_PRESSURE_POWER_EXPONENT = 0.95f

@@ -274,7 +274,14 @@ class OnyxCanvasView
             com.alexdremov.notate.util.PerformanceProfiler.trace("OnyxCanvasView.drawContent") {
                 val cv = holder.lockCanvas() ?: return
                 try {
-                    val bgColor = if (canvasModel.canvasType == CanvasType.FIXED_PAGES) Color.rgb(250, 250, 250) else Color.WHITE
+                    val bgColor =
+                        if (canvasModel.canvasType ==
+                            CanvasType.FIXED_PAGES
+                        ) {
+                            CanvasConfig.FIXED_PAGE_CANVAS_BG_COLOR
+                        } else {
+                            Color.WHITE
+                        }
                     cv.drawColor(bgColor)
 
                     val visibleRect = RectF(0f, 0f, width.toFloat(), height.toFloat())

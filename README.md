@@ -1,10 +1,11 @@
 # Notate
 
-<p align="center">
-  <img src="icon.svg" alt="Notate Icon" width="128" height="128">
-</p>
+**Beautiful High-Performance Infinite Canvas for Onyx Boox e-ink devices**
 
-**High-Performance Infinite Canvas for Onyx Boox**
+<p align="center">
+    <img width="256px" src="assets/infinite.jpeg">
+    <img width="256px" src="assets/finite.jpeg">
+</p>
 
 ## About Notate
 
