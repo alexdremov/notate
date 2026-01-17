@@ -4,6 +4,31 @@ import android.graphics.RectF
 import com.alexdremov.notate.model.CanvasItem
 import java.util.ArrayList
 
+/**
+ * A spatial data structure for efficient 2D spatial queries on canvas items.
+ *
+ * The Quadtree recursively subdivides space into four quadrants, allowing
+ * O(log N) queries for items intersecting a given viewport rectangle.
+ * This is critical for rendering performance on infinite canvases with
+ * thousands of strokes.
+ *
+ * ## Features
+ * - **Auto-Growth**: Automatically expands bounds when items are inserted outside
+ * - **Max Depth**: Limited to [MAX_LEVELS] to prevent pathological cases
+ * - **Thread Safety**: External synchronization required (see [InfiniteCanvasModel])
+ *
+ * ## Usage
+ * ```kotlin
+ * val quadtree = Quadtree(0, RectF(-50000f, -50000f, 50000f, 50000f))
+ * quadtree = quadtree.insert(stroke) // Note: may return new root
+ *
+ * val visible = ArrayList<CanvasItem>()
+ * quadtree.retrieve(visible, viewportRect)
+ * ```
+ *
+ * @param level The depth level of this node (0 = root)
+ * @param bounds The rectangular region this node covers
+ */
 class Quadtree(
     private var level: Int,
     private val bounds: RectF,

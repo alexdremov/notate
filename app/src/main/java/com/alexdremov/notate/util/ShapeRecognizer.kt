@@ -6,6 +6,32 @@ import android.util.Log
 import com.onyx.android.sdk.data.note.TouchPoint
 import kotlin.math.*
 
+/**
+ * Recognizes geometric shapes from freehand stroke input.
+ *
+ * Uses a "Competitive Error" scoring algorithm that compares how well the input
+ * fits various geometric shapes (line, circle, triangle, square, pentagon, hexagon).
+ *
+ * ## Algorithm Overview
+ * 1. **Line Detection**: Checks if path linearity ratio > 92%
+ * 2. **Closure Check**: Determines if shape is closed (start/end distance < 30% of path length)
+ * 3. **Circle Metrics**: Calculates mean absolute deviation from average radius
+ * 4. **Polygon Metrics**: Uses Douglas-Peucker simplification to find vertices
+ * 5. **Competitive Scoring**: Shape with lowest error score wins
+ *
+ * ## Usage
+ * ```kotlin
+ * val result = ShapeRecognizer.recognize(touchPoints)
+ * when (result?. shape) {
+ *     RecognizedShape. CIRCLE -> // Handle circle
+ *     RecognizedShape.SQUARE -> // Handle square
+ *     // ...
+ * }
+ * ```
+ *
+ * @see RecognizedShape for supported shape types
+ * @see RecognitionResult for the output structure
+ */
 object ShapeRecognizer {
     enum class RecognizedShape {
         NONE,

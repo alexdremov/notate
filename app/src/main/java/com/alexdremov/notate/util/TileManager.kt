@@ -24,11 +24,30 @@ import kotlin.math.log2
 import kotlin.math.pow
 
 /**
- * Coordinator for the Tiled Rendering Engine.
- * Responsibilities:
- * 1. Calculate LOD and Visibility.
- * 2. Manage background generation tasks and versioning.
- * 3. Orchestrate rendering of cached tiles and fallbacks.
+ * Coordinates the Level-of-Detail (LOD) tiled rendering system for the infinite canvas.
+ *
+ * ## Responsibilities
+ * 1. **LOD Calculation**: Determines zoom level from scale factor
+ * 2. **Tile Visibility**: Calculates which tiles are visible in the current viewport
+ * 3. **Background Generation**: Queues tile bitmap generation on worker threads
+ * 4. **Cache Management**: Manages LRU cache with memory-aware eviction
+ * 5. **Fallback Rendering**: Shows lower-resolution parent tiles while generating
+ *
+ * ## LOD System
+ * Each LOD level represents a 2x scale factor:
+ * - Level 0: 1: 1 scale (512px tile = 512 world units)
+ * - Level 1: 1:2 scale (512px tile = 1024 world units)
+ * - Level -1: 2: 1 scale (512px tile = 256 world units)
+ *
+ * ## Thread Model
+ * - Rendering calls happen on UI thread
+ * - Tile generation happens on [executor] thread pool
+ * - Cache operations are synchronized
+ *
+ * @param canvasModel The data model to query for strokes
+ * @param renderer The renderer for drawing strokes to tile bitmaps
+ * @param tileSize Pixel size of each tile (default: 512)
+ * @param executor Thread pool for background tile generation
  */
 class TileManager(
     private val canvasModel: InfiniteCanvasModel,

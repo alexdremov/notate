@@ -6,6 +6,24 @@ import kotlin.math.abs
 import kotlin.math.atan2
 import kotlin.math.hypot
 
+/**
+ * Detects scribble gestures for the "scribble-to-erase" feature.
+ *
+ * A scribble is characterized by:
+ * - Rapid back-and-forth motion (multiple sharp direction changes)
+ * - High path density relative to bounding box
+ * - Fast drawing speed
+ *
+ * ## Detection Criteria
+ * - Minimum [MIN_POINTS] points (10)
+ * - At least [MIN_REVERSALS] sharp turns (5)
+ * - Sharp turn defined as > [SHARP_TURN_THRESHOLD_DEGREES] (140°)
+ * - Path length > [MIN_STROKE_LENGTH] pixels (80)
+ * - Density ratio (path length / bbox diagonal) > [MIN_DENSITY] (1.2)
+ * - Average speed > [MIN_AVERAGE_SPEED_PX_MS] (1. 0 px/ms)
+ *
+ * @see PenInputHandler for integration with input handling
+ */
 object ScribbleDetector {
     private const val MIN_POINTS = 10
     private const val MIN_REVERSALS = 5 // Minimum back-and-forth movements (e.g., M shape has 3 turns)
