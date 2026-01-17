@@ -462,6 +462,10 @@ class OnyxCanvasView
             pastePopup?.dismiss()
         }
 
+        fun refreshScreen() {
+            performHardRefresh()
+        }
+
         private fun updateTouchHelperTool() {
             penInputHandler.setScale(viewportInteractor.getCurrentScale())
         }

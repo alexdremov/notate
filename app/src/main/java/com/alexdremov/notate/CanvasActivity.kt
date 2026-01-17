@@ -275,6 +275,7 @@ class CanvasActivity : AppCompatActivity() {
                         },
                         onToolbarExpanded = {
                             toolbarCoordinator.ensureOnScreen()
+                            binding.canvasView.refreshScreen()
                         },
                         onToolbarCollapsed = {
                             toolbarCoordinator.restorePosition()
