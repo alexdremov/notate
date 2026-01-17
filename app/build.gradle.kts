@@ -83,6 +83,15 @@ android {
 }
 
 dependencies {
+    // Force Retrofit 2.5.0+ to fix XXE (XML External Entity) vulnerability in versions < 2.5.0
+    // The vulnerable version 2.1.0 is introduced transitively by Onyx SDK dependencies
+    // CVE: High severity - XXE can lead to remote file read and SSRF attacks
+    constraints {
+        implementation("com.squareup.retrofit2:retrofit:2.5.0") {
+            because("Fix XXE vulnerability in versions < 2.5.0")
+        }
+    }
+
     implementation("androidx.core:core-ktx:1.12.0")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.6.2")
     implementation("androidx.activity:activity-compose:1.8.0")
