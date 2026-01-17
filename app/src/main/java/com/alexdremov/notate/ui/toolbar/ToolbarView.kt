@@ -619,7 +619,13 @@ fun ToolbarItemWrapper(
                     Modifier
                         .size(48.dp)
                         .clip(RoundedCornerShape(8.dp))
-                        .background(if (isActive && !isEditMode) Color.LightGray.copy(alpha = 0.5f) else Color.Transparent)
+                        .then(
+                            if (isActive && !isEditMode) {
+                                Modifier.border(2.dp, Color.Black, RoundedCornerShape(8.dp))
+                            } else {
+                                Modifier
+                            }
+                        )
                         .clickable(enabled = !isEditMode) {
                             android.util.Log.d("BooxVibesDebug", "ToolbarView: Item Clicked! ID=${item.id}, Bounds=$itemBounds")
                             itemBounds?.let { onClick(it) }
