@@ -73,10 +73,11 @@ object PerformanceProfiler {
     private fun printReport() {
         val sb = StringBuilder()
         sb.append("\n=== Performance Report (").append(CanvasConfig.PROFILING_INTERVAL_MS).append("ms) ===\n")
-        sb.append(String.format("%-35s | %-6s | %-8s | %-8s\n", "Section", "Count", "Avg(ms)", "Max(ms)"))
-        sb.append("-".repeat(65)).append("\n")
+        sb.append(String.format("%-30s | %-6s | %-8s | %-8s | %-8s | %-6s\n", "Section", "Count", "Avg(ms)", "Max(ms)", "Total(ms)", "%"))
+        sb.append("-".repeat(85)).append("\n")
 
         val sortedStats = stats.entries.sortedByDescending { it.value.totalNanos.get() }
+        val grandTotalNanos = sortedStats.sumOf { it.value.totalNanos.get() }
 
         for ((name, stat) in sortedStats) {
             val count = stat.count.get()
@@ -85,14 +86,17 @@ object PerformanceProfiler {
             val total = stat.totalNanos.get()
             val max = stat.maxNanos.get()
             val avg = total.toDouble() / count.toDouble()
+            val percent = if (grandTotalNanos > 0) (total.toDouble() / grandTotalNanos.toDouble()) * 100.0 else 0.0
 
             sb.append(
                 String.format(
-                    "%-35s | %6d | %8.3f | %8.3f\n",
-                    name.take(35),
+                    "%-30s | %6d | %8.3f | %8.3f | %8.3f | %5.1f%%\n",
+                    name.take(30),
                     count,
                     avg / 1_000_000.0,
                     max / 1_000_000.0,
+                    total / 1_000_000.0,
+                    percent,
                 ),
             )
 
@@ -101,7 +105,7 @@ object PerformanceProfiler {
             stat.totalNanos.set(0)
             stat.maxNanos.set(0)
         }
-        sb.append("=================================================================\n")
+        sb.append("=====================================================================================\n")
         Log.d(TAG, sb.toString())
     }
 }

@@ -21,7 +21,7 @@ object CanvasConfig {
     const val ERROR_CACHE_SIZE = 100
     const val NEIGHBOR_PRECACHE_THRESHOLD_PERCENT = 0.9
     const val NEIGHBOR_COUNT = 2
-    const val THREAD_POOL_SIZE = 4
+    val THREAD_POOL_SIZE = Runtime.getRuntime().availableProcessors()
 
     // Debugging
     var DEBUG_USE_SIMPLE_RENDERER = false

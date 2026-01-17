@@ -24,7 +24,6 @@ class CanvasRenderer(
 ) {
     private val tileManager = TileManager(model, this)
     private var layoutStrategy: CanvasLayout = InfiniteLayout()
-    private val renderLock = Any()
 
     init {
         tileManager.onTileReady = onTileReady
