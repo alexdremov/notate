@@ -33,7 +33,8 @@ jobs:
         echo "$KEYSTORE_BASE64" | base64 --decode > release.keystore
         
         # Create keystore.properties
-        echo "storeFile=release.keystore" > keystore.properties
+        # We point to ../release.keystore because this property is read by the :app module
+        echo "storeFile=../release.keystore" > keystore.properties
         echo "keyAlias=${{ secrets.KEY_ALIAS }}" >> keystore.properties
         echo "storePassword=${{ secrets.STORE_PASSWORD }}" >> keystore.properties
         echo "keyPassword=${{ secrets.KEY_PASSWORD }}" >> keystore.properties
