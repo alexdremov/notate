@@ -17,6 +17,7 @@ import com.alexdremov.notate.ui.render.BackgroundDrawer
 import com.alexdremov.notate.ui.render.background.PatternLayoutHelper
 import com.alexdremov.notate.util.StrokeRenderer
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
@@ -25,6 +26,48 @@ import kotlin.math.ceil
 import kotlin.math.floor
 import kotlin.math.max
 import kotlin.math.min
+
+// Wrapper interface for PdfDocument.Page (final class)
+interface PdfPageWrapper {
+    val canvas: Canvas
+    val wrappedPage: Any // Keep reference to original if needed for finishPage
+}
+
+class AndroidPdfPageWrapper(
+    private val page: PdfDocument.Page,
+) : PdfPageWrapper {
+    override val canvas: Canvas get() = page.canvas
+    override val wrappedPage: Any get() = page
+}
+
+// Wrapper interface to allow mocking PdfDocument
+interface PdfDocumentWrapper {
+    fun startPage(pageInfo: PdfDocument.PageInfo): PdfPageWrapper
+
+    fun finishPage(page: PdfPageWrapper)
+
+    fun writeTo(out: OutputStream)
+
+    fun close()
+}
+
+class AndroidPdfDocumentWrapper : PdfDocumentWrapper {
+    private val document = PdfDocument()
+
+    override fun startPage(pageInfo: PdfDocument.PageInfo): PdfPageWrapper = AndroidPdfPageWrapper(document.startPage(pageInfo))
+
+    override fun finishPage(page: PdfPageWrapper) {
+        document.finishPage(page.wrappedPage as PdfDocument.Page)
+    }
+
+    override fun writeTo(out: OutputStream) {
+        document.writeTo(out)
+    }
+
+    override fun close() {
+        document.close()
+    }
+}
 
 object PdfExporter {
     interface ProgressCallback {
@@ -48,8 +91,9 @@ object PdfExporter {
         outputStream: OutputStream,
         isVector: Boolean,
         callback: ProgressCallback?,
+        pdfDocumentFactory: () -> PdfDocumentWrapper = { AndroidPdfDocumentWrapper() },
     ) = withContext(Dispatchers.IO) {
-        val pdfDocument = PdfDocument()
+        val pdfDocument = pdfDocumentFactory()
 
         try {
             // Snapshot data from model
@@ -95,7 +139,7 @@ object PdfExporter {
     }
 
     private suspend fun exportFixedPages(
-        doc: PdfDocument,
+        doc: PdfDocumentWrapper,
         items: List<CanvasItem>,
         contentBounds: RectF,
         pageWidth: Float,
@@ -162,7 +206,7 @@ object PdfExporter {
     }
 
     private suspend fun exportInfiniteCanvas(
-        doc: PdfDocument,
+        doc: PdfDocumentWrapper,
         items: List<CanvasItem>,
         contentBounds: RectF,
         bgStyle: BackgroundStyle,
@@ -212,17 +256,9 @@ object PdfExporter {
         if (isVector) {
             renderVectorItems(canvas, items, paint, context)
         } else {
-            // For infinite canvas, bitmap might be huge.
-            // Limit to 4096 dim.
-            if (width > 4096 || height > 4096) {
-                val scale = 4096f / max(width, height)
-                canvas.save()
-                canvas.scale(scale, scale)
-                renderTiledBitmap(canvas, items, bounds, paint, context)
-                canvas.restore()
-            } else {
-                renderBitmapItems(canvas, items, bounds, paint, context)
-            }
+            // Parallelized Tiled Rendering
+            // We do not scale down. PDF pages can be large.
+            renderTiledBitmap(canvas, items, bounds, context)
         }
 
         doc.finishPage(page)
@@ -280,30 +316,79 @@ object PdfExporter {
         }
     }
 
-    private fun renderTiledBitmap(
+    private suspend fun renderTiledBitmap(
         canvas: Canvas,
         items: List<CanvasItem>,
         bounds: RectF,
-        paint: Paint,
         context: android.content.Context,
-    ) {
+    ) = withContext(Dispatchers.Default) {
         val tileSize = 2048
         val cols = ceil(bounds.width() / tileSize).toInt()
         val rows = ceil(bounds.height() / tileSize).toInt()
 
+        // Semaphore to limit memory usage (approx 3 * 16MB = 48MB buffer)
+        val semaphore = kotlinx.coroutines.sync.Semaphore(3)
+        val mutex = kotlinx.coroutines.sync.Mutex()
+
+        val tiles = ArrayList<RectF>()
         for (r in 0 until rows) {
             for (c in 0 until cols) {
                 val left = bounds.left + c * tileSize
                 val top = bounds.top + r * tileSize
                 val right = min(left + tileSize, bounds.right)
                 val bottom = min(top + tileSize, bounds.bottom)
-                val tileRect = RectF(left, top, right, bottom)
-
-                val tileItems = items.filter { RectF.intersects(it.bounds, tileRect) }
-                if (tileItems.isNotEmpty()) {
-                    renderBitmapItems(canvas, tileItems, tileRect, paint, context)
-                }
+                tiles.add(RectF(left, top, right, bottom))
             }
         }
+
+        tiles
+            .map { tileRect ->
+                // Use async to parallelize the "Rendering" part
+                async {
+                    semaphore.acquire()
+                    try {
+                        val tileItems = items.filter { RectF.intersects(it.bounds, tileRect) }
+                        if (tileItems.isNotEmpty()) {
+                            // Create a specific paint for this thread
+                            val threadPaint =
+                                Paint().apply {
+                                    isAntiAlias = true
+                                    isDither = true
+                                    strokeJoin = Paint.Join.ROUND
+                                    strokeCap = Paint.Cap.ROUND
+                                }
+
+                            // Render to Bitmap (Heavy CPU)
+                            val w = tileRect.width().toInt().coerceAtLeast(1)
+                            val h = tileRect.height().toInt().coerceAtLeast(1)
+
+                            val bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+                            val bmpCanvas = Canvas(bitmap)
+                            bmpCanvas.translate(-tileRect.left, -tileRect.top)
+
+                            for (item in tileItems) {
+                                if (item is Stroke) {
+                                    threadPaint.color = item.color
+                                    threadPaint.strokeWidth = item.width
+                                }
+                                StrokeRenderer.drawItem(bmpCanvas, item, false, threadPaint, context)
+                            }
+
+                            // Draw to PDF (Fast, Serialized)
+                            mutex.lock()
+                            try {
+                                canvas.drawBitmap(bitmap, tileRect.left, tileRect.top, null)
+                            } finally {
+                                mutex.unlock()
+                            }
+                            bitmap.recycle()
+                        }
+                    } catch (e: Exception) {
+                        e.printStackTrace()
+                    } finally {
+                        semaphore.release()
+                    }
+                }
+            }.forEach { it.await() }
     }
 }
