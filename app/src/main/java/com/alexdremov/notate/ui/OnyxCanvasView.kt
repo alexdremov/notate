@@ -26,6 +26,10 @@ import com.onyx.android.sdk.api.device.epd.EpdController
 import com.onyx.android.sdk.api.device.epd.UpdateMode
 import com.onyx.android.sdk.pen.EpdPenManager
 import com.onyx.android.sdk.pen.TouchHelper
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 
 class OnyxCanvasView
     @JvmOverloads
@@ -36,9 +40,10 @@ class OnyxCanvasView
     ) : SurfaceView(context, attrs, defStyleAttr),
         SurfaceHolder.Callback {
         // --- Components ---
+        private val viewScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
         private var touchHelper: TouchHelper? = null
         private val canvasModel = InfiniteCanvasModel()
-        private val canvasRenderer = CanvasRenderer(canvasModel, context.applicationContext) { invalidateCanvas() }
+        private val canvasRenderer = CanvasRenderer(canvasModel, context.applicationContext, viewScope) { invalidateCanvas() }
         private val canvasController = CanvasControllerImpl(canvasModel, canvasRenderer)
 
         // --- Drawers ---
@@ -242,6 +247,11 @@ class OnyxCanvasView
                 }
             }
             return super.onGenericMotionEvent(event)
+        }
+
+        override fun onDetachedFromWindow() {
+            super.onDetachedFromWindow()
+            viewScope.cancel()
         }
 
         // --- Lifecycle & Drawing ---

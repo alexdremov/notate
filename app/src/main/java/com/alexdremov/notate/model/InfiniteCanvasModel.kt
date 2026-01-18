@@ -9,6 +9,9 @@ import com.alexdremov.notate.data.CanvasSerializer
 import com.alexdremov.notate.data.CanvasType
 import com.alexdremov.notate.util.Quadtree
 import com.alexdremov.notate.util.StrokeGeometry
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import java.util.ArrayList
 import java.util.concurrent.locks.ReentrantReadWriteLock
 import kotlin.concurrent.read
@@ -34,6 +37,10 @@ class InfiniteCanvasModel {
 
     private var nextOrder: Long = 0
 
+    // Reactive Updates
+    private val _events = MutableSharedFlow<ModelEvent>(extraBufferCapacity = 64)
+    val events: SharedFlow<ModelEvent> = _events.asSharedFlow()
+
     // History Manager
     private val historyManager =
         HistoryManager(
@@ -45,6 +52,22 @@ class InfiniteCanvasModel {
                 override fun calculateBounds(action: HistoryAction) = calculateActionBounds(action)
             },
         )
+
+    sealed class ModelEvent {
+        data class ItemsAdded(
+            val items: List<CanvasItem>,
+        ) : ModelEvent()
+
+        data class ItemsRemoved(
+            val items: List<CanvasItem>,
+        ) : ModelEvent()
+
+        data class ItemsUpdated(
+            val items: List<CanvasItem>,
+        ) : ModelEvent() // For specialized updates if needed
+
+        object ContentCleared : ModelEvent()
+    }
 
     // --- Page / Canvas Config ---
     var canvasType: CanvasType = CanvasType.INFINITE
@@ -266,6 +289,7 @@ class InfiniteCanvasModel {
                     quadtree = quadtree.insert(item)
                     updateContentBounds(item.bounds)
                 }
+                _events.tryEmit(ModelEvent.ItemsAdded(action.items))
             }
 
             is HistoryAction.Remove -> {
@@ -274,6 +298,7 @@ class InfiniteCanvasModel {
                     quadtree.remove(item)
                 }
                 if (recalculateBounds) recalculateContentBounds()
+                _events.tryEmit(ModelEvent.ItemsRemoved(action.items))
             }
 
             is HistoryAction.Replace -> {
@@ -287,6 +312,8 @@ class InfiniteCanvasModel {
                     updateContentBounds(item.bounds)
                 }
                 if (recalculateBounds) recalculateContentBounds()
+                _events.tryEmit(ModelEvent.ItemsRemoved(action.removed))
+                _events.tryEmit(ModelEvent.ItemsAdded(action.added))
             }
 
             is HistoryAction.Batch -> {
@@ -307,6 +334,7 @@ class InfiniteCanvasModel {
                     quadtree.remove(item)
                 }
                 if (recalculateBounds) recalculateContentBounds()
+                _events.tryEmit(ModelEvent.ItemsRemoved(action.items))
             }
 
             is HistoryAction.Remove -> {
@@ -315,6 +343,7 @@ class InfiniteCanvasModel {
                     quadtree = quadtree.insert(item)
                     updateContentBounds(item.bounds)
                 }
+                _events.tryEmit(ModelEvent.ItemsAdded(action.items))
             }
 
             is HistoryAction.Replace -> {
@@ -328,6 +357,8 @@ class InfiniteCanvasModel {
                     updateContentBounds(item.bounds)
                 }
                 if (recalculateBounds) recalculateContentBounds()
+                _events.tryEmit(ModelEvent.ItemsRemoved(action.added))
+                _events.tryEmit(ModelEvent.ItemsAdded(action.removed))
             }
 
             is HistoryAction.Batch -> {
@@ -369,6 +400,7 @@ class InfiniteCanvasModel {
             quadtree = Quadtree(0, RectF(-50000f, -50000f, 50000f, 50000f))
             contentBounds.setEmpty()
             nextOrder = 0
+            _events.tryEmit(ModelEvent.ContentCleared)
         }
     }
 

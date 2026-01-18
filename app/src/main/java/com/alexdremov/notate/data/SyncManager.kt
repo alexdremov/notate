@@ -16,8 +16,6 @@ class SyncManager(
     private val context: Context,
     private val canvasRepository: CanvasRepository,
 ) {
-    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
-
     interface LocalFile {
         val name: String
         val relativePath: String
@@ -204,40 +202,41 @@ class SyncManager(
         }
     }
 
-    fun findProjectForFile(filePath: String): String? {
-        Log.d("SyncManager", "Searching project for file: $filePath")
-        val projects = PreferencesManager.getProjects(context)
+    suspend fun findProjectForFile(filePath: String): String? =
+        withContext(Dispatchers.IO) {
+            Log.d("SyncManager", "Searching project for file: $filePath")
+            val projects = PreferencesManager.getProjects(context)
 
-        // Normalize file path if it's content://
-        val targetUri = if (filePath.startsWith("content://")) Uri.parse(filePath) else Uri.fromFile(File(filePath))
+            // Normalize file path if it's content://
+            val targetUri = if (filePath.startsWith("content://")) Uri.parse(filePath) else Uri.fromFile(File(filePath))
 
-        for (project in projects) {
-            Log.d("SyncManager", "Checking against project: ${project.name} (${project.uri})")
+            for (project in projects) {
+                Log.d("SyncManager", "Checking against project: ${project.name} (${project.uri})")
 
-            if (filePath.startsWith("content://") && project.uri.startsWith("content://")) {
-                // For SAF, simple string prefix check is weak but often sufficient for tree URIs
-                // A better check would be seeing if the file URI contains the project Tree URI's ID
-                if (filePath.contains(project.uri) || filePath.startsWith(project.uri)) {
-                    Log.d("SyncManager", "Match found via SAF prefix")
-                    return project.id
-                }
-            } else if (!filePath.startsWith("content://") && !project.uri.startsWith("content://")) {
-                // Local File
-                try {
-                    val fileCanonical = File(filePath).canonicalPath
-                    val projectCanonical = File(project.uri).canonicalPath
-                    if (fileCanonical.startsWith(projectCanonical)) {
-                        Log.d("SyncManager", "Match found via File path")
-                        return project.id
+                if (filePath.startsWith("content://") && project.uri.startsWith("content://")) {
+                    // For SAF, simple string prefix check is weak but often sufficient for tree URIs
+                    // A better check would be seeing if the file URI contains the project Tree URI's ID
+                    if (filePath.contains(project.uri) || filePath.startsWith(project.uri)) {
+                        Log.d("SyncManager", "Match found via SAF prefix")
+                        return@withContext project.id
                     }
-                } catch (e: Exception) {
-                    Log.w("SyncManager", "Path comparison error", e)
+                } else if (!filePath.startsWith("content://") && !project.uri.startsWith("content://")) {
+                    // Local File
+                    try {
+                        val fileCanonical = File(filePath).canonicalPath
+                        val projectCanonical = File(project.uri).canonicalPath
+                        if (fileCanonical.startsWith(projectCanonical)) {
+                            Log.d("SyncManager", "Match found via File path")
+                            return@withContext project.id
+                        }
+                    } catch (e: Exception) {
+                        Log.w("SyncManager", "Path comparison error", e)
+                    }
                 }
             }
+            Log.w("SyncManager", "No matching project found for $filePath")
+            return@withContext null
         }
-        Log.w("SyncManager", "No matching project found for $filePath")
-        return null
-    }
 
     private suspend fun syncPdf(
         localFile: LocalFile,

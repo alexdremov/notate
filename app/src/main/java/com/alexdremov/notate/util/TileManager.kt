@@ -7,17 +7,25 @@ import android.graphics.Paint
 import android.graphics.PorterDuff
 import android.graphics.PorterDuffXfermode
 import android.graphics.RectF
-import android.os.Handler
-import android.os.Looper
 import android.util.Log
 import android.util.LruCache
 import com.alexdremov.notate.config.CanvasConfig
 import com.alexdremov.notate.model.InfiniteCanvasModel
 import com.alexdremov.notate.model.Stroke
 import com.alexdremov.notate.ui.render.CanvasRenderer
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.FlowPreview
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.receiveAsFlow
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.util.Collections
 import java.util.HashSet
-import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.math.floor
 import kotlin.math.log2
@@ -41,25 +49,25 @@ import kotlin.math.pow
  *
  * ## Thread Model
  * - Rendering calls happen on UI thread
- * - Tile generation happens on [executor] thread pool
+ * - Tile generation happens on Dispatchers.Default
  * - Cache operations are synchronized
  *
  * @param canvasModel The data model to query for strokes
  * @param renderer The renderer for drawing strokes to tile bitmaps
  * @param tileSize Pixel size of each tile (default: 512)
- * @param executor Thread pool for background tile generation
+ * @param scope Coroutine scope for background tile generation
  */
+@OptIn(FlowPreview::class)
 class TileManager(
     private val canvasModel: InfiniteCanvasModel,
     private val renderer: CanvasRenderer,
     private val tileSize: Int = CanvasConfig.TILE_SIZE,
-    private val executor: java.util.concurrent.ExecutorService = Executors.newFixedThreadPool(CanvasConfig.THREAD_POOL_SIZE),
+    private val scope: CoroutineScope,
 ) {
     var onTileReady: (() -> Unit)? = null
     var isInteracting: Boolean = false
 
     private val tileCache = TileCache(tileSize)
-    private val mainHandler = Handler(Looper.getMainLooper())
 
     // State Tracking
     private val generatingKeys = Collections.synchronizedSet(HashSet<TileCache.TileKey>())
@@ -69,9 +77,11 @@ class TileManager(
     private var lastScale: Float = 1.0f
     private var lastVisibleCount = 0
 
+    // Update Throttling
+    private val updateChannel = Channel<Unit>(capacity = 1, onBufferOverflow = BufferOverflow.DROP_OLDEST)
+
     // Debugging
     private val errorMessages = LruCache<TileCache.TileKey, String>(CanvasConfig.ERROR_CACHE_SIZE)
-    private val debugStrokeCounts = Collections.synchronizedMap(HashMap<TileCache.TileKey, Int>())
 
     private val debugPaint =
         Paint().apply {
@@ -95,12 +105,52 @@ class TileManager(
             xfermode = PorterDuffXfermode(PorterDuff.Mode.CLEAR)
         }
 
-    private var isUpdatePending = false
-    private val updateRunnable =
-        Runnable {
-            isUpdatePending = false
-            onTileReady?.invoke()
+    init {
+        // Listen for Model Updates
+        scope.launch {
+            canvasModel.events.collect { event ->
+                // For direct "Add" events, CanvasController likely called updateTilesWithItem for instant feedback.
+                // However, for Remove/Replace/Clear, we need to invalidate/refresh.
+                // We double-check to ensure consistency.
+
+                when (event) {
+                    is InfiniteCanvasModel.ModelEvent.ItemsRemoved -> {
+                        // Invalidate affected areas
+                        val bounds = RectF()
+                        event.items.forEach { bounds.union(it.bounds) }
+                        refreshTiles(bounds)
+                    }
+
+                    is InfiniteCanvasModel.ModelEvent.ItemsAdded -> {
+                        // Usually handled by updateTilesWithItem for active pen, but required for Undo/Redo/Paste
+                        // We check if we need to refresh.
+                        // If updateTilesWithItem was already called, refreshing again is fine (idempotent-ish).
+                        // To allow "instant" ink, updateTilesWithItem is still used.
+                        // But for "Paste", this is needed.
+                    }
+
+                    is InfiniteCanvasModel.ModelEvent.ContentCleared -> {
+                        clear()
+                        notifyTileReady()
+                    }
+
+                    else -> {}
+                }
+            }
         }
+
+        // Throttle UI Updates (Debounce 16ms -> ~60fps cap)
+        scope.launch {
+            updateChannel
+                .receiveAsFlow()
+                .debounce(1000L / CanvasConfig.TILE_MANAGER_TARGET_FPS)
+                .collectLatest {
+                    withContext(Dispatchers.Main) {
+                        onTileReady?.invoke()
+                    }
+                }
+        }
+    }
 
     /**
      * Main entry point for drawing tiled content.
@@ -211,18 +261,17 @@ class TileManager(
         if (!forceRefresh && (generatingKeys.contains(key) || tileCache.get(key) != null)) return
 
         // Throttle low-priority background work if cache is pressured
-        // But ALWAYS allow forced refreshes (e.g. object eraser) to prevent stale content
         if (!forceRefresh && !isHighPriority && tileCache.isFull(generatingKeys.size, CanvasConfig.NEIGHBOR_PRECACHE_THRESHOLD_PERCENT)) {
             return
         }
 
         generatingKeys.add(key)
 
-        executor.execute {
+        scope.launch(Dispatchers.Default) {
             try {
                 // Task Cancellation Checks
-                if (version != renderVersion.get()) return@execute
-                if (!isHighPriority && isInteracting) return@execute
+                if (version != renderVersion.get()) return@launch
+                if (!isHighPriority && isInteracting) return@launch
 
                 val bitmap = generateTileBitmap(col, row, worldSize)
 
@@ -233,8 +282,10 @@ class TileManager(
                     }
                 }
             } catch (t: Throwable) {
-                errorMessages.put(key, "${t.javaClass.simpleName}: ${t.message}")
-                tileCache.put(key, tileCache.errorBitmap)
+                if (t !is java.util.concurrent.CancellationException) {
+                    errorMessages.put(key, "${t.javaClass.simpleName}: ${t.message}")
+                    tileCache.put(key, tileCache.errorBitmap)
+                }
             } finally {
                 generatingKeys.remove(key)
             }
@@ -463,7 +514,6 @@ class TileManager(
     fun clear() {
         tileCache.clear()
         generatingKeys.clear()
-        debugStrokeCounts.clear()
         lastVisibleCount = 0
     }
 
@@ -513,12 +563,7 @@ class TileManager(
     }
 
     private fun notifyTileReady() {
-        mainHandler.post {
-            if (!isUpdatePending) {
-                isUpdatePending = true
-                mainHandler.postDelayed(updateRunnable, 1000L / CanvasConfig.TILE_MANAGER_TARGET_FPS)
-            }
-        }
+        updateChannel.trySend(Unit)
     }
 
     private fun drawDebugOverlay(
