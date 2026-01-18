@@ -42,10 +42,20 @@ object PreferencesManager {
     private const val KEY_AXIS_LOCKING = "axis_locking_enabled"
     private const val KEY_COLLAPSIBLE_TOOLBAR = "collapsible_toolbar_enabled"
     private const val KEY_TOOLBAR_COLLAPSE_TIMEOUT = "toolbar_collapse_timeout"
+    private const val KEY_MIN_LOG_LEVEL = "min_log_level_to_show"
 
     private val protoBuf = ProtoBuf
 
     private fun getPrefs(context: Context): SharedPreferences = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+
+    fun getMinLogLevel(context: Context): Int = getPrefs(context).getInt(KEY_MIN_LOG_LEVEL, 4) // Default to NONE (4)
+
+    fun setMinLogLevel(
+        context: Context,
+        level: Int,
+    ) {
+        getPrefs(context).edit().putInt(KEY_MIN_LOG_LEVEL, level).apply()
+    }
 
     fun isScribbleToEraseEnabled(context: Context): Boolean = getPrefs(context).getBoolean(KEY_SCRIBBLE_TO_ERASE, true)
 

@@ -13,7 +13,7 @@ object Logger {
     private val _userEvents =
         MutableSharedFlow<UserEvent>(
             replay = 0,
-            extraBufferCapacity = 1,
+            extraBufferCapacity = 20,
             onBufferOverflow = BufferOverflow.DROP_OLDEST,
         )
     val userEvents: SharedFlow<UserEvent> = _userEvents.asSharedFlow()
@@ -21,6 +21,7 @@ object Logger {
     data class UserEvent(
         val message: String,
         val level: Level,
+        val throwable: Throwable? = null,
     )
 
     enum class Level(
@@ -42,6 +43,10 @@ object Logger {
     fun getMinLogLevelToShow(): Level = minLogLevelToShow
 
     private fun formatTag(tag: String?): String = if (tag.isNullOrEmpty()) "$TAG_PREFIX.$DEFAULT_TAG" else "$TAG_PREFIX.$tag"
+
+    fun showToUser(message: String) {
+        _userEvents.tryEmit(UserEvent(message, Level.INFO))
+    }
 
     fun d(
         tag: String?,
@@ -74,7 +79,7 @@ object Logger {
             Log.w(formatTag(tag), message)
         }
         if (Level.WARNING.priority >= minLogLevelToShow.priority) {
-            _userEvents.tryEmit(UserEvent(message, Level.WARNING))
+            _userEvents.tryEmit(UserEvent(message, Level.WARNING, throwable))
         }
     }
 
@@ -92,7 +97,7 @@ object Logger {
         }
 
         if (showToUser || Level.ERROR.priority >= minLogLevelToShow.priority) {
-            _userEvents.tryEmit(UserEvent(message, Level.ERROR))
+            _userEvents.tryEmit(UserEvent(message, Level.ERROR, throwable))
         }
     }
 

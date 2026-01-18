@@ -89,7 +89,7 @@ class CanvasExportCoordinator(
 
                 withContext(Dispatchers.Main) {
                     hideProgress()
-                    Logger.i("Export Successful")
+                    Logger.showToUser("Export Successful")
                 }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {

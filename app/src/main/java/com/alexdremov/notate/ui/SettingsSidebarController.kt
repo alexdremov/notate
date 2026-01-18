@@ -302,8 +302,11 @@ class SettingsSidebarController(
                     position: Int,
                     id: Long,
                 ) {
+                    val level = levels[position]
                     com.alexdremov.notate.util.Logger
-                        .setMinLogLevelToShow(levels[position])
+                        .setMinLogLevelToShow(level)
+                    com.alexdremov.notate.data.PreferencesManager
+                        .setMinLogLevel(context, level.priority)
                 }
 
                 override fun onNothingSelected(parent: AdapterView<*>?) {}

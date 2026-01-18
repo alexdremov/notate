@@ -3,6 +3,7 @@ package com.alexdremov.notate
 import android.app.Application
 import android.os.Build
 import com.alexdremov.notate.config.CanvasConfig
+import com.alexdremov.notate.data.PreferencesManager
 import com.alexdremov.notate.util.Logger
 import com.onyx.android.sdk.rx.RxBaseAction
 import com.onyx.android.sdk.utils.ResManager
@@ -15,6 +16,12 @@ class NotateApplication : Application() {
 
     override fun onCreate() {
         super.onCreate()
+
+        // Restore Log Level
+        val minLevelPriority = PreferencesManager.getMinLogLevel(this)
+        val minLevel = Logger.Level.values().find { it.priority == minLevelPriority } ?: Logger.Level.NONE
+        Logger.setMinLogLevelToShow(minLevel)
+
         logDeviceInfo()
 
         // Initialize Onyx SDK managers

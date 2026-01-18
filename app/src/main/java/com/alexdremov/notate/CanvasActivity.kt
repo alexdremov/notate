@@ -367,7 +367,7 @@ class CanvasActivity : AppCompatActivity() {
             repeatOnLifecycle(androidx.lifecycle.Lifecycle.State.STARTED) {
                 launch {
                     Logger.userEvents.collect { event ->
-                        binding.errorBanner.show(event.message)
+                        binding.errorBanner.show(event)
                     }
                 }
                 launch {

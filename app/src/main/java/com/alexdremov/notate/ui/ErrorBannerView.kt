@@ -13,6 +13,7 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import androidx.core.view.setPadding
+import com.alexdremov.notate.util.Logger
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -86,15 +87,17 @@ class ErrorBannerView
         }
 
         fun show(
-            message: String,
+            event: Logger.UserEvent,
             duration: Long = 5000L,
         ) {
+            if (uiScope == null) return
+
             if (visibility != VISIBLE) {
                 visibility = VISIBLE
                 alpha = 1f
             }
 
-            val messageView = createMessageView(message)
+            val messageView = createMessageView(event)
             messagesContainer.addView(messageView)
 
             // Auto-scroll to bottom to show new message
@@ -116,20 +119,53 @@ class ErrorBannerView
             }
         }
 
-        private fun createMessageView(message: String): TextView =
+        private fun createMessageView(event: Logger.UserEvent): TextView =
             TextView(context).apply {
-                text = message
-                setTextColor(Color.WHITE)
+                var textToShow = event.message
+                if (event.throwable != null) {
+                    textToShow += "\n[${event.throwable.javaClass.simpleName}]"
+                }
+                text = textToShow
                 textSize = 14f
                 typeface = android.graphics.Typeface.MONOSPACE
                 gravity = Gravity.CENTER
                 setPadding(32, 24, 32, 24)
 
-                // Style: Black background, White border (High Contrast)
                 val bg = GradientDrawable()
-                bg.setColor(Color.BLACK)
-                bg.setStroke(3, Color.WHITE)
                 bg.cornerRadius = 16f
+                bg.setStroke(3, Color.BLACK) // Default border
+
+                when (event.level) {
+                    Logger.Level.ERROR -> {
+                        setTextColor(Color.WHITE)
+                        bg.setColor(Color.BLACK)
+                        bg.setStroke(3, Color.WHITE)
+                    }
+
+                    Logger.Level.WARNING -> {
+                        setTextColor(Color.WHITE)
+                        bg.setColor(Color.parseColor("#333333"))
+                        bg.setStroke(3, Color.WHITE)
+                    }
+
+                    Logger.Level.INFO -> {
+                        setTextColor(Color.BLACK)
+                        bg.setColor(Color.WHITE)
+                        bg.setStroke(3, Color.BLACK)
+                    }
+
+                    Logger.Level.DEBUG -> {
+                        setTextColor(Color.BLACK)
+                        bg.setColor(Color.parseColor("#EEEEEE"))
+                        bg.setStroke(3, Color.BLACK)
+                    }
+
+                    else -> {
+                        setTextColor(Color.WHITE)
+                        bg.setColor(Color.BLACK)
+                        bg.setStroke(3, Color.WHITE)
+                    }
+                }
                 background = bg
 
                 // Layout Params for the item (margins for spacing)
