@@ -213,9 +213,9 @@ class PdfExporterTest {
     fun `test export infinite canvas bitmap tiled with multiple items`() =
         runTest(testDispatcher) {
             val model = mockk<InfiniteCanvasModel>()
-            val stroke1 = createTestStroke(100f, 100f) // Tile (0,0)
-            val stroke2 = createTestStroke(4000f, 4000f) // Tile (1,1) with tile size 2048
-            // 4000 / 2048 ≈ 1.95 -> floor = 1 (second tile, index 1).
+            val stroke1 = createTestStroke(100f, 100f) // Tile (0,0) in 0-based tile coordinates
+            val stroke2 = createTestStroke(4000f, 4000f) // Tile (1,1) in 0-based tile coordinates with tile size 2048
+            // 4000 / 2048 ≈ 1.95 -> floor = 1, so both x and y lie in the second tile (tile index 1).
 
             val largeBounds = RectF(0f, 0f, 5000f, 5000f)
 
