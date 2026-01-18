@@ -346,7 +346,7 @@ object PdfExporter {
         val semaphore = Semaphore(maxTilesByMemory)
         val mutex = Mutex()
 
-        val tiles = ArrayList<RectF>()
+        val tiles = ArrayList<RectF>(cols * rows)
         for (r in 0 until rows) {
             for (c in 0 until cols) {
                 val left = bounds.left + c * tileSize
