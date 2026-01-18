@@ -23,7 +23,7 @@ object OnyxSystemHelper {
             method.invoke(view, false)
             Logger.d(TAG, "Successfully disabled system side-button handling for view.")
         } catch (e: NoSuchMethodException) {
-            Logger.w(TAG, "Device does not support setEnablePenSideButton (Not an Onyx device or API changed).")
+            Logger.d(TAG, "Device does not support setEnablePenSideButton (Not an Onyx device or API changed).")
         } catch (e: Exception) {
             Logger.e(TAG, "Failed to invoke setEnablePenSideButton", e)
         }
