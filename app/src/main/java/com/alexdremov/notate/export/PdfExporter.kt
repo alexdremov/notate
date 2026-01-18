@@ -331,7 +331,7 @@ object PdfExporter {
         val cols = ceil(bounds.width() / tileSize).toInt()
         val rows = ceil(bounds.height() / tileSize).toInt()
 
-        // Semaphore to limit memory usage (approx 3 * 16MB = 48MB buffer)
+        // Semaphore to limit concurrent tile rendering (max 3 tiles * ~16MB each = ~48MB, tiles at boundaries may be smaller)
         val semaphore = Semaphore(3)
         val mutex = Mutex()
 
