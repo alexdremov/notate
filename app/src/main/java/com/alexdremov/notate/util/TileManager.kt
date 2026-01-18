@@ -536,6 +536,7 @@ class TileManager(
     fun destroy() {
         initJobs.forEach { it.cancel() }
         initJobs.clear()
+        updateChannel.close()
         clear()
     }
 

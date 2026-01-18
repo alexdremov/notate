@@ -50,6 +50,11 @@ class TileManagerTest {
             )
     }
 
+    @org.junit.After
+    fun tearDown() {
+        tileManager.destroy()
+    }
+
     @Test
     fun `render queues generation for visible tiles`() =
         runTest(testDispatcher) {

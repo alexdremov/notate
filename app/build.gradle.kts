@@ -86,7 +86,7 @@ android {
 dependencies {
     implementation("androidx.core:core-ktx:1.17.0")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.10.0")
-    implementation("androidx.lifecycle:lifecycle-process:2.8.7")
+    implementation("androidx.lifecycle:lifecycle-process:2.10.0")
     implementation("androidx.activity:activity-compose:1.12.2")
     implementation(platform("androidx.compose:compose-bom:2026.01.00"))
     implementation("androidx.compose.ui:ui")
@@ -127,6 +127,8 @@ dependencies {
     testImplementation("io.mockk:mockk:1.14.7")
     testImplementation("com.google.truth:truth:1.4.5")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.9.0")
+    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
+    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.9.0")
 
     // Security & Networking
     implementation("androidx.security:security-crypto:1.1.0")
