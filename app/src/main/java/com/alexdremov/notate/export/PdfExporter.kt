@@ -331,8 +331,19 @@ object PdfExporter {
         val cols = ceil(bounds.width() / tileSize).toInt()
         val rows = ceil(bounds.height() / tileSize).toInt()
 
-        // Semaphore to limit concurrent tile rendering (max 3 tiles * ~16MB each = ~48MB, tiles at boundaries may be smaller)
-        val semaphore = Semaphore(3)
+        // Semaphore to limit concurrent tile rendering.
+        // Estimate worst-case tile memory as ARGB_8888 2048x2048 (~16MB), then
+        // derive a conservative concurrency limit from available heap to account
+        // for boundary tiles, Paint objects, temporary buffers, etc.
+        val maxMemoryBytes = Runtime.getRuntime().maxMemory()
+        val bytesPerPixel = 4L // ARGB_8888
+        val maxTileBytes = tileSize.toLong() * tileSize.toLong() * bytesPerPixel
+        // Be conservative: only allow a fraction of the heap to be used by tiles.
+        val safetyDivider = 6L
+        val maxTilesByMemory = (maxMemoryBytes / safetyDivider / maxTileBytes)
+            .coerceIn(1L, 3L)
+            .toInt()
+        val semaphore = Semaphore(maxTilesByMemory)
         val mutex = Mutex()
 
         val tiles = ArrayList<RectF>()
