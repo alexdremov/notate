@@ -84,57 +84,81 @@ class CanvasActivity : AppCompatActivity() {
     private val imagePickerLauncher =
         registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
             if (uri != null) {
-                // Persistent permission
-                try {
-                    contentResolver.takePersistableUriPermission(
-                        uri,
-                        android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION,
-                    )
-                } catch (e: Exception) {
-                    e.printStackTrace()
-                }
+                lifecycleScope.launch {
+                    // 1. Capture View State (UI Thread)
+                    val matrix = android.graphics.Matrix()
+                    binding.canvasView.getViewportMatrix(matrix)
+                    val screenCenterX = binding.canvasView.width / 2f
+                    val screenCenterY = binding.canvasView.height / 2f
 
-                val matrix = android.graphics.Matrix()
-                binding.canvasView.getViewportMatrix(matrix)
-                val values = FloatArray(9)
-                matrix.getValues(values)
-                val tx = values[android.graphics.Matrix.MTRANS_X]
-                val ty = values[android.graphics.Matrix.MTRANS_Y]
-                val scale = values[android.graphics.Matrix.MSCALE_X] // Uniform scale assumption
+                    // 2. Import & Measure (IO Thread)
+                    val (finalUriStr, w, h) =
+                        withContext(Dispatchers.IO) {
+                            // Import
+                            val importedPath =
+                                com.alexdremov.notate.util.ImageImportHelper
+                                    .importImage(this@CanvasActivity, uri)
 
-                // Calculate dimensions
-                var width = 400f
-                var height = 400f
-                try {
-                    val options = android.graphics.BitmapFactory.Options()
-                    options.inJustDecodeBounds = true
-                    contentResolver.openInputStream(uri)?.use {
-                        android.graphics.BitmapFactory.decodeStream(it, null, options)
-                    }
-                    if (options.outWidth > 0 && options.outHeight > 0) {
-                        width = options.outWidth.toFloat()
-                        height = options.outHeight.toFloat()
-                        val maxDim = 800f
-                        if (width > maxDim || height > maxDim) {
-                            val s = kotlin.math.min(maxDim / width, maxDim / height)
-                            width *= s
-                            height *= s
+                            val uriToUse =
+                                if (importedPath != null) {
+                                    android.net.Uri.parse(importedPath)
+                                } else {
+                                    // Fallback to legacy behavior
+                                    try {
+                                        contentResolver.takePersistableUriPermission(
+                                            uri,
+                                            android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION,
+                                        )
+                                    } catch (e: Exception) {
+                                        e.printStackTrace()
+                                    }
+                                    uri
+                                }
+
+                            // Measure
+                            var width = 400f
+                            var height = 400f
+                            try {
+                                val options = android.graphics.BitmapFactory.Options()
+                                options.inJustDecodeBounds = true
+
+                                val scheme = uriToUse.scheme
+                                if (scheme == "file") {
+                                    android.graphics.BitmapFactory.decodeFile(uriToUse.path, options)
+                                } else {
+                                    contentResolver.openInputStream(uriToUse)?.use {
+                                        android.graphics.BitmapFactory.decodeStream(it, null, options)
+                                    }
+                                }
+
+                                if (options.outWidth > 0 && options.outHeight > 0) {
+                                    width = options.outWidth.toFloat()
+                                    height = options.outHeight.toFloat()
+                                    val maxDim = 800f
+                                    if (width > maxDim || height > maxDim) {
+                                        val s = kotlin.math.min(maxDim / width, maxDim / height)
+                                        width *= s
+                                        height *= s
+                                    }
+                                }
+                            } catch (e: Exception) {
+                                e.printStackTrace()
+                            }
+                            Triple(uriToUse.toString(), width, height)
                         }
-                    }
-                } catch (e: Exception) {
-                    e.printStackTrace()
+
+                    // 3. Paste (UI Thread)
+                    val values = FloatArray(9)
+                    matrix.getValues(values)
+                    val tx = values[android.graphics.Matrix.MTRANS_X]
+                    val ty = values[android.graphics.Matrix.MTRANS_Y]
+                    val scale = values[android.graphics.Matrix.MSCALE_X]
+
+                    val worldX = (screenCenterX - tx) / scale
+                    val worldY = (screenCenterY - ty) / scale
+
+                    binding.canvasView.getController().pasteImage(finalUriStr, worldX, worldY, w, h)
                 }
-
-                // Calculate center in World Coordinates
-                // Screen Center = (Width/2, Height/2)
-                // World = (Screen - Translate) / Scale
-                val screenCenterX = binding.canvasView.width / 2f
-                val screenCenterY = binding.canvasView.height / 2f
-
-                val worldX = (screenCenterX - tx) / scale
-                val worldY = (screenCenterY - ty) / scale
-
-                binding.canvasView.getController().pasteImage(uri.toString(), worldX, worldY, width, height)
             }
         }
 
