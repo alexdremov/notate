@@ -90,7 +90,7 @@ class TileManagerConcurrencyTest {
                     },
                 )
 
-            testScope.launch {
+            launch {
                 modelEvents.emit(InfiniteCanvasModel.ModelEvent.ItemsAdded(items))
             }
             advanceUntilIdle()
