@@ -25,6 +25,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import java.io.OutputStream
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.math.ceil
 import kotlin.math.floor
 import kotlin.math.min
@@ -265,7 +266,7 @@ object PdfExporter {
         } else {
             // Parallelized Tiled Rendering
             // We do not scale down. PDF pages can be large.
-            renderTiledBitmap(canvas, items, bounds, context)
+            renderTiledBitmap(canvas, items, bounds, context, callback)
         }
 
         doc.finishPage(page)
@@ -328,10 +329,13 @@ object PdfExporter {
         items: List<CanvasItem>,
         bounds: RectF,
         context: android.content.Context,
+        callback: ProgressCallback?,
     ) = withContext(Dispatchers.Default) {
         val tileSize = 2048
         val cols = ceil(bounds.width() / tileSize).toInt()
         val rows = ceil(bounds.height() / tileSize).toInt()
+        val totalTiles = cols * rows
+        val completedTiles = AtomicInteger(0)
 
         // Semaphore to limit concurrent tile rendering.
         // Estimate worst-case tile memory as ARGB_8888 2048x2048 (~16MB), then
@@ -406,6 +410,11 @@ object PdfExporter {
                                 bitmap?.recycle()
                             }
                         }
+
+                        // Update progress
+                        val finished = completedTiles.incrementAndGet()
+                        val progress = 10 + ((finished.toFloat() / totalTiles) * 80).toInt()
+                        callback?.onProgress(progress, "Rendering Tile $finished/$totalTiles")
                     }
                 }
             }.forEach { it.await() }
