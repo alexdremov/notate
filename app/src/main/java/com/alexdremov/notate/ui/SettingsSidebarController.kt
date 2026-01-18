@@ -280,6 +280,37 @@ class SettingsSidebarController(
                 CanvasConfig.DEBUG_ENABLE_PROFILING = isChecked
             }
         }
+
+        val spinnerLogLevel: Spinner = debugView.findViewById(R.id.spinner_debug_log_level)
+        val levels =
+            com.alexdremov.notate.util.Logger.Level
+                .values()
+        val adapter = ArrayAdapter(context, android.R.layout.simple_spinner_item, levels.map { it.name })
+        adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
+        spinnerLogLevel.adapter = adapter
+
+        val currentLevel =
+            com.alexdremov.notate.util.Logger
+                .getMinLogLevelToShow()
+        spinnerLogLevel.setSelection(levels.indexOf(currentLevel))
+
+        spinnerLogLevel.onItemSelectedListener =
+            object : AdapterView.OnItemSelectedListener {
+                override fun onItemSelected(
+                    parent: AdapterView<*>?,
+                    view: View?,
+                    position: Int,
+                    id: Long,
+                ) {
+                    val level = levels[position]
+                    com.alexdremov.notate.util.Logger
+                        .setMinLogLevelToShow(level)
+                    com.alexdremov.notate.data.PreferencesManager
+                        .setMinLogLevel(context, level.priority)
+                }
+
+                override fun onNothingSelected(parent: AdapterView<*>?) {}
+            }
     }
 
     private fun showBackgroundSettings() {

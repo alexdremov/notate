@@ -52,6 +52,7 @@ import com.alexdremov.notate.controller.CanvasController
 import com.alexdremov.notate.model.*
 import com.alexdremov.notate.model.InfiniteCanvasModel
 import com.alexdremov.notate.ui.navigation.CompactPageNavigation
+import com.alexdremov.notate.util.Logger
 import com.alexdremov.notate.vm.DrawingViewModel
 import kotlinx.coroutines.delay
 import java.util.Collections
@@ -593,7 +594,7 @@ fun ToolbarItemWrapper(
                             absLeft + size.width,
                             absTop + size.height,
                         )
-                    android.util.Log.d("BooxVibesDebug", "ToolbarView: Item Positioned: $itemBounds")
+                    Logger.d("BooxVibesDebug", "ToolbarView: Item Positioned: $itemBounds")
                 },
         contentAlignment = Alignment.Center,
     ) {
@@ -626,7 +627,7 @@ fun ToolbarItemWrapper(
                                 Modifier
                             },
                         ).clickable(enabled = !isEditMode) {
-                            android.util.Log.d("BooxVibesDebug", "ToolbarView: Item Clicked! ID=${item.id}, Bounds=$itemBounds")
+                            Logger.d("BooxVibesDebug", "ToolbarView: Item Clicked! ID=${item.id}, Bounds=$itemBounds")
                             itemBounds?.let { onClick(it) }
                         },
                 contentAlignment = Alignment.Center,
@@ -656,7 +657,7 @@ fun ToolbarItemWrapper(
                         .size(32.dp) // Touch area
                         .zIndex(10f)
                         .clickable {
-                            android.util.Log.d("BooxVibesDebug", "ToolbarView: Remove CLICKED for item $index")
+                            Logger.d("BooxVibesDebug", "ToolbarView: Remove CLICKED for item $index")
                             onRemove()
                         },
                 contentAlignment = Alignment.Center,

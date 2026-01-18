@@ -2,7 +2,6 @@ package com.alexdremov.notate.util
 
 import android.graphics.Path
 import android.graphics.PointF
-import android.util.Log
 import com.onyx.android.sdk.data.note.TouchPoint
 import kotlin.math.*
 
@@ -51,7 +50,7 @@ object ShapeRecognizer {
 
     fun recognize(points: List<TouchPoint>): RecognitionResult? {
         if (points.size < 10) {
-            Log.d("ShapeRecognizer", "Recognition aborted: too few points (${points.size})")
+            Logger.d("ShapeRecognizer", "Recognition aborted: too few points (${points.size})")
             return null
         }
 
@@ -67,11 +66,11 @@ object ShapeRecognizer {
         }
 
         val linearityRatio = if (pathLength > 0) distStartEnd / pathLength else 0f
-        Log.d("ShapeRecognizer", "Linearity check: ratio=$linearityRatio (threshold=0.92), pathLength=$pathLength")
+        Logger.d("ShapeRecognizer", "Linearity check: ratio=$linearityRatio (threshold=0.92), pathLength=$pathLength")
 
         // Linearity check: If straight distance is > 92% of path length
         if (distStartEnd > pathLength * 0.92) {
-            Log.d("ShapeRecognizer", "Recognized as LINE")
+            Logger.d("ShapeRecognizer", "Recognized as LINE")
             val path = Path()
             path.moveTo(start.x, start.y)
             path.lineTo(end.x, end.y)
@@ -80,15 +79,15 @@ object ShapeRecognizer {
 
         // --- Closed Shape Check ---
         if (pathLength < 20f) {
-            Log.d("ShapeRecognizer", "Recognition aborted: path too short ($pathLength)")
+            Logger.d("ShapeRecognizer", "Recognition aborted: path too short ($pathLength)")
             return null
         }
 
         val closureRatio = if (pathLength > 0) distStartEnd / pathLength else 1.0f
-        Log.d("ShapeRecognizer", "Closure check: ratio=$closureRatio (threshold=0.30)")
+        Logger.d("ShapeRecognizer", "Closure check: ratio=$closureRatio (threshold=0.30)")
 
         if (distStartEnd > pathLength * 0.30) {
-            Log.d("ShapeRecognizer", "Open shape detected, ratio $closureRatio > 0.30. Not a line or closed shape.")
+            Logger.d("ShapeRecognizer", "Open shape detected, ratio $closureRatio > 0.30. Not a line or closed shape.")
             return null
         }
 
@@ -131,7 +130,7 @@ object ShapeRecognizer {
         // Polygon Error: Average distance from original points to simplified edges
         val polyError = calculatePolygonError(closedPoints, simplified)
 
-        Log.d("ShapeRecognizer", "Scores - VertexCount: $vertexCount, CircleErr: $circleError, PolyErr: $polyError, AvgRad: $avgRadius")
+        Logger.d("ShapeRecognizer", "Scores - VertexCount: $vertexCount, CircleErr: $circleError, PolyErr: $polyError, AvgRad: $avgRadius")
 
         // --- Decision Logic ---
 
@@ -141,45 +140,45 @@ object ShapeRecognizer {
         if (vertexCount == 3) {
             // It's a triangle candidate.
             if (polyScore < circleScore) {
-                Log.d("ShapeRecognizer", "Recognized as TRIANGLE (Score: $polyScore vs $circleScore)")
+                Logger.d("ShapeRecognizer", "Recognized as TRIANGLE (Score: $polyScore vs $circleScore)")
                 return createPolygonResult(RecognizedShape.TRIANGLE, simplified)
             }
         } else if (vertexCount == 4) {
             // Square vs Circle.
             if (polyScore < circleScore) {
-                Log.d("ShapeRecognizer", "Recognized as SQUARE (Score: $polyScore vs $circleScore)")
+                Logger.d("ShapeRecognizer", "Recognized as SQUARE (Score: $polyScore vs $circleScore)")
                 return createRectangleResult(simplified)
             } else {
-                Log.d("ShapeRecognizer", "Recognized as CIRCLE (Override 4-vertex) (Score: $circleScore vs $polyScore)")
+                Logger.d("ShapeRecognizer", "Recognized as CIRCLE (Override 4-vertex) (Score: $circleScore vs $polyScore)")
                 return createCircleResult(cx, cy, avgRadius)
             }
         } else if (vertexCount == 5) {
             // Pentagon vs Circle
             if (polyScore < circleScore) {
-                Log.d("ShapeRecognizer", "Recognized as PENTAGON (Score: $polyScore vs $circleScore)")
+                Logger.d("ShapeRecognizer", "Recognized as PENTAGON (Score: $polyScore vs $circleScore)")
                 return createRegularPolygonResult(RecognizedShape.PENTAGON, simplified)
             } else {
-                Log.d("ShapeRecognizer", "Recognized as CIRCLE (Override 5-vertex) (Score: $circleScore vs $polyScore)")
+                Logger.d("ShapeRecognizer", "Recognized as CIRCLE (Override 5-vertex) (Score: $circleScore vs $polyScore)")
                 return createCircleResult(cx, cy, avgRadius)
             }
         } else if (vertexCount == 6) {
             // Hexagon vs Circle
             if (polyScore < circleScore) {
-                Log.d("ShapeRecognizer", "Recognized as HEXAGON (Score: $polyScore vs $circleScore)")
+                Logger.d("ShapeRecognizer", "Recognized as HEXAGON (Score: $polyScore vs $circleScore)")
                 return createRegularPolygonResult(RecognizedShape.HEXAGON, simplified)
             } else {
-                Log.d("ShapeRecognizer", "Recognized as CIRCLE (Override 6-vertex) (Score: $circleScore vs $polyScore)")
+                Logger.d("ShapeRecognizer", "Recognized as CIRCLE (Override 6-vertex) (Score: $circleScore vs $polyScore)")
                 return createCircleResult(cx, cy, avgRadius)
             }
         } else {
             // Many vertices -> Likely a Circle or complex shape
             if (circleError < avgRadius * 0.20) {
-                Log.d("ShapeRecognizer", "Recognized as CIRCLE (Vertices: $vertexCount) (Err: $circleError)")
+                Logger.d("ShapeRecognizer", "Recognized as CIRCLE (Vertices: $vertexCount) (Err: $circleError)")
                 return createCircleResult(cx, cy, avgRadius)
             }
         }
 
-        Log.d("ShapeRecognizer", "Recognition failed: No matching shape found for vertexCount=$vertexCount")
+        Logger.d("ShapeRecognizer", "Recognition failed: No matching shape found for vertexCount=$vertexCount")
         return null
     }
 

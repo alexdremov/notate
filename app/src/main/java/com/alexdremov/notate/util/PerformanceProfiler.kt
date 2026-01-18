@@ -1,6 +1,5 @@
 package com.alexdremov.notate.util
 
-import android.util.Log
 import com.alexdremov.notate.config.CanvasConfig
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
@@ -106,6 +105,6 @@ object PerformanceProfiler {
             stat.maxNanos.set(0)
         }
         sb.append("=====================================================================================\n")
-        Log.d(TAG, sb.toString())
+        Logger.d(TAG, sb.toString())
     }
 }

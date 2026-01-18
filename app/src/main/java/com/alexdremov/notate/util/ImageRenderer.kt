@@ -6,7 +6,6 @@ import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.net.Uri
-import android.util.Log
 import android.util.LruCache
 import com.alexdremov.notate.config.CanvasConfig
 import com.alexdremov.notate.model.CanvasImage
@@ -34,7 +33,7 @@ object ImageRenderer {
     private val loadingLocks = ConcurrentHashMap<String, Any>()
 
     init {
-        Log.i(TAG, "Initialized ImageCache with size: ${CACHE_SIZE / 1024 / 1024} MB")
+        Logger.i(TAG, "Initialized ImageCache with size: ${CACHE_SIZE / 1024 / 1024} MB")
     }
 
     fun draw(
@@ -84,7 +83,7 @@ object ImageRenderer {
                                     metadataCache.put(uriStr, dimensions!!)
                                 }
                             } catch (e: Exception) {
-                                Log.e(TAG, "Failed to decode bounds for $uriStr", e)
+                                Logger.e(TAG, "Failed to decode bounds for $uriStr", e, showToUser = true)
                             }
                         }
                     }
@@ -135,10 +134,10 @@ object ImageRenderer {
                                 if (bitmap != null) {
                                     imageCache.put(key, bitmap!!)
                                 } else {
-                                    Log.e(TAG, "Failed to decode bitmap for $uriStr with sampleSize $sampleSize")
+                                    Logger.e(TAG, "Failed to decode bitmap for $uriStr with sampleSize $sampleSize", showToUser = true)
                                 }
                             } catch (e: Exception) {
-                                Log.e(TAG, "Error loading bitmap content $uriStr", e)
+                                Logger.e(TAG, "Error loading bitmap content $uriStr", e, showToUser = true)
                             }
                         }
                     }
@@ -159,7 +158,7 @@ object ImageRenderer {
                     paint.alpha = originalAlpha
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "Error rendering image: ${image.uri}", e)
+                Logger.e(TAG, "Error rendering image: ${image.uri}", e)
             }
         }
     }

@@ -1,6 +1,7 @@
 package com.alexdremov.notate.data
 
 import android.content.Context
+import com.alexdremov.notate.util.Logger
 import com.google.android.gms.auth.api.signin.GoogleSignIn
 import com.google.api.client.googleapis.extensions.android.gms.auth.GoogleAccountCredential
 import com.google.api.client.http.InputStreamContent
@@ -116,7 +117,7 @@ class GoogleDriveProvider(
         if (parts.isEmpty()) return "root"
 
         for (part in parts) {
-            android.util.Log.d("GoogleDriveProvider", "Looking for folder: $part in $currentParentId")
+            Logger.d("GoogleDriveProvider", "Looking for folder: $part in $currentParentId")
             val result =
                 service
                     .files()
@@ -126,7 +127,7 @@ class GoogleDriveProvider(
                     ).setFields("files(id)")
                     .execute()
             currentParentId = result.files.firstOrNull()?.id ?: run {
-                android.util.Log.d("GoogleDriveProvider", "Folder not found: $part")
+                Logger.d("GoogleDriveProvider", "Folder not found: $part")
                 return null
             }
         }
@@ -140,7 +141,7 @@ class GoogleDriveProvider(
         if (parts.isEmpty()) return "root"
 
         for (part in parts) {
-            android.util.Log.d("GoogleDriveProvider", "Find or create folder: $part in $currentParentId")
+            Logger.d("GoogleDriveProvider", "Find or create folder: $part in $currentParentId")
             val result =
                 service
                     .files()
@@ -154,7 +155,7 @@ class GoogleDriveProvider(
             if (existingId != null) {
                 currentParentId = existingId
             } else {
-                android.util.Log.d("GoogleDriveProvider", "Creating folder: $part")
+                Logger.d("GoogleDriveProvider", "Creating folder: $part")
                 val folderMetadata =
                     com.google.api.services.drive.model.File().apply {
                         name = part

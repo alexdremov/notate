@@ -2,8 +2,9 @@ package com.alexdremov.notate
 
 import android.app.Application
 import android.os.Build
-import android.util.Log
 import com.alexdremov.notate.config.CanvasConfig
+import com.alexdremov.notate.data.PreferencesManager
+import com.alexdremov.notate.util.Logger
 import com.onyx.android.sdk.rx.RxBaseAction
 import com.onyx.android.sdk.utils.ResManager
 import org.lsposed.hiddenapibypass.HiddenApiBypass
@@ -15,6 +16,12 @@ class NotateApplication : Application() {
 
     override fun onCreate() {
         super.onCreate()
+
+        // Restore Log Level
+        val minLevelPriority = PreferencesManager.getMinLogLevel(this)
+        val minLevel = Logger.Level.values().find { it.priority == minLevelPriority } ?: Logger.Level.NONE
+        Logger.setMinLogLevelToShow(minLevel)
+
         logDeviceInfo()
 
         // Initialize Onyx SDK managers
@@ -26,7 +33,7 @@ class NotateApplication : Application() {
             try {
                 HiddenApiBypass.addHiddenApiExemptions("")
             } catch (e: Throwable) {
-                e.printStackTrace()
+                Logger.e(TAG, "HiddenApiBypass failed", e)
             }
         }
     }
@@ -42,16 +49,16 @@ class NotateApplication : Application() {
         activityManager.getMemoryInfo(memoryInfo)
         val totalRam = memoryInfo.totalMem / (1024 * 1024)
 
-        Log.i(TAG, "--- App Starting ---")
-        Log.i(TAG, "Device: ${Build.MANUFACTURER} ${Build.MODEL} (Android ${Build.VERSION.RELEASE}, API ${Build.VERSION.SDK_INT})")
-        Log.i(TAG, "Cores: $availableCores")
-        Log.i(
+        Logger.i(TAG, "--- App Starting ---")
+        Logger.i(TAG, "Device: ${Build.MANUFACTURER} ${Build.MODEL} (Android ${Build.VERSION.RELEASE}, API ${Build.VERSION.SDK_INT})")
+        Logger.i(TAG, "Cores: $availableCores")
+        Logger.i(
             TAG,
             "App Heap Limit (VM): ${maxMemory}MB (largeHeap=${(applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_LARGE_HEAP) != 0})",
         )
-        Log.i(TAG, "Device Physical RAM: ${totalRam}MB")
-        Log.i(TAG, "Thread Pool Size (Config): ${CanvasConfig.THREAD_POOL_SIZE}")
-        Log.i(TAG, "Tile Size (Config): ${CanvasConfig.TILE_SIZE}")
-        Log.i(TAG, "--------------------")
+        Logger.i(TAG, "Device Physical RAM: ${totalRam}MB")
+        Logger.i(TAG, "Thread Pool Size (Config): ${CanvasConfig.THREAD_POOL_SIZE}")
+        Logger.i(TAG, "Tile Size (Config): ${CanvasConfig.TILE_SIZE}")
+        Logger.i(TAG, "--------------------")
     }
 }

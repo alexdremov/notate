@@ -4,8 +4,8 @@ package com.alexdremov.notate.data
 
 import android.content.Context
 import android.net.Uri
-import android.util.Log
 import androidx.documentfile.provider.DocumentFile
+import com.alexdremov.notate.util.Logger
 import kotlinx.serialization.encodeToByteArray
 import kotlinx.serialization.protobuf.ProtoBuf
 import java.io.File
@@ -87,7 +87,7 @@ internal object StorageUtils {
                 match?.groupValues?.get(1)
             }
         } catch (e: Exception) {
-            Log.i("Thumbnail", "Failed to extract thumbnail from JSON")
+            Logger.i("Thumbnail", "Failed to extract thumbnail from JSON")
             null
         }
     }
@@ -100,7 +100,7 @@ internal object StorageUtils {
                 ProtoBuf.decodeFromByteArray(CanvasDataPreview.serializer(), bytes).thumbnail
             }
         } catch (e: Exception) {
-            Log.i("Thumbnail", "Failed to extract thumbnail from protobuf")
+            Logger.i("Thumbnail", "Failed to extract thumbnail from protobuf")
             null
         }
     }
@@ -317,7 +317,7 @@ class SafStorageProvider(
             }
             newFile.uri.toString()
         } catch (e: Exception) {
-            e.printStackTrace()
+            Logger.e("Storage", "Failed to create SAF canvas", e, showToUser = true)
             null
         }
     }

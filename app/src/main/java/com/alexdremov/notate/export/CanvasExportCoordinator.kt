@@ -8,11 +8,11 @@ import android.net.Uri
 import android.view.LayoutInflater
 import android.widget.ProgressBar
 import android.widget.TextView
-import android.widget.Toast
 import androidx.activity.result.ActivityResultLauncher
 import androidx.core.content.FileProvider
 import com.alexdremov.notate.R
 import com.alexdremov.notate.model.InfiniteCanvasModel
+import com.alexdremov.notate.util.Logger
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -89,13 +89,12 @@ class CanvasExportCoordinator(
 
                 withContext(Dispatchers.Main) {
                     hideProgress()
-                    Toast.makeText(context, "Export Successful", Toast.LENGTH_SHORT).show()
+                    Logger.showToUser("Export Successful")
                 }
             } catch (e: Exception) {
-                e.printStackTrace()
                 withContext(Dispatchers.Main) {
                     hideProgress()
-                    Toast.makeText(context, "Export Failed: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
+                    Logger.e("Export", "Export Failed: ${e.localizedMessage}", e, showToUser = true)
                 }
             }
         }
@@ -150,10 +149,9 @@ class CanvasExportCoordinator(
                     context.startActivity(Intent.createChooser(shareIntent, "Share PDF"))
                 }
             } catch (e: Exception) {
-                e.printStackTrace()
                 withContext(Dispatchers.Main) {
                     hideProgress()
-                    Toast.makeText(context, "Share Failed: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
+                    Logger.e("Export", "Share Failed: ${e.localizedMessage}", e, showToUser = true)
                 }
             }
         }

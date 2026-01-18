@@ -14,6 +14,7 @@ import com.alexdremov.notate.model.InfiniteCanvasModel
 import com.alexdremov.notate.model.Stroke
 import com.alexdremov.notate.ui.render.BackgroundDrawer
 import com.alexdremov.notate.ui.render.background.PatternLayoutHelper
+import com.alexdremov.notate.util.Logger
 import com.alexdremov.notate.util.StrokeRenderer
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -65,7 +66,7 @@ class AndroidPdfDocumentWrapper : PdfDocumentWrapper {
             document.finishPage(page.wrappedPage)
         } else {
             throw IllegalArgumentException(
-                "Invalid page wrapper type: ${page::class.java.name}. Expected AndroidPdfPageWrapper."
+                "Invalid page wrapper type: ${page::class.java.name}. Expected AndroidPdfPageWrapper.",
             )
         }
     }
@@ -141,7 +142,7 @@ object PdfExporter {
 
             callback?.onProgress(100, "Done")
         } catch (e: Exception) {
-            e.printStackTrace()
+            Logger.e("PdfExporter", "Export failed", e)
             throw e
         } finally {
             pdfDocument.close()
@@ -348,8 +349,9 @@ object PdfExporter {
         val totalMemoryBytes = runtime.totalMemory()
         val freeMemoryBytes = runtime.freeMemory()
         // Approximate currently available heap as max - total + free.
-        val availableMemoryBytes = (maxMemoryBytes - totalMemoryBytes + freeMemoryBytes)
-            .coerceAtLeast(0L)
+        val availableMemoryBytes =
+            (maxMemoryBytes - totalMemoryBytes + freeMemoryBytes)
+                .coerceAtLeast(0L)
         val bytesPerPixel = 4L // ARGB_8888
         val maxTileBytes = tileSize.toLong() * tileSize.toLong() * bytesPerPixel
         // Be conservative: only allow a fraction of the heap to be used by tiles.

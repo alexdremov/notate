@@ -32,7 +32,7 @@ object ThumbnailGenerator {
             bitmap.recycle()
             Base64.encodeToString(byteArray, Base64.NO_WRAP)
         } catch (e: Exception) {
-            e.printStackTrace()
+            Logger.e("Thumbnail", "Generation failed", e)
             null
         }
 

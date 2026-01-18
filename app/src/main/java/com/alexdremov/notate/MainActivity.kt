@@ -23,13 +23,18 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
 import com.alexdremov.notate.CanvasActivity
 import com.alexdremov.notate.data.CanvasItem
 import com.alexdremov.notate.data.ProjectItem
 import com.alexdremov.notate.ui.home.*
 import com.alexdremov.notate.ui.theme.NotateTheme
+import com.alexdremov.notate.util.Logger
 import com.alexdremov.notate.vm.HomeViewModel
 import com.onyx.android.sdk.api.device.EpdDeviceManager
+import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
     private val viewModel: HomeViewModel by viewModels()
@@ -99,6 +104,21 @@ fun MainScreen(viewModel: HomeViewModel) {
     val syncingProjectIds by viewModel.syncingProjectIds.collectAsState()
 
     val context = LocalContext.current
+    val snackbarHostState = remember { SnackbarHostState() }
+    val lifecycleOwner = LocalLifecycleOwner.current
+
+    // Listen for global errors
+    LaunchedEffect(lifecycleOwner) {
+        lifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            Logger.userEvents.collect { event ->
+                snackbarHostState.showSnackbar(
+                    message = event.message,
+                    withDismissAction = true,
+                    duration = SnackbarDuration.Short,
+                )
+            }
+        }
+    }
 
     // Dialog State
     var showNameDialog by remember { mutableStateOf<DialogType?>(null) }
@@ -149,6 +169,7 @@ fun MainScreen(viewModel: HomeViewModel) {
     }
 
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
                 title = {

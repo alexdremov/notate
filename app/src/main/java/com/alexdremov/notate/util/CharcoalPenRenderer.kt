@@ -9,7 +9,6 @@ import android.graphics.Path
 import android.graphics.PorterDuff
 import android.graphics.PorterDuffColorFilter
 import android.graphics.Shader
-import android.util.Log
 import com.alexdremov.notate.model.CharcoalCache
 import com.alexdremov.notate.model.Stroke
 import com.onyx.android.sdk.data.note.TouchPoint
@@ -72,7 +71,7 @@ object CharcoalPenRenderer {
 
             canvas.drawPath(mesh.outlinePath, paint)
         } catch (e: Exception) {
-            Log.e(TAG, "Error rendering charcoal", e)
+            Logger.e(TAG, "Error rendering charcoal", e)
         } finally {
             paint.shader = originalShader
             paint.colorFilter = originalFilter

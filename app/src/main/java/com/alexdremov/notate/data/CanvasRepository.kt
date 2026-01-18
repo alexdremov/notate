@@ -2,8 +2,8 @@ package com.alexdremov.notate.data
 
 import android.content.Context
 import android.net.Uri
-import android.util.Log
 import androidx.documentfile.provider.DocumentFile
+import com.alexdremov.notate.util.Logger
 import com.alexdremov.notate.util.ThumbnailGenerator
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
@@ -43,16 +43,16 @@ class CanvasRepository(
                 // 1. Try Protobuf
                 try {
                     data = ProtoBuf.decodeFromByteArray(CanvasData.serializer(), bytes)
-                    Log.d("CanvasRepository", "Loaded via Protobuf")
+                    Logger.d("CanvasRepository", "Loaded via Protobuf")
                 } catch (e: Exception) {
                     // 2. Fallback to JSON
                     try {
                         val jsonString = String(bytes, Charsets.UTF_8)
                         data = Json.decodeFromString<CanvasData>(jsonString)
                         wasJson = true
-                        Log.d("CanvasRepository", "Loaded via JSON Fallback")
+                        Logger.d("CanvasRepository", "Loaded via JSON Fallback")
                     } catch (e2: Exception) {
-                        e2.printStackTrace()
+                        Logger.w("CanvasRepository", "JSON Fallback failed", e2)
                     }
                 }
                 tDecode = System.currentTimeMillis()
@@ -63,11 +63,11 @@ class CanvasRepository(
                 val loadedState = CanvasSerializer.parseCanvasData(data)
                 val tParse = System.currentTimeMillis()
 
-                Log.d("CanvasRepository", "Load Timings:")
-                Log.d("CanvasRepository", "  Read File: ${tRead - tStart}ms")
-                Log.d("CanvasRepository", "  Decode: ${tDecode - tRead}ms")
-                Log.d("CanvasRepository", "  Parse Geometry: ${tParse - tDecode}ms")
-                Log.d("CanvasRepository", "  Total IO/Parse: ${tParse - tStart}ms")
+                Logger.d("CanvasRepository", "Load Timings:")
+                Logger.d("CanvasRepository", "  Read File: ${tRead - tStart}ms")
+                Logger.d("CanvasRepository", "  Decode: ${tDecode - tRead}ms")
+                Logger.d("CanvasRepository", "  Parse Geometry: ${tParse - tDecode}ms")
+                Logger.d("CanvasRepository", "  Total IO/Parse: ${tParse - tStart}ms")
 
                 var newPath: String? = null
                 var migrationPerformed = false
@@ -87,7 +87,7 @@ class CanvasRepository(
                     newPath = newPath,
                 )
             } catch (e: Exception) {
-                e.printStackTrace()
+                Logger.e("CanvasRepository", "Load Failed", e, showToUser = true)
                 null
             }
         }
@@ -142,7 +142,7 @@ class CanvasRepository(
      * Returns the new path if successful, null otherwise.
      */
     private fun migrateFile(originalPath: String): String? {
-        Log.d("CanvasRepository", "Migration needed for $originalPath")
+        Logger.d("CanvasRepository", "Migration needed for $originalPath")
         if (originalPath.startsWith("content://")) {
             // SAF path: Rename the document
             val originalUri = Uri.parse(originalPath)
@@ -150,10 +150,10 @@ class CanvasRepository(
             if (document != null && document.exists() && document.name?.endsWith(".json") == true) {
                 val newName = (document.name ?: "").replace(".json", ".notate")
                 if (document.renameTo(newName)) {
-                    Log.d("CanvasRepository", "Successfully renamed SAF file to ${document.uri}")
+                    Logger.d("CanvasRepository", "Successfully renamed SAF file to ${document.uri}")
                     return document.uri.toString()
                 } else {
-                    Log.e("CanvasRepository", "Failed to rename SAF file.")
+                    Logger.e("CanvasRepository", "Failed to rename SAF file.", showToUser = true)
                 }
             }
         } else {
@@ -163,10 +163,10 @@ class CanvasRepository(
                 val newPath = originalPath.replace(".json", ".notate")
                 val newFile = File(newPath)
                 if (originalFile.renameTo(newFile)) {
-                    Log.d("CanvasRepository", "Successfully renamed local file to $newPath")
+                    Logger.d("CanvasRepository", "Successfully renamed local file to $newPath")
                     return newPath
                 } else {
-                    Log.e("CanvasRepository", "Failed to rename local file.")
+                    Logger.e("CanvasRepository", "Failed to rename local file.", showToUser = true)
                 }
             }
         }
