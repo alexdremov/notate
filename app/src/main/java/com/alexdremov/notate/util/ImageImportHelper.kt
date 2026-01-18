@@ -17,7 +17,7 @@ object ImageImportHelper {
     fun importImage(
         context: Context,
         sourceUri: Uri,
-    ): String? =
+    ): String? {
         try {
             val destDir = File(context.filesDir, IMPORT_DIR)
             if (!destDir.exists() && !destDir.mkdirs()) {
@@ -48,13 +48,14 @@ object ImageImportHelper {
                     true
                 } ?: false
 
-            if (success) {
+            return if (success) {
                 Uri.fromFile(destFile).toString()
             } else {
                 null
             }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to import image from $sourceUri", e)
-            null
+            return null
         }
+    }
 }
