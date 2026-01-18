@@ -22,6 +22,7 @@ import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import androidx.lifecycle.ProcessLifecycleOwner
 import androidx.lifecycle.lifecycleScope
 import com.alexdremov.notate.R
 import com.alexdremov.notate.data.CanvasData
@@ -426,10 +427,8 @@ class CanvasActivity : AppCompatActivity() {
         // Trigger background sync if project is configured
         currentCanvasPath?.let { path ->
             android.util.Log.d("CanvasActivity", "onPause: Attempting to sync for file $path")
-            // Use GlobalScope (or ProcessLifecycleScope) to ensure sync continues after Activity pause/destroy
-            // This is "fire and forget" logic for this context.
-            @OptIn(kotlinx.coroutines.DelicateCoroutinesApi::class)
-            kotlinx.coroutines.GlobalScope.launch(Dispatchers.IO) {
+            // Use ProcessLifecycleOwner to ensure sync continues after Activity pause/destroy
+            androidx.lifecycle.ProcessLifecycleOwner.get().lifecycleScope.launch(Dispatchers.IO) {
                 try {
                     val projectId = syncManager.findProjectForFile(path)
                     if (projectId != null) {

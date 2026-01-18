@@ -38,7 +38,7 @@ class InfiniteCanvasModel {
     private var nextOrder: Long = 0
 
     // Reactive Updates
-    private val _events = MutableSharedFlow<ModelEvent>(extraBufferCapacity = 64)
+    private val _events = MutableSharedFlow<ModelEvent>(extraBufferCapacity = 256)
     val events: SharedFlow<ModelEvent> = _events.asSharedFlow()
 
     // History Manager

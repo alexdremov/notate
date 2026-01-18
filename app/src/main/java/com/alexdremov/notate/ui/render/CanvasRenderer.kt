@@ -123,6 +123,13 @@ class CanvasRenderer(
     }
 
     /**
+     * Performs cleanup of resources and background tasks.
+     */
+    fun destroy() {
+        tileManager.destroy()
+    }
+
+    /**
      * Main render entry point.
      * Delegates to the active LayoutStrategy to draw the background, content (tiles), and overlays.
      *

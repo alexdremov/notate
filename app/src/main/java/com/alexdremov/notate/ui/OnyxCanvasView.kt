@@ -252,6 +252,7 @@ class OnyxCanvasView
         override fun onDetachedFromWindow() {
             super.onDetachedFromWindow()
             viewScope.cancel()
+            canvasRenderer.destroy()
         }
 
         // --- Lifecycle & Drawing ---

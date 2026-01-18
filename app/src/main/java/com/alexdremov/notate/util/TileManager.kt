@@ -13,6 +13,7 @@ import com.alexdremov.notate.config.CanvasConfig
 import com.alexdremov.notate.model.InfiniteCanvasModel
 import com.alexdremov.notate.model.Stroke
 import com.alexdremov.notate.ui.render.CanvasRenderer
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.FlowPreview
@@ -49,13 +50,14 @@ import kotlin.math.pow
  *
  * ## Thread Model
  * - Rendering calls happen on UI thread
- * - Tile generation happens on Dispatchers.Default
+ * - Tile generation happens on [dispatcher] (default: Dispatchers.Default)
  * - Cache operations are synchronized
  *
  * @param canvasModel The data model to query for strokes
  * @param renderer The renderer for drawing strokes to tile bitmaps
  * @param tileSize Pixel size of each tile (default: 512)
  * @param scope Coroutine scope for background tile generation
+ * @param dispatcher Dispatcher for background generation (default: Dispatchers.Default)
  */
 @OptIn(FlowPreview::class)
 class TileManager(
@@ -63,6 +65,7 @@ class TileManager(
     private val renderer: CanvasRenderer,
     private val tileSize: Int = CanvasConfig.TILE_SIZE,
     private val scope: CoroutineScope,
+    private val dispatcher: CoroutineDispatcher = Dispatchers.Default,
 ) {
     var onTileReady: (() -> Unit)? = null
     var isInteracting: Boolean = false
@@ -76,6 +79,9 @@ class TileManager(
     private var lastVisibleRect: RectF? = null
     private var lastScale: Float = 1.0f
     private var lastVisibleCount = 0
+
+    // Lifecycle
+    private val initJobs = mutableListOf<Job>()
 
     // Update Throttling
     private val updateChannel = Channel<Unit>(capacity = 1, onBufferOverflow = BufferOverflow.DROP_OLDEST)
@@ -107,49 +113,45 @@ class TileManager(
 
     init {
         // Listen for Model Updates
-        scope.launch {
-            canvasModel.events.collect { event ->
-                // For direct "Add" events, CanvasController likely called updateTilesWithItem for instant feedback.
-                // However, for Remove/Replace/Clear, we need to invalidate/refresh.
-                // We double-check to ensure consistency.
+        initJobs +=
+            scope.launch {
+                canvasModel.events.collect { event ->
+                    when (event) {
+                        is InfiniteCanvasModel.ModelEvent.ItemsRemoved -> {
+                            val bounds = RectF()
+                            event.items.forEach { bounds.union(it.bounds) }
+                            refreshTiles(bounds)
+                        }
 
-                when (event) {
-                    is InfiniteCanvasModel.ModelEvent.ItemsRemoved -> {
-                        // Invalidate affected areas
-                        val bounds = RectF()
-                        event.items.forEach { bounds.union(it.bounds) }
-                        refreshTiles(bounds)
+                        is InfiniteCanvasModel.ModelEvent.ItemsAdded -> {
+                            // Handle operations like Paste, Undo, Redo
+                            val bounds = RectF()
+                            event.items.forEach { bounds.union(it.bounds) }
+                            refreshTiles(bounds)
+                        }
+
+                        is InfiniteCanvasModel.ModelEvent.ContentCleared -> {
+                            clear()
+                            notifyTileReady()
+                        }
+
+                        else -> {}
                     }
-
-                    is InfiniteCanvasModel.ModelEvent.ItemsAdded -> {
-                        // Usually handled by updateTilesWithItem for active pen, but required for Undo/Redo/Paste
-                        // We check if we need to refresh.
-                        // If updateTilesWithItem was already called, refreshing again is fine (idempotent-ish).
-                        // To allow "instant" ink, updateTilesWithItem is still used.
-                        // But for "Paste", this is needed.
-                    }
-
-                    is InfiniteCanvasModel.ModelEvent.ContentCleared -> {
-                        clear()
-                        notifyTileReady()
-                    }
-
-                    else -> {}
                 }
             }
-        }
 
         // Throttle UI Updates (Debounce 16ms -> ~60fps cap)
-        scope.launch {
-            updateChannel
-                .receiveAsFlow()
-                .debounce(1000L / CanvasConfig.TILE_MANAGER_TARGET_FPS)
-                .collectLatest {
-                    withContext(Dispatchers.Main) {
-                        onTileReady?.invoke()
+        initJobs +=
+            scope.launch {
+                updateChannel
+                    .receiveAsFlow()
+                    .debounce(1000L / CanvasConfig.TILE_MANAGER_TARGET_FPS)
+                    .collectLatest {
+                        withContext(Dispatchers.Main) {
+                            onTileReady?.invoke()
+                        }
                     }
-                }
-        }
+            }
     }
 
     /**
@@ -258,20 +260,28 @@ class TileManager(
     ) {
         val key = TileCache.TileKey(col, row, level)
 
-        if (!forceRefresh && (generatingKeys.contains(key) || tileCache.get(key) != null)) return
+        // Use synchronized block for atomic check-and-add
+        synchronized(generatingKeys) {
+            if (!forceRefresh && (generatingKeys.contains(key) || tileCache.get(key) != null)) return
 
-        // Throttle low-priority background work if cache is pressured
-        if (!forceRefresh && !isHighPriority && tileCache.isFull(generatingKeys.size, CanvasConfig.NEIGHBOR_PRECACHE_THRESHOLD_PERCENT)) {
-            return
+            // Throttle low-priority background work if cache is pressured
+            if (!forceRefresh && !isHighPriority &&
+                tileCache.isFull(generatingKeys.size, CanvasConfig.NEIGHBOR_PRECACHE_THRESHOLD_PERCENT)
+            ) {
+                return
+            }
+
+            generatingKeys.add(key)
         }
 
-        generatingKeys.add(key)
-
-        scope.launch(Dispatchers.Default) {
+        scope.launch(dispatcher) {
             try {
                 // Task Cancellation Checks
-                if (version != renderVersion.get()) return@launch
-                if (!isHighPriority && isInteracting) return@launch
+                if (version != renderVersion.get() || (!isHighPriority && isInteracting)) {
+                    synchronized(generatingKeys) { generatingKeys.remove(key) }
+                    notifyTileReady()
+                    return@launch
+                }
 
                 val bitmap = generateTileBitmap(col, row, worldSize)
 
@@ -282,12 +292,12 @@ class TileManager(
                     }
                 }
             } catch (t: Throwable) {
-                if (t !is java.util.concurrent.CancellationException) {
+                if (t !is kotlinx.coroutines.CancellationException) {
                     errorMessages.put(key, "${t.javaClass.simpleName}: ${t.message}")
                     tileCache.put(key, tileCache.errorBitmap)
                 }
             } finally {
-                generatingKeys.remove(key)
+                synchronized(generatingKeys) { generatingKeys.remove(key) }
             }
 
             notifyTileReady()
@@ -334,7 +344,7 @@ class TileManager(
         val visibleRect = lastVisibleRect
         val currentLevel = if (visibleRect != null) calculateLOD(lastScale) else -1
 
-        val currentGenerating = synchronized(generatingKeys) { HashSet(generatingKeys) }
+        // Use a set for efficient intersection checks during update
         val handledKeys = HashSet<TileCache.TileKey>()
 
         // 1. Update/Clean Cached Tiles
@@ -357,8 +367,9 @@ class TileManager(
                     renderer.drawItemToCanvas(tileCanvas, item, scale = scale)
                     tileCanvas.restore()
 
-                    // Re-queue to ensure final consistency if background tasks were active
-                    if (currentGenerating.contains(key)) {
+                    // Re-queue to ensure final consistency if background tasks were active or to prevent stale background data
+                    val isBeingGenerated = synchronized(generatingKeys) { generatingKeys.contains(key) }
+                    if (isBeingGenerated) {
                         queueTileGeneration(key.col, key.row, key.level, worldSize, true, version, forceRefresh = true)
                     }
                 } else {
@@ -369,7 +380,8 @@ class TileManager(
             }
         }
 
-        // 2. Handle Generating Tiles that weren't in snapshot
+        // 2. Handle Generating Tiles that weren't in snapshot but intersect the new item
+        val currentGenerating = synchronized(generatingKeys) { HashSet(generatingKeys) }
         for (key in currentGenerating) {
             if (handledKeys.contains(key)) continue
 
@@ -395,10 +407,10 @@ class TileManager(
         val visibleRect = lastVisibleRect
         val currentLevel = if (visibleRect != null) calculateLOD(lastScale) else -1
 
-        val currentGenerating = synchronized(generatingKeys) { HashSet(generatingKeys) }
-        val handledKeys = HashSet<TileCache.TileKey>()
-
         eraserPaint.strokeWidth = stroke.width
+
+        // Use a set for efficient intersection checks during update
+        val handledKeys = HashSet<TileCache.TileKey>()
 
         // 1. Update/Clean Cached Tiles
         for ((key, bitmap) in snapshot) {
@@ -421,7 +433,8 @@ class TileManager(
                 tileCanvas.restore()
 
                 // If currently generating, queue refresh to ensure consistency
-                if (currentGenerating.contains(key)) {
+                val isBeingGenerated = synchronized(generatingKeys) { generatingKeys.contains(key) }
+                if (isBeingGenerated) {
                     queueTileGeneration(key.col, key.row, key.level, worldSize, true, version, forceRefresh = true)
                 }
 
@@ -430,6 +443,7 @@ class TileManager(
         }
 
         // 2. Handle Generating Tiles that weren't in snapshot
+        val currentGenerating = synchronized(generatingKeys) { HashSet(generatingKeys) }
         for (key in currentGenerating) {
             if (handledKeys.contains(key)) continue
 
@@ -512,9 +526,17 @@ class TileManager(
     }
 
     fun clear() {
-        tileCache.clear()
-        generatingKeys.clear()
-        lastVisibleCount = 0
+        synchronized(generatingKeys) {
+            tileCache.clear()
+            generatingKeys.clear()
+            lastVisibleCount = 0
+        }
+    }
+
+    fun destroy() {
+        initJobs.forEach { it.cancel() }
+        initJobs.clear()
+        clear()
     }
 
     // --- Private Helpers ---
