@@ -360,7 +360,7 @@ object PdfExporter {
         tiles
             .map { tileRect ->
                 // Use async to parallelize the "Rendering" part
-                async {
+                async(Dispatchers.Default) {
                     semaphore.withPermit {
                         currentCoroutineContext().ensureActive()
                         try {
