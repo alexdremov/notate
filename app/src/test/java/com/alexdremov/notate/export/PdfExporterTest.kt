@@ -5,6 +5,7 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Path
 import android.graphics.RectF
+import android.graphics.pdf.PdfDocument
 import com.alexdremov.notate.config.CanvasConfig
 import com.alexdremov.notate.data.CanvasType
 import com.alexdremov.notate.model.BackgroundStyle
@@ -91,10 +92,10 @@ class PdfExporterTest {
     private fun createMockPdfDocumentWrapper(): PdfDocumentWrapper {
         val doc = mockk<PdfDocumentWrapper>(relaxed = true)
         every { doc.startPage(any()) } answers {
-            val page = mockk<PdfPageWrapper>(relaxed = true)
+            val pageWrapper = mockk<PdfPageWrapper>(relaxed = true)
             val canvas = mockk<Canvas>(relaxed = true)
-            every { page.canvas } returns canvas
-            page
+            every { pageWrapper.canvas } returns canvas
+            pageWrapper
         }
         return doc
     }
@@ -168,11 +169,118 @@ class PdfExporterTest {
         }
 
     @Test
+    fun `test export infinite canvas bitmap tiled`() =
+        runTest(testDispatcher) {
+            val model = mockk<InfiniteCanvasModel>()
+            val stroke = createTestStroke(100f, 100f)
+
+            // Large bounds to trigger multiple tiles ( > 2048x2048 )
+            val largeBounds = RectF(0f, 0f, 5000f, 5000f)
+
+            every { model.performRead(any()) } answers {
+                val block = arg<(List<com.alexdremov.notate.model.CanvasItem>) -> Unit>(0)
+                block(listOf(stroke))
+            }
+            every { model.getContentBounds() } returns largeBounds
+            every { model.canvasType } returns CanvasType.INFINITE
+            every { model.pageWidth } returns CanvasConfig.PAGE_A4_WIDTH
+            every { model.pageHeight } returns CanvasConfig.PAGE_A4_HEIGHT
+            every { model.backgroundStyle } returns BackgroundStyle.Dots(Color.LTGRAY, 50f, 2f)
+
+            val outputStream = ByteArrayOutputStream()
+            val mockDoc = createMockPdfDocumentWrapper()
+
+            // Capture the canvas to verify draw calls
+            val pageWrapper = mockk<PdfPageWrapper>(relaxed = true)
+            val canvas = mockk<Canvas>(relaxed = true)
+            every { pageWrapper.canvas } returns canvas
+
+            every { mockDoc.startPage(any()) } returns pageWrapper
+
+            PdfExporter.export(
+                context,
+                model,
+                outputStream,
+                isVector = false,
+                callback = null,
+                pdfDocumentFactory = { mockDoc },
+            )
+
+            verify { mockDoc.startPage(any()) }
+
+            // Verify multiple drawBitmap calls.
+            // 5000x5000 area. Tile size 2048.
+            // Cols: ceil(5000/2048) = 3
+            // Rows: ceil(5000/2048) = 3
+            // Total tiles: 9.
+            // However, tiles are only rendered if they intersect items.
+            // The stroke is at 100,100 (top-left tile).
+            // So actually only 1 tile will have items and be rendered.
+            // Wait, the logic is:
+            // val tileItems = items.filter { RectF.intersects(it.bounds, tileRect) }
+            // if (tileItems.isNotEmpty()) { ... render ... }
+
+            // So to verify multi-threading/tiling logic, I need items in different tiles.
+
+            // Ideally I should have verified that the loop runs.
+            // But verifying drawBitmap calls is good enough if I have items distributed.
+
+            // Let's rely on the fact that at least one drawBitmap is called for now,
+            // or add another stroke at 4000,4000.
+        }
+
+    @Test
+    fun `test export infinite canvas bitmap tiled with multiple items`() =
+        runTest(testDispatcher) {
+            val model = mockk<InfiniteCanvasModel>()
+            val stroke1 = createTestStroke(100f, 100f) // Tile 0,0
+            val stroke2 = createTestStroke(4000f, 4000f) // Tile 1,1 or 2,2 (depending on 2048 size)
+            // 4000 / 2048 = 1.95 -> index 1 (2nd tile).
+
+            val largeBounds = RectF(0f, 0f, 5000f, 5000f)
+
+            every { model.performRead(any()) } answers {
+                val block = arg<(List<com.alexdremov.notate.model.CanvasItem>) -> Unit>(0)
+                block(listOf(stroke1, stroke2))
+            }
+            every { model.getContentBounds() } returns largeBounds
+            every { model.canvasType } returns CanvasType.INFINITE
+            every { model.pageWidth } returns CanvasConfig.PAGE_A4_WIDTH
+            every { model.pageHeight } returns CanvasConfig.PAGE_A4_HEIGHT
+            every { model.backgroundStyle } returns BackgroundStyle.Dots(Color.LTGRAY, 50f, 2f)
+
+            val outputStream = ByteArrayOutputStream()
+            val mockDoc = createMockPdfDocumentWrapper()
+
+            val pageWrapper = mockk<PdfPageWrapper>(relaxed = true)
+            val canvas = mockk<Canvas>(relaxed = true)
+            every { pageWrapper.canvas } returns canvas
+            every { mockDoc.startPage(any()) } returns pageWrapper
+
+            PdfExporter.export(
+                context,
+                model,
+                outputStream,
+                isVector = false,
+                callback = null,
+                pdfDocumentFactory = { mockDoc },
+            )
+
+            verify { mockDoc.startPage(any()) }
+
+            // Should be at least 2 tiles rendered (one for stroke1, one for stroke2)
+            verify(atLeast = 2) { canvas.drawBitmap(any<android.graphics.Bitmap>(), any<Float>(), any<Float>(), any()) }
+
+            verify { mockDoc.finishPage(any()) }
+            verify { mockDoc.close() }
+        }
+
+    @Test
     fun `test export fixed pages vector`() =
         runTest(testDispatcher) {
             val model = mockk<InfiniteCanvasModel>()
             val stroke1 = createTestStroke(100f, 100f)
-            val stroke2 = createTestStroke(100f, 2000f) // Should be on second or third page
+            val stroke2 = createTestStroke(100f, 2000f) // Should be on second page
 
             every { model.performRead(any()) } answers {
                 val block = arg<(List<com.alexdremov.notate.model.CanvasItem>) -> Unit>(0)
@@ -196,8 +304,7 @@ class PdfExporterTest {
                 pdfDocumentFactory = { mockDoc },
             )
 
-            // Should have at least 2 pages (0-1000, 1100-2100) -> 2100 is on page index 1 (2nd page) or index 2 (3rd page)
-            // 2100 / (1000 + 100) = 2100 / 1100 = 1.9 -> floor is 1. lastPageIdx = 1. Total pages = 2.
+            // Should have at least 2 pages
             verify(atLeast = 2) { mockDoc.startPage(any()) }
             verify(atLeast = 2) { mockDoc.finishPage(any()) }
             verify { mockDoc.writeTo(any()) }

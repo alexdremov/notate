@@ -16,10 +16,15 @@ import com.alexdremov.notate.model.Stroke
 import com.alexdremov.notate.ui.render.BackgroundDrawer
 import com.alexdremov.notate.ui.render.background.PatternLayoutHelper
 import com.alexdremov.notate.util.StrokeRenderer
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import java.io.OutputStream
 import kotlin.math.ceil
@@ -327,8 +332,8 @@ object PdfExporter {
         val rows = ceil(bounds.height() / tileSize).toInt()
 
         // Semaphore to limit memory usage (approx 3 * 16MB = 48MB buffer)
-        val semaphore = kotlinx.coroutines.sync.Semaphore(3)
-        val mutex = kotlinx.coroutines.sync.Mutex()
+        val semaphore = Semaphore(3)
+        val mutex = Mutex()
 
         val tiles = ArrayList<RectF>()
         for (r in 0 until rows) {
@@ -345,48 +350,52 @@ object PdfExporter {
             .map { tileRect ->
                 // Use async to parallelize the "Rendering" part
                 async {
-                    semaphore.acquire()
-                    try {
-                        val tileItems = items.filter { RectF.intersects(it.bounds, tileRect) }
-                        if (tileItems.isNotEmpty()) {
-                            // Create a specific paint for this thread
-                            val threadPaint =
-                                Paint().apply {
-                                    isAntiAlias = true
-                                    isDither = true
-                                    strokeJoin = Paint.Join.ROUND
-                                    strokeCap = Paint.Cap.ROUND
+                    semaphore.withPermit {
+                        currentCoroutineContext().ensureActive()
+                        try {
+                            val tileItems = items.filter { RectF.intersects(it.bounds, tileRect) }
+                            if (tileItems.isNotEmpty()) {
+                                // Create a specific paint for this thread
+                                val threadPaint =
+                                    Paint().apply {
+                                        isAntiAlias = true
+                                        isDither = true
+                                        strokeJoin = Paint.Join.ROUND
+                                        strokeCap = Paint.Cap.ROUND
+                                    }
+
+                                var bitmap: Bitmap? = null
+                                try {
+                                    // Render to Bitmap (Heavy CPU)
+                                    val w = tileRect.width().toInt().coerceAtLeast(1)
+                                    val h = tileRect.height().toInt().coerceAtLeast(1)
+
+                                    bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+                                    val bmpCanvas = Canvas(bitmap)
+                                    bmpCanvas.translate(-tileRect.left, -tileRect.top)
+
+                                    for (item in tileItems) {
+                                        if (item is Stroke) {
+                                            threadPaint.color = item.color
+                                            threadPaint.strokeWidth = item.width
+                                        }
+                                        StrokeRenderer.drawItem(bmpCanvas, item, false, threadPaint, context)
+                                    }
+
+                                    currentCoroutineContext().ensureActive()
+
+                                    // Draw to PDF (Fast, Serialized)
+                                    mutex.withLock {
+                                        canvas.drawBitmap(bitmap, tileRect.left, tileRect.top, null)
+                                    }
+                                } finally {
+                                    bitmap?.recycle()
                                 }
-
-                            // Render to Bitmap (Heavy CPU)
-                            val w = tileRect.width().toInt().coerceAtLeast(1)
-                            val h = tileRect.height().toInt().coerceAtLeast(1)
-
-                            val bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
-                            val bmpCanvas = Canvas(bitmap)
-                            bmpCanvas.translate(-tileRect.left, -tileRect.top)
-
-                            for (item in tileItems) {
-                                if (item is Stroke) {
-                                    threadPaint.color = item.color
-                                    threadPaint.strokeWidth = item.width
-                                }
-                                StrokeRenderer.drawItem(bmpCanvas, item, false, threadPaint, context)
                             }
-
-                            // Draw to PDF (Fast, Serialized)
-                            mutex.lock()
-                            try {
-                                canvas.drawBitmap(bitmap, tileRect.left, tileRect.top, null)
-                            } finally {
-                                mutex.unlock()
-                            }
-                            bitmap.recycle()
+                        } catch (e: Exception) {
+                            if (e is CancellationException) throw e
+                            e.printStackTrace()
                         }
-                    } catch (e: Exception) {
-                        e.printStackTrace()
-                    } finally {
-                        semaphore.release()
                     }
                 }
             }.forEach { it.await() }
