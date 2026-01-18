@@ -153,5 +153,13 @@ dependencies {
                 strictly("[2.14.0,)")
             }
         }
+
+        // See: https://github.com/alexdremov/notate/security/dependabot/11
+        implementation("com.google.protobuf:protobuf-kotlin") {
+            because("Fix vulnerability in com.google.protobuf:protobuf-kotlin < 3.25.5")
+            version {
+                strictly("[3.25.5,)")
+            }
+        }
     }
 }
