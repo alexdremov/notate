@@ -59,6 +59,8 @@ class ErrorBannerView
 
             scrollView.addView(messagesContainer)
             addView(scrollView)
+
+            elevation = 24f // Ensure it appears above other UI elements (toolbar, sidebar)
         }
 
         override fun onAttachedToWindow() {
@@ -113,6 +115,7 @@ class ErrorBannerView
         }
 
         private fun removeMessage(view: View) {
+            if (!isAttachedToWindow) return
             messagesContainer.removeView(view)
             if (messagesContainer.childCount == 0) {
                 visibility = GONE

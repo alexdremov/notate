@@ -23,6 +23,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
 import com.alexdremov.notate.CanvasActivity
 import com.alexdremov.notate.data.CanvasItem
 import com.alexdremov.notate.data.ProjectItem
@@ -102,15 +105,18 @@ fun MainScreen(viewModel: HomeViewModel) {
 
     val context = LocalContext.current
     val snackbarHostState = remember { SnackbarHostState() }
+    val lifecycleOwner = LocalLifecycleOwner.current
 
     // Listen for global errors
-    LaunchedEffect(Unit) {
-        Logger.userEvents.collect { event ->
-            snackbarHostState.showSnackbar(
-                message = event.message,
-                withDismissAction = true,
-                duration = SnackbarDuration.Short,
-            )
+    LaunchedEffect(lifecycleOwner) {
+        lifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            Logger.userEvents.collect { event ->
+                snackbarHostState.showSnackbar(
+                    message = event.message,
+                    withDismissAction = true,
+                    duration = SnackbarDuration.Short,
+                )
+            }
         }
     }
 

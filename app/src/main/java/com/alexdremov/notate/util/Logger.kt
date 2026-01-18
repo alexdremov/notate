@@ -42,7 +42,7 @@ object Logger {
 
     fun getMinLogLevelToShow(): Level = minLogLevelToShow
 
-    private fun formatTag(tag: String?): String = if (tag.isNullOrEmpty()) "$TAG_PREFIX.$DEFAULT_TAG" else "$TAG_PREFIX.$tag"
+    private fun formatTag(tag: String?): String = if (tag.isNullOrBlank()) "$TAG_PREFIX.$DEFAULT_TAG" else "$TAG_PREFIX.$tag"
 
     fun showToUser(message: String) {
         _userEvents.tryEmit(UserEvent(message, Level.INFO))
