@@ -25,7 +25,7 @@ object ImageImportHelper {
                 return null
             }
 
-            // Attempt to guess extension, default to "bin" if unknown
+            // Attempt to guess extension, default to "img" if unknown
             val mimeType = context.contentResolver.getType(sourceUri)
             val extension =
                 if (mimeType != null) {
