@@ -20,8 +20,9 @@ object ImageImportHelper {
     ): String? =
         try {
             val destDir = File(context.filesDir, IMPORT_DIR)
-            if (!destDir.exists()) {
-                destDir.mkdirs()
+            if (!destDir.exists() && !destDir.mkdirs()) {
+                Log.e(TAG, "Failed to create import directory: ${destDir.absolutePath}")
+                return null
             }
 
             // Attempt to guess extension, default to "bin" if unknown
