@@ -105,18 +105,12 @@ fun MainScreen(viewModel: HomeViewModel) {
 
     // Listen for global errors
     LaunchedEffect(Unit) {
-        var currentJob: kotlinx.coroutines.Job? = null
         Logger.userEvents.collect { event ->
-            currentJob?.cancel()
-            currentJob =
-                launch {
-                    snackbarHostState.currentSnackbarData?.dismiss()
-                    snackbarHostState.showSnackbar(
-                        message = event.message,
-                        withDismissAction = true,
-                        duration = SnackbarDuration.Short,
-                    )
-                }
+            snackbarHostState.showSnackbar(
+                message = event.message,
+                withDismissAction = true,
+                duration = SnackbarDuration.Short,
+            )
         }
     }
 
