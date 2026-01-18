@@ -10,6 +10,7 @@ import android.graphics.PorterDuff
 import android.graphics.PorterDuffColorFilter
 import android.graphics.Shader
 import android.util.Log
+import com.alexdremov.notate.model.CharcoalCache
 import com.alexdremov.notate.model.Stroke
 import com.onyx.android.sdk.data.note.TouchPoint
 import kotlin.math.hypot
@@ -26,12 +27,6 @@ object CharcoalPenRenderer {
     private const val TAG = "CharcoalRenderer"
     private var textureShader: BitmapShader? = null
     private val textureLock = Any()
-
-    private data class CharcoalMesh(
-        val verts: FloatArray,
-        val colors: IntArray,
-        val outlinePath: Path,
-    )
 
     fun render(
         canvas: Canvas,
@@ -91,9 +86,9 @@ object CharcoalPenRenderer {
         stroke: Stroke,
         baseWidth: Float,
         maxPressure: Float,
-    ): CharcoalMesh? {
-        val cached = stroke.renderCache
-        if (cached is CharcoalMesh) {
+    ): CharcoalCache? {
+        val cached = stroke.renderCache as? CharcoalCache
+        if (cached != null) {
             return cached
         }
 
@@ -204,7 +199,7 @@ object CharcoalPenRenderer {
         }
         path.close()
 
-        val mesh = CharcoalMesh(verts, colors, path)
+        val mesh = CharcoalCache(verts, colors, path)
         stroke.renderCache = mesh
         return mesh
     }

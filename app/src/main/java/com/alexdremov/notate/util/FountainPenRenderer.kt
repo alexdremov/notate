@@ -2,6 +2,7 @@ package com.alexdremov.notate.util
 
 import android.graphics.Path
 import com.alexdremov.notate.config.CanvasConfig
+import com.alexdremov.notate.model.FountainCache
 import com.alexdremov.notate.model.Stroke
 import com.onyx.android.sdk.data.note.TouchPoint
 import kotlin.math.atan2
@@ -28,9 +29,9 @@ object FountainPenRenderer {
         stroke: Stroke,
         maxPressure: Float,
     ): Path {
-        val cached = stroke.renderCache
-        if (cached is Path) {
-            return cached
+        val cached = stroke.renderCache as? FountainCache
+        if (cached != null) {
+            return cached.path
         }
 
         if (stroke.points.size < 2) return Path()
@@ -46,7 +47,7 @@ object FountainPenRenderer {
         // 3. Generate Outline
         val generated = generateOutline(splinePoints)
 
-        stroke.renderCache = generated
+        stroke.renderCache = FountainCache(generated)
         return generated
     }
 

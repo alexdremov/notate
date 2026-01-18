@@ -34,5 +34,5 @@ data class Stroke(
      * Not serialized.
      */
     @Transient
-    var renderCache: Any? = null
+    var renderCache: RenderCache? = null
 }

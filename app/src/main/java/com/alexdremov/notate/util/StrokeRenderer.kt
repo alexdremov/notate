@@ -108,8 +108,8 @@ object StrokeRenderer {
             val originalColor = paint.color
             val opaqueColor = originalColor or -0x1000000 // Force Alpha 255
 
-            // Use centralized bounds calculation for consistency
-            val bounds = StrokeGeometry.computeStrokeBounds(stroke.path, stroke.width, stroke.style)
+            // Use cached bounds from Stroke (already calculated during creation)
+            val bounds = stroke.bounds
 
             // saveLayer uses the Paint's current alpha for the composition on restore.
             // So we keep 'paint' as is (with alpha) for the saveLayer call.
@@ -121,7 +121,7 @@ object StrokeRenderer {
                 // Ensure caps/joins are round for smooth path
                 paint.strokeCap = Paint.Cap.ROUND
                 paint.strokeJoin = Paint.Join.ROUND
-                drawPath(canvas, paint, stroke.points)
+                canvas.drawPath(stroke.path, paint)
             } finally {
                 canvas.restoreToCount(saveCount)
                 // Restore paint color just in case, though usually reset() is called by caller
@@ -138,7 +138,7 @@ object StrokeRenderer {
             maxPressure: Float,
         ) {
             paint.style = Paint.Style.STROKE
-            drawPath(canvas, paint, stroke.points)
+            canvas.drawPath(stroke.path, paint)
         }
     }
 
@@ -255,7 +255,7 @@ object StrokeRenderer {
             } catch (e: Exception) {
                 // Fallback on error
                 paint.style = Paint.Style.STROKE
-                drawPath(canvas, paint, stroke.points)
+                canvas.drawPath(stroke.path, paint)
             }
 
             if (debug || CanvasConfig.DEBUG_SHOW_BOUNDING_BOX) drawDebugBounds(canvas, stroke.bounds)
@@ -286,20 +286,6 @@ object StrokeRenderer {
         bounds: RectF,
     ) {
         canvas.drawRect(bounds, debugPaint)
-    }
-
-    private fun drawPath(
-        canvas: Canvas,
-        paint: Paint,
-        points: List<TouchPoint>,
-    ) {
-        if (points.isEmpty()) return
-        val path = Path()
-        path.moveTo(points[0].x, points[0].y)
-        for (i in 1 until points.size) {
-            path.lineTo(points[i].x, points[i].y)
-        }
-        canvas.drawPath(path, paint)
     }
 
     /**

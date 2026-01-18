@@ -5,6 +5,7 @@ import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Path
 import android.util.Log
+import com.alexdremov.notate.model.BallpointCache
 import com.alexdremov.notate.model.Stroke
 import com.onyx.android.sdk.data.note.TouchPoint
 import kotlin.math.abs
@@ -25,12 +26,6 @@ object BallpointPenRenderer {
     // Thresholds for merging segments to optimize draw calls
     private const val WIDTH_THRESHOLD = 0.5f
     private const val ALPHA_THRESHOLD = 5
-
-    private data class BallpointSegment(
-        val path: Path,
-        val width: Float,
-        val alpha: Int,
-    )
 
     fun render(
         canvas: Canvas,
@@ -74,17 +69,16 @@ object BallpointPenRenderer {
     private fun getOrValidateSegments(
         stroke: Stroke,
         maxPressure: Float,
-    ): List<BallpointSegment>? {
-        @Suppress("UNCHECKED_CAST")
-        val cached = stroke.renderCache as? List<BallpointSegment>
+    ): List<BallpointCache.BallpointSegment>? {
+        val cached = stroke.renderCache as? BallpointCache
         if (cached != null) {
-            return cached
+            return cached.segments
         }
 
         val points = stroke.points
         if (points.isEmpty()) return null
 
-        val segments = ArrayList<BallpointSegment>()
+        val segments = ArrayList<BallpointCache.BallpointSegment>()
 
         // Ballpoint dynamics configuration
         val baseWidth = stroke.width
@@ -117,7 +111,7 @@ object BallpointPenRenderer {
                 path.lineTo(start.x, start.y)
             }
             val (w, a) = getProps(start)
-            segments.add(BallpointSegment(path, w, a))
+            segments.add(BallpointCache.BallpointSegment(path, w, a))
         } else {
             // Smoothed segments
             var currentPath = Path()
@@ -150,7 +144,7 @@ object BallpointPenRenderer {
 
                 if (widthDiff > WIDTH_THRESHOLD || alphaDiff > ALPHA_THRESHOLD) {
                     // Flush current segment
-                    segments.add(BallpointSegment(currentPath, avgWidth, avgAlpha))
+                    segments.add(BallpointCache.BallpointSegment(currentPath, avgWidth, avgAlpha))
 
                     // Start new segment
                     currentPath = Path()
@@ -194,7 +188,7 @@ object BallpointPenRenderer {
                 // If diff is large, push old path and start new one
                 if (abs(ptWidth - activeWidth) > WIDTH_THRESHOLD || abs(ptAlpha - activeAlpha) > ALPHA_THRESHOLD) {
                     // Add current active path to segments
-                    segments.add(BallpointSegment(activePath, activeWidth, activeAlpha))
+                    segments.add(BallpointCache.BallpointSegment(activePath, activeWidth, activeAlpha))
 
                     // Start new path
                     activePath = Path()
@@ -242,10 +236,10 @@ object BallpointPenRenderer {
 
             // Final line to last point
             activePath.lineTo(p0.x, p0.y)
-            segments.add(BallpointSegment(activePath, activeWidth, activeAlpha))
+            segments.add(BallpointCache.BallpointSegment(activePath, activeWidth, activeAlpha))
         }
 
-        stroke.renderCache = segments
+        stroke.renderCache = BallpointCache(segments)
         return segments
     }
 }
