@@ -23,12 +23,14 @@ object Logger {
         val level: Level,
     )
 
-    enum class Level {
-        DEBUG,
-        INFO,
-        WARNING,
-        ERROR,
-        NONE,
+    enum class Level(
+        val priority: Int,
+    ) {
+        DEBUG(0),
+        INFO(1),
+        WARNING(2),
+        ERROR(3),
+        NONE(4),
     }
 
     private var minLogLevelToShow: Level = Level.NONE
@@ -46,7 +48,7 @@ object Logger {
         message: String,
     ) {
         Log.d(formatTag(tag), message)
-        if (Level.DEBUG >= minLogLevelToShow) {
+        if (Level.DEBUG.priority >= minLogLevelToShow.priority) {
             _userEvents.tryEmit(UserEvent(message, Level.DEBUG))
         }
     }
@@ -56,7 +58,7 @@ object Logger {
         message: String,
     ) {
         Log.i(formatTag(tag), message)
-        if (Level.INFO >= minLogLevelToShow) {
+        if (Level.INFO.priority >= minLogLevelToShow.priority) {
             _userEvents.tryEmit(UserEvent(message, Level.INFO))
         }
     }
@@ -71,7 +73,7 @@ object Logger {
         } else {
             Log.w(formatTag(tag), message)
         }
-        if (Level.WARNING >= minLogLevelToShow) {
+        if (Level.WARNING.priority >= minLogLevelToShow.priority) {
             _userEvents.tryEmit(UserEvent(message, Level.WARNING))
         }
     }
@@ -89,7 +91,7 @@ object Logger {
             Log.e(finalTag, message)
         }
 
-        if (showToUser || Level.ERROR >= minLogLevelToShow) {
+        if (showToUser || Level.ERROR.priority >= minLogLevelToShow.priority) {
             _userEvents.tryEmit(UserEvent(message, Level.ERROR))
         }
     }

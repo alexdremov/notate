@@ -15,6 +15,8 @@ import android.widget.TextView
 import androidx.core.view.setPadding
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -27,7 +29,7 @@ class ErrorBannerView
     ) : FrameLayout(context, attrs, defStyleAttr) {
         private val scrollView: ScrollView
         private val messagesContainer: LinearLayout
-        private val uiScope = CoroutineScope(Dispatchers.Main)
+        private var uiScope: CoroutineScope? = null
 
         // Max height for the banner area (approx 180dp)
         private val maxHeightPx = (180 * context.resources.displayMetrics.density).toInt()
@@ -56,6 +58,17 @@ class ErrorBannerView
 
             scrollView.addView(messagesContainer)
             addView(scrollView)
+        }
+
+        override fun onAttachedToWindow() {
+            super.onAttachedToWindow()
+            uiScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
+        }
+
+        override fun onDetachedFromWindow() {
+            super.onDetachedFromWindow()
+            uiScope?.cancel()
+            uiScope = null
         }
 
         override fun onMeasure(
@@ -90,7 +103,7 @@ class ErrorBannerView
             }
 
             // Auto-remove
-            uiScope.launch {
+            uiScope?.launch {
                 delay(duration)
                 removeMessage(messageView)
             }

@@ -31,6 +31,7 @@ import com.alexdremov.notate.ui.theme.NotateTheme
 import com.alexdremov.notate.util.Logger
 import com.alexdremov.notate.vm.HomeViewModel
 import com.onyx.android.sdk.api.device.EpdDeviceManager
+import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
     private val viewModel: HomeViewModel by viewModels()
@@ -104,8 +105,18 @@ fun MainScreen(viewModel: HomeViewModel) {
 
     // Listen for global errors
     LaunchedEffect(Unit) {
+        var currentJob: kotlinx.coroutines.Job? = null
         Logger.userEvents.collect { event ->
-            snackbarHostState.showSnackbar(event.message)
+            currentJob?.cancel()
+            currentJob =
+                launch {
+                    snackbarHostState.currentSnackbarData?.dismiss()
+                    snackbarHostState.showSnackbar(
+                        message = event.message,
+                        withDismissAction = true,
+                        duration = SnackbarDuration.Short,
+                    )
+                }
         }
     }
 

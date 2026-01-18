@@ -24,6 +24,7 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.ProcessLifecycleOwner
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import com.alexdremov.notate.R
 import com.alexdremov.notate.data.CanvasData
 import com.alexdremov.notate.databinding.ActivityMainBinding
@@ -363,35 +364,37 @@ class CanvasActivity : AppCompatActivity() {
 
         // ViewModel observation
         lifecycleScope.launch {
-            launch {
-                Logger.userEvents.collect { event ->
-                    binding.errorBanner.show(event.message)
-                }
-            }
-            launch {
-                // Legacy support for Eraser cursor update
-                viewModel.activeTool.collect { tool ->
-                    binding.canvasView.setTool(tool)
-                    if (tool.type == ToolType.ERASER) {
-                        binding.canvasView.setEraser(tool)
+            repeatOnLifecycle(androidx.lifecycle.Lifecycle.State.STARTED) {
+                launch {
+                    Logger.userEvents.collect { event ->
+                        binding.errorBanner.show(event.message)
                     }
                 }
-            }
-            launch {
-                // Observe current eraser for stylus button support
-                viewModel.currentEraser.collect { eraser ->
-                    eraser?.let { binding.canvasView.setEraser(it) }
+                launch {
+                    // Legacy support for Eraser cursor update
+                    viewModel.activeTool.collect { tool ->
+                        binding.canvasView.setTool(tool)
+                        if (tool.type == ToolType.ERASER) {
+                            binding.canvasView.setEraser(tool)
+                        }
+                    }
                 }
-            }
-            launch {
-                viewModel.isDrawingEnabled.collect { enabled ->
-                    binding.canvasView.setDrawingEnabled(enabled)
+                launch {
+                    // Observe current eraser for stylus button support
+                    viewModel.currentEraser.collect { eraser ->
+                        eraser?.let { binding.canvasView.setEraser(it) }
+                    }
                 }
-            }
-            launch {
-                viewModel.isEditMode.collect { isEdit ->
-                    Logger.d("BooxVibesDebug", "CanvasActivity: isEditMode=$isEdit, setting isDragEnabled=${!isEdit}")
-                    binding.toolbarContainer.isDragEnabled = !isEdit
+                launch {
+                    viewModel.isDrawingEnabled.collect { enabled ->
+                        binding.canvasView.setDrawingEnabled(enabled)
+                    }
+                }
+                launch {
+                    viewModel.isEditMode.collect { isEdit ->
+                        Logger.d("BooxVibesDebug", "CanvasActivity: isEditMode=$isEdit, setting isDragEnabled=${!isEdit}")
+                        binding.toolbarContainer.isDragEnabled = !isEdit
+                    }
                 }
             }
         }
