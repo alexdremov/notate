@@ -83,6 +83,16 @@ class OnyxCanvasView
 
         // --- State ---
 
+        // Two-Finger Tap Detection (Undo)
+        private var twoFingerTapDownTime = 0L
+        private var lastTwoFingerTapTime = 0L
+        private var isTwoFingerTapCheck = false
+        private val TWO_FINGER_TAP_MAX_DELAY = 250L
+        private val DOUBLE_TAP_TIMEOUT = 400L
+        private val TWO_FINGER_TAP_SLOP_SQ = 2500f // 50px squared
+        private var twoFingerStartPt1 = floatArrayOf(0f, 0f)
+        private var twoFingerStartPt2 = floatArrayOf(0f, 0f)
+
         private var currentTool: PenTool = PenTool.defaultPens()[0]
 
         private val exclusionRects = ArrayList<Rect>()
@@ -199,6 +209,8 @@ class OnyxCanvasView
             val isStylus = event.getToolType(0) == MotionEvent.TOOL_TYPE_STYLUS
             if (isStylus) return false // Handled by RawInputCallback
 
+            detectTwoFingerTap(event)
+
             // 1. Gesture Detector (Long Press)
             gestureDetector.onTouchEvent(event)
 
@@ -227,6 +239,77 @@ class OnyxCanvasView
 
             return true
         }
+
+        private fun detectTwoFingerTap(event: MotionEvent) {
+            val action = event.actionMasked
+            if (action == MotionEvent.ACTION_POINTER_DOWN && event.pointerCount == 2) {
+                twoFingerTapDownTime = System.currentTimeMillis()
+                isTwoFingerTapCheck = true
+                twoFingerStartPt1[0] = event.getX(0)
+                twoFingerStartPt1[1] = event.getY(0)
+                twoFingerStartPt2[0] = event.getX(1)
+                twoFingerStartPt2[1] = event.getY(1)
+            } else if (action == MotionEvent.ACTION_POINTER_UP && event.pointerCount == 2) {
+                if (isTwoFingerTapCheck) {
+                    val now = System.currentTimeMillis()
+                    val duration = now - twoFingerTapDownTime
+                    if (duration < TWO_FINGER_TAP_MAX_DELAY) {
+                        val d1 =
+                            distSq(
+                                event.getX(0),
+                                event.getY(0),
+                                twoFingerStartPt1[0],
+                                twoFingerStartPt1[1],
+                            )
+                        val d2 =
+                            distSq(
+                                event.getX(1),
+                                event.getY(1),
+                                twoFingerStartPt2[0],
+                                twoFingerStartPt2[1],
+                            )
+                        if (d1 < TWO_FINGER_TAP_SLOP_SQ && d2 < TWO_FINGER_TAP_SLOP_SQ) {
+                            if (now - lastTwoFingerTapTime < DOUBLE_TAP_TIMEOUT) {
+                                undo()
+                                lastTwoFingerTapTime = 0L // Reset to prevent triple-tap triggering undo twice
+                            } else {
+                                lastTwoFingerTapTime = now
+                            }
+                            isTwoFingerTapCheck = false
+                        }
+                    }
+                }
+            } else if (action == MotionEvent.ACTION_MOVE && isTwoFingerTapCheck) {
+                if (event.pointerCount >= 2) {
+                    val d1 =
+                        distSq(
+                            event.getX(0),
+                            event.getY(0),
+                            twoFingerStartPt1[0],
+                            twoFingerStartPt1[1],
+                        )
+                    val d2 =
+                        distSq(
+                            event.getX(1),
+                            event.getY(1),
+                            twoFingerStartPt2[0],
+                            twoFingerStartPt2[1],
+                        )
+                    if (d1 > TWO_FINGER_TAP_SLOP_SQ || d2 > TWO_FINGER_TAP_SLOP_SQ) {
+                        isTwoFingerTapCheck = false
+                    }
+                }
+            } else if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) {
+                isTwoFingerTapCheck = false
+            }
+        }
+
+        private fun distSq(
+            x1: Float,
+            y1: Float,
+            x2: Float,
+            y2: Float,
+        ) = (x1 - x2) * (x1 - x2) + (y1 - y2) * (y1 - y2)
 
         override fun onGenericMotionEvent(event: MotionEvent): Boolean {
             when (event.actionMasked) {
