@@ -327,6 +327,7 @@ object PdfExporter {
         canvas: Canvas,
         items: List<CanvasItem>,
         bounds: RectF,
+        paint: Paint,
         context: android.content.Context,
     ) = withContext(Dispatchers.Default) {
         val tileSize = 2048
