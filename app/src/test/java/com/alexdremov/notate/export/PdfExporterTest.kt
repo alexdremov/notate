@@ -92,7 +92,7 @@ class PdfExporterTest {
     private fun createMockPdfDocumentWrapper(): PdfDocumentWrapper {
         val doc = mockk<PdfDocumentWrapper>(relaxed = true)
         every { doc.startPage(any()) } answers {
-            val pageWrapper = mockk<PdfPageWrapper>(relaxed = true)
+            val pageWrapper = mockk<PdfPageWrapper<Any>>(relaxed = true)
             val canvas = mockk<Canvas>(relaxed = true)
             every { pageWrapper.canvas } returns canvas
             pageWrapper
@@ -191,7 +191,7 @@ class PdfExporterTest {
             val mockDoc = createMockPdfDocumentWrapper()
 
             // Capture the canvas to verify draw calls
-            val pageWrapper = mockk<PdfPageWrapper>(relaxed = true)
+            val pageWrapper = mockk<PdfPageWrapper<Any>>(relaxed = true)
             val canvas = mockk<Canvas>(relaxed = true)
             every { pageWrapper.canvas } returns canvas
 
@@ -207,13 +207,6 @@ class PdfExporterTest {
             )
 
             verify { mockDoc.startPage(any()) }
-
-            // Verify multiple drawBitmap calls.
-            // 5000x5000 area. Tile size 2048.
-            // Cols: ceil(5000/2048) = 3
-            // Rows: ceil(5000/2048) = 3
-            // Total tiles: 9.
-            // However, tiles are only rendered if they intersect items.
         }
 
     @Test
@@ -239,7 +232,7 @@ class PdfExporterTest {
             val outputStream = ByteArrayOutputStream()
             val mockDoc = createMockPdfDocumentWrapper()
 
-            val pageWrapper = mockk<PdfPageWrapper>(relaxed = true)
+            val pageWrapper = mockk<PdfPageWrapper<Any>>(relaxed = true)
             val canvas = mockk<Canvas>(relaxed = true)
             every { pageWrapper.canvas } returns canvas
             every { mockDoc.startPage(any()) } returns pageWrapper
@@ -260,6 +253,38 @@ class PdfExporterTest {
 
             verify { mockDoc.finishPage(any()) }
             verify { mockDoc.close() }
+        }
+
+    @Test
+    fun `test export invokes progress callback`() =
+        runTest(testDispatcher) {
+            val model = mockk<InfiniteCanvasModel>()
+            val stroke = createTestStroke(100f, 100f)
+            val callback = mockk<PdfExporter.ProgressCallback>(relaxed = true)
+
+            every { model.performRead(any()) } answers {
+                val block = arg<(List<com.alexdremov.notate.model.CanvasItem>) -> Unit>(0)
+                block(listOf(stroke))
+            }
+            every { model.getContentBounds() } returns RectF(100f, 100f, 200f, 200f)
+            every { model.canvasType } returns CanvasType.INFINITE
+            every { model.pageWidth } returns CanvasConfig.PAGE_A4_WIDTH
+            every { model.pageHeight } returns CanvasConfig.PAGE_A4_HEIGHT
+            every { model.backgroundStyle } returns BackgroundStyle.Blank()
+
+            val outputStream = ByteArrayOutputStream()
+            val mockDoc = createMockPdfDocumentWrapper()
+
+            PdfExporter.export(
+                context,
+                model,
+                outputStream,
+                isVector = true,
+                callback = callback,
+                pdfDocumentFactory = { mockDoc },
+            )
+
+            verify { callback.onProgress(any(), any()) }
         }
 
     @Test

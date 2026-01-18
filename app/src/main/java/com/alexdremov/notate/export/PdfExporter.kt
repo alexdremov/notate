@@ -4,7 +4,6 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
-import android.graphics.Rect
 import android.graphics.RectF
 import android.graphics.pdf.PdfDocument
 import com.alexdremov.notate.config.CanvasConfig
@@ -16,7 +15,6 @@ import com.alexdremov.notate.model.Stroke
 import com.alexdremov.notate.ui.render.BackgroundDrawer
 import com.alexdremov.notate.ui.render.background.PatternLayoutHelper
 import com.alexdremov.notate.util.StrokeRenderer
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.currentCoroutineContext
@@ -29,27 +27,26 @@ import kotlinx.coroutines.withContext
 import java.io.OutputStream
 import kotlin.math.ceil
 import kotlin.math.floor
-import kotlin.math.max
 import kotlin.math.min
 
 // Wrapper interface for PdfDocument.Page (final class)
-interface PdfPageWrapper {
+interface PdfPageWrapper<T> {
     val canvas: Canvas
-    val wrappedPage: Any // Keep reference to original if needed for finishPage
+    val wrappedPage: T // Keep reference to original if needed for finishPage
 }
 
 class AndroidPdfPageWrapper(
     private val page: PdfDocument.Page,
-) : PdfPageWrapper {
+) : PdfPageWrapper<PdfDocument.Page> {
     override val canvas: Canvas get() = page.canvas
-    override val wrappedPage: Any get() = page
+    override val wrappedPage: PdfDocument.Page get() = page
 }
 
 // Wrapper interface to allow mocking PdfDocument
 interface PdfDocumentWrapper {
-    fun startPage(pageInfo: PdfDocument.PageInfo): PdfPageWrapper
+    fun startPage(pageInfo: PdfDocument.PageInfo): PdfPageWrapper<*>
 
-    fun finishPage(page: PdfPageWrapper)
+    fun finishPage(page: PdfPageWrapper<*>)
 
     fun writeTo(out: OutputStream)
 
@@ -59,10 +56,15 @@ interface PdfDocumentWrapper {
 class AndroidPdfDocumentWrapper : PdfDocumentWrapper {
     private val document = PdfDocument()
 
-    override fun startPage(pageInfo: PdfDocument.PageInfo): PdfPageWrapper = AndroidPdfPageWrapper(document.startPage(pageInfo))
+    override fun startPage(pageInfo: PdfDocument.PageInfo): PdfPageWrapper<PdfDocument.Page> =
+        AndroidPdfPageWrapper(document.startPage(pageInfo))
 
-    override fun finishPage(page: PdfPageWrapper) {
-        document.finishPage(page.wrappedPage as PdfDocument.Page)
+    override fun finishPage(page: PdfPageWrapper<*>) {
+        if (page is AndroidPdfPageWrapper) {
+            document.finishPage(page.wrappedPage)
+        } else {
+            throw IllegalArgumentException("Invalid page wrapper type")
+        }
     }
 
     override fun writeTo(out: OutputStream) {
@@ -340,9 +342,10 @@ object PdfExporter {
         val maxTileBytes = tileSize.toLong() * tileSize.toLong() * bytesPerPixel
         // Be conservative: only allow a fraction of the heap to be used by tiles.
         val safetyDivider = 6L
-        val maxTilesByMemory = (maxMemoryBytes / safetyDivider / maxTileBytes)
-            .coerceIn(1L, 3L)
-            .toInt()
+        val maxTilesByMemory =
+            (maxMemoryBytes / safetyDivider / maxTileBytes)
+                .coerceIn(1L, 3L)
+                .toInt()
         val semaphore = Semaphore(maxTilesByMemory)
         val mutex = Mutex()
 
@@ -363,49 +366,45 @@ object PdfExporter {
                 async(Dispatchers.Default) {
                     semaphore.withPermit {
                         currentCoroutineContext().ensureActive()
-                        try {
-                            val tileItems = items.filter { RectF.intersects(it.bounds, tileRect) }
-                            if (tileItems.isNotEmpty()) {
-                                // Create a specific paint for this thread
-                                val threadPaint =
-                                    Paint().apply {
-                                        isAntiAlias = true
-                                        isDither = true
-                                        strokeJoin = Paint.Join.ROUND
-                                        strokeCap = Paint.Cap.ROUND
-                                    }
 
-                                var bitmap: Bitmap? = null
-                                try {
-                                    // Render to Bitmap (Heavy CPU)
-                                    val w = tileRect.width().toInt().coerceAtLeast(1)
-                                    val h = tileRect.height().toInt().coerceAtLeast(1)
-
-                                    bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
-                                    val bmpCanvas = Canvas(bitmap)
-                                    bmpCanvas.translate(-tileRect.left, -tileRect.top)
-
-                                    for (item in tileItems) {
-                                        if (item is Stroke) {
-                                            threadPaint.color = item.color
-                                            threadPaint.strokeWidth = item.width
-                                        }
-                                        StrokeRenderer.drawItem(bmpCanvas, item, false, threadPaint, context)
-                                    }
-
-                                    currentCoroutineContext().ensureActive()
-
-                                    // Draw to PDF (Fast, Serialized)
-                                    mutex.withLock {
-                                        canvas.drawBitmap(bitmap, tileRect.left, tileRect.top, null)
-                                    }
-                                } finally {
-                                    bitmap?.recycle()
+                        val tileItems = items.filter { RectF.intersects(it.bounds, tileRect) }
+                        if (tileItems.isNotEmpty()) {
+                            // Create a specific paint for this thread
+                            val threadPaint =
+                                Paint().apply {
+                                    isAntiAlias = true
+                                    isDither = true
+                                    strokeJoin = Paint.Join.ROUND
+                                    strokeCap = Paint.Cap.ROUND
                                 }
+
+                            var bitmap: Bitmap? = null
+                            try {
+                                // Render to Bitmap (Heavy CPU)
+                                val w = tileRect.width().toInt().coerceAtLeast(1)
+                                val h = tileRect.height().toInt().coerceAtLeast(1)
+
+                                bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+                                val bmpCanvas = Canvas(bitmap)
+                                bmpCanvas.translate(-tileRect.left, -tileRect.top)
+
+                                for (item in tileItems) {
+                                    if (item is Stroke) {
+                                        threadPaint.color = item.color
+                                        threadPaint.strokeWidth = item.width
+                                    }
+                                    StrokeRenderer.drawItem(bmpCanvas, item, false, threadPaint, context)
+                                }
+
+                                currentCoroutineContext().ensureActive()
+
+                                // Draw to PDF (Fast, Serialized)
+                                mutex.withLock {
+                                    canvas.drawBitmap(bitmap, tileRect.left, tileRect.top, null)
+                                }
+                            } finally {
+                                bitmap?.recycle()
                             }
-                        } catch (e: Exception) {
-                            if (e is CancellationException) throw e
-                            e.printStackTrace()
                         }
                     }
                 }
