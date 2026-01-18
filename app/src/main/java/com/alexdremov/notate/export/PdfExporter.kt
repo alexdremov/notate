@@ -64,7 +64,9 @@ class AndroidPdfDocumentWrapper : PdfDocumentWrapper {
         if (page is AndroidPdfPageWrapper) {
             document.finishPage(page.wrappedPage)
         } else {
-            throw IllegalArgumentException("Invalid page wrapper type")
+            throw IllegalArgumentException(
+                "Invalid page wrapper type: ${page::class.java.name}. Expected AndroidPdfPageWrapper."
+            )
         }
     }
 
