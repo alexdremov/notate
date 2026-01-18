@@ -341,13 +341,19 @@ object PdfExporter {
         // Estimate worst-case tile memory as ARGB_8888 2048x2048 (~16MB), then
         // derive a conservative concurrency limit from available heap to account
         // for boundary tiles, Paint objects, temporary buffers, etc.
-        val maxMemoryBytes = Runtime.getRuntime().maxMemory()
+        val runtime = Runtime.getRuntime()
+        val maxMemoryBytes = runtime.maxMemory()
+        val totalMemoryBytes = runtime.totalMemory()
+        val freeMemoryBytes = runtime.freeMemory()
+        // Approximate currently available heap as max - total + free.
+        val availableMemoryBytes = (maxMemoryBytes - totalMemoryBytes + freeMemoryBytes)
+            .coerceAtLeast(0L)
         val bytesPerPixel = 4L // ARGB_8888
         val maxTileBytes = tileSize.toLong() * tileSize.toLong() * bytesPerPixel
         // Be conservative: only allow a fraction of the heap to be used by tiles.
         val safetyDivider = 6L
         val maxTilesByMemory =
-            (maxMemoryBytes / safetyDivider / maxTileBytes)
+            (availableMemoryBytes / safetyDivider / maxTileBytes)
                 .coerceIn(1L, 3L)
                 .toInt()
         val semaphore = Semaphore(maxTilesByMemory)
