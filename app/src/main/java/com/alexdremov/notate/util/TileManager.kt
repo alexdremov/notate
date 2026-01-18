@@ -140,7 +140,7 @@ class TileManager(
                 }
             }
 
-        // Throttle UI Updates (Debounce 16ms -> ~60fps cap)
+        // Throttle UI updates: debounce based on TILE_MANAGER_TARGET_FPS (caps update rate)
         initJobs +=
             scope.launch {
                 updateChannel
