@@ -254,21 +254,7 @@ class OnyxCanvasView
                     val now = System.currentTimeMillis()
                     val duration = now - twoFingerTapDownTime
                     if (duration < TWO_FINGER_TAP_MAX_DELAY) {
-                        val d1 =
-                            distSq(
-                                event.getX(0),
-                                event.getY(0),
-                                twoFingerStartPt1[0],
-                                twoFingerStartPt1[1],
-                            )
-                        val d2 =
-                            distSq(
-                                event.getX(1),
-                                event.getY(1),
-                                twoFingerStartPt2[0],
-                                twoFingerStartPt2[1],
-                            )
-                        if (d1 < TWO_FINGER_TAP_SLOP_SQ && d2 < TWO_FINGER_TAP_SLOP_SQ) {
+                        if (!isTapSlopExceeded(event)) {
                             if (now - lastTwoFingerTapTime < DOUBLE_TAP_TIMEOUT) {
                                 undo()
                                 lastTwoFingerTapTime = 0L // Reset to prevent triple-tap triggering undo twice
@@ -281,27 +267,20 @@ class OnyxCanvasView
                 }
             } else if (action == MotionEvent.ACTION_MOVE && isTwoFingerTapCheck) {
                 if (event.pointerCount >= 2) {
-                    val d1 =
-                        distSq(
-                            event.getX(0),
-                            event.getY(0),
-                            twoFingerStartPt1[0],
-                            twoFingerStartPt1[1],
-                        )
-                    val d2 =
-                        distSq(
-                            event.getX(1),
-                            event.getY(1),
-                            twoFingerStartPt2[0],
-                            twoFingerStartPt2[1],
-                        )
-                    if (d1 > TWO_FINGER_TAP_SLOP_SQ || d2 > TWO_FINGER_TAP_SLOP_SQ) {
+                    if (isTapSlopExceeded(event)) {
                         isTwoFingerTapCheck = false
                     }
                 }
             } else if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) {
                 isTwoFingerTapCheck = false
             }
+        }
+
+        private fun isTapSlopExceeded(event: MotionEvent): Boolean {
+            if (event.pointerCount < 2) return false
+            val d1 = distSq(event.getX(0), event.getY(0), twoFingerStartPt1[0], twoFingerStartPt1[1])
+            val d2 = distSq(event.getX(1), event.getY(1), twoFingerStartPt2[0], twoFingerStartPt2[1])
+            return d1 > TWO_FINGER_TAP_SLOP_SQ || d2 > TWO_FINGER_TAP_SLOP_SQ
         }
 
         private fun distSq(
