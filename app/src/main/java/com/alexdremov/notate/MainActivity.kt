@@ -112,7 +112,22 @@ fun MainScreen(viewModel: HomeViewModel) {
     // Folder Picker for "Add Project"
     val projectLocationPicker =
         rememberLauncherForActivityResult(
-            contract = ActivityResultContracts.OpenDocumentTree(),
+            contract =
+                object : ActivityResultContracts.OpenDocumentTree() {
+                    override fun createIntent(
+                        context: android.content.Context,
+                        input: android.net.Uri?,
+                    ): Intent {
+                        val intent = super.createIntent(context, input)
+                        intent.putExtra(Intent.EXTRA_LOCAL_ONLY, false)
+                        intent.addFlags(
+                            Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                                Intent.FLAG_GRANT_WRITE_URI_PERMISSION or
+                                Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION,
+                        )
+                        return intent
+                    }
+                },
         ) { uri ->
             if (uri != null && pendingProjectName != null) {
                 val flags =
