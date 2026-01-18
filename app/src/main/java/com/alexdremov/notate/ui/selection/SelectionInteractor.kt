@@ -52,11 +52,15 @@ class SelectionInteractor(
     private val autoScrollHandler = Handler(Looper.getMainLooper())
     private var scrollDirX = 0f
     private var scrollDirY = 0f
+    private var isAutoScrolling = false
 
     private val autoScrollRunnable =
         object : Runnable {
             override fun run() {
-                if (!isDragging || (scrollDirX == 0f && scrollDirY == 0f)) return
+                if (!isDragging || (scrollDirX == 0f && scrollDirY == 0f)) {
+                    isAutoScrolling = false
+                    return
+                }
 
                 // Apply Scroll to View
                 val stepX = scrollDirX * BASE_SCROLL_STEP
@@ -502,7 +506,8 @@ class SelectionInteractor(
         }
 
         if (scrollDirX != 0f || scrollDirY != 0f) {
-            if (!autoScrollHandler.hasCallbacks(autoScrollRunnable)) {
+            if (!isAutoScrolling) {
+                isAutoScrolling = true
                 autoScrollHandler.post(autoScrollRunnable)
             }
         } else {
@@ -512,6 +517,7 @@ class SelectionInteractor(
 
     private fun stopAutoScroll() {
         autoScrollHandler.removeCallbacks(autoScrollRunnable)
+        isAutoScrolling = false
         scrollDirX = 0f
         scrollDirY = 0f
     }
