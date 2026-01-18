@@ -6,25 +6,28 @@ import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.RectF
+import android.net.Uri
+import com.alexdremov.notate.model.CanvasImage
 import com.alexdremov.notate.model.Stroke
 import com.alexdremov.notate.model.StrokeType
 import com.alexdremov.notate.testutil.SnapshotVerifier
+import com.alexdremov.notate.util.ImageRenderer
 import com.alexdremov.notate.util.StrokeRenderer
 import com.onyx.android.sdk.api.device.epd.EpdController
 import com.onyx.android.sdk.data.note.TouchPoint
 import com.onyx.android.sdk.pen.NeoBrushPenWrapper
 import io.mockk.every
 import io.mockk.mockkStatic
-import io.mockk.slot
 import io.mockk.unmockkStatic
 import org.junit.After
-import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
+import java.io.File
+import java.io.FileOutputStream
 import kotlin.math.sin
 
 @RunWith(RobolectricTestRunner::class)
@@ -202,5 +205,43 @@ class RenderingSnapshotTest {
 
         // 5. Verify
         SnapshotVerifier.verify(bitmap, "complex_stroke_fountain_highlighter")
+    }
+
+    @Test
+    fun `test snapshot image import`() {
+        // 1. Create a dummy image file (Red Square)
+        val imageSize = 100
+        val imageBitmap = Bitmap.createBitmap(imageSize, imageSize, Bitmap.Config.ARGB_8888)
+        imageBitmap.eraseColor(Color.RED)
+
+        val tempFile = File.createTempFile("test_image", ".png")
+        tempFile.deleteOnExit()
+        val out = FileOutputStream(tempFile)
+        imageBitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
+        out.flush()
+        out.close()
+
+        // 2. Create CanvasImage model
+        val bounds = RectF(50f, 50f, 150f, 150f)
+        val imageItem =
+            CanvasImage(
+                uri = Uri.fromFile(tempFile).toString(),
+                bounds = bounds,
+                zIndex = 0f,
+                order = 0,
+            )
+
+        // 3. Render
+        val canvasWidth = 200
+        val canvasHeight = 200
+        val bitmap = Bitmap.createBitmap(canvasWidth, canvasHeight, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        canvas.drawColor(Color.WHITE)
+        val paint = Paint()
+
+        ImageRenderer.draw(canvas, paint, imageItem, null)
+
+        // 4. Verify
+        SnapshotVerifier.verify(bitmap, "snapshot_image_import")
     }
 }
