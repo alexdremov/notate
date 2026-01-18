@@ -85,13 +85,7 @@ class CanvasActivity : AppCompatActivity() {
         registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
             if (uri != null) {
                 lifecycleScope.launch {
-                    // 1. Capture View State (UI Thread)
-                    val matrix = android.graphics.Matrix()
-                    binding.canvasView.getViewportMatrix(matrix)
-                    val screenCenterX = binding.canvasView.width / 2f
-                    val screenCenterY = binding.canvasView.height / 2f
-
-                    // 2. Import & Measure (IO Thread)
+                    // 1. Import & Measure (IO Thread)
                     val (finalUriStr, w, h) =
                         withContext(Dispatchers.IO) {
                             // Import
@@ -146,6 +140,12 @@ class CanvasActivity : AppCompatActivity() {
                             }
                             Triple(uriToUse.toString(), width, height)
                         }
+
+                    // 2. Capture View State (UI Thread) - Recapture after IO to avoid race condition
+                    val matrix = android.graphics.Matrix()
+                    binding.canvasView.getViewportMatrix(matrix)
+                    val screenCenterX = binding.canvasView.width / 2f
+                    val screenCenterY = binding.canvasView.height / 2f
 
                     // 3. Paste (UI Thread)
                     val values = FloatArray(9)

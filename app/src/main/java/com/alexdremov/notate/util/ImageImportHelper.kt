@@ -40,13 +40,19 @@ object ImageImportHelper {
             val fileName = "${UUID.randomUUID()}.$extension"
             val destFile = File(destDir, fileName)
 
-            context.contentResolver.openInputStream(sourceUri)?.use { input ->
-                destFile.outputStream().use { output ->
-                    input.copyTo(output)
-                }
-            }
+            val success =
+                context.contentResolver.openInputStream(sourceUri)?.use { input ->
+                    destFile.outputStream().use { output ->
+                        input.copyTo(output)
+                    }
+                    true
+                } ?: false
 
-            Uri.fromFile(destFile).toString()
+            if (success) {
+                Uri.fromFile(destFile).toString()
+            } else {
+                null
+            }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to import image from $sourceUri", e)
             null
