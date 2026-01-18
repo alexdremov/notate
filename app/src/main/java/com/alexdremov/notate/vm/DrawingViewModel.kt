@@ -8,6 +8,7 @@ import com.alexdremov.notate.model.ActionType
 import com.alexdremov.notate.model.PenTool
 import com.alexdremov.notate.model.ToolType
 import com.alexdremov.notate.model.ToolbarItem
+import com.alexdremov.notate.util.Logger
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -240,7 +241,7 @@ class DrawingViewModel(
     }
 
     fun removeToolbarItem(item: ToolbarItem) {
-        android.util.Log.d("BooxVibesDebug", "ViewModel: removeToolbarItem ID=${item.id}")
+        Logger.d("BooxVibesDebug", "ViewModel: removeToolbarItem ID=${item.id}")
         val currentList = _toolbarItems.value.toMutableList()
         currentList.remove(item)
         _toolbarItems.value = currentList

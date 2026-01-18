@@ -2,7 +2,6 @@ package com.alexdremov.notate.util
 
 import android.content.Context
 import android.net.Uri
-import android.util.Log
 import java.io.File
 import java.util.UUID
 
@@ -21,7 +20,7 @@ object ImageImportHelper {
         try {
             val destDir = File(context.filesDir, IMPORT_DIR)
             if (!destDir.exists() && !destDir.mkdirs()) {
-                Log.e(TAG, "Failed to create import directory: ${destDir.absolutePath}")
+                Logger.e(TAG, "Failed to create import directory: ${destDir.absolutePath}")
                 return null
             }
 
@@ -54,7 +53,7 @@ object ImageImportHelper {
                 null
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to import image from $sourceUri", e)
+            Logger.e(TAG, "Failed to import image from $sourceUri", e)
             return null
         }
     }

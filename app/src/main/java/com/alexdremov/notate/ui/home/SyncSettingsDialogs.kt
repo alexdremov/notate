@@ -1,7 +1,6 @@
 package com.alexdremov.notate.ui.home
 
 import android.app.Activity
-import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.border
@@ -27,6 +26,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.alexdremov.notate.data.*
+import com.alexdremov.notate.util.Logger
 import com.google.android.gms.auth.api.signin.GoogleSignIn
 import com.google.android.gms.auth.api.signin.GoogleSignInAccount
 import com.google.android.gms.auth.api.signin.GoogleSignInOptions
@@ -131,8 +131,7 @@ fun EditRemoteStorageDialog(
                         name = "Google Drive ${account.email}"
                     }
                 } catch (e: ApiException) {
-                    e.printStackTrace()
-                    Toast.makeText(context, "Sign-in failed: ${e.statusCode}", Toast.LENGTH_SHORT).show()
+                    Logger.e("SyncSettings", "Sign-in failed: ${e.statusCode}", e, showToUser = true)
                 }
             } else {
                 // Handle cancellation if needed, or other result codes

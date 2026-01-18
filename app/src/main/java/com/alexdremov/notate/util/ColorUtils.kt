@@ -1,7 +1,6 @@
 package com.alexdremov.notate.util
 
 import android.graphics.Color
-import android.util.Log
 import com.onyx.android.sdk.api.device.epd.UpdateOption
 import com.onyx.android.sdk.device.Device
 
@@ -52,7 +51,7 @@ object ColorUtils {
                 com.onyx.android.sdk.device.Device
                     .currentDevice()
                     .appScopeRefreshMode
-            Log.d("ColorUtils", "Current refresh mode: $currentMode")
+            Logger.d("ColorUtils", "Current refresh mode: $currentMode")
             if (currentMode.toString() != "FAST") {
                 return color
             }

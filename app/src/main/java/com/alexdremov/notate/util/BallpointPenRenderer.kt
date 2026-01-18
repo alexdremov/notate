@@ -4,7 +4,6 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Path
-import android.util.Log
 import com.alexdremov.notate.model.BallpointCache
 import com.alexdremov.notate.model.Stroke
 import com.onyx.android.sdk.data.note.TouchPoint
@@ -58,7 +57,7 @@ object BallpointPenRenderer {
                 canvas.drawPath(segment.path, paint)
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Error rendering ballpoint", e)
+            Logger.e(TAG, "Error rendering ballpoint", e)
         } finally {
             // Restore original paint properties
             paint.color = originalColor

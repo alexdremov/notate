@@ -1,6 +1,5 @@
 package com.alexdremov.notate.util
 
-import android.util.Log
 import android.view.View
 import java.lang.reflect.Method
 
@@ -22,11 +21,11 @@ object OnyxSystemHelper {
             // Found on android.view.View in Onyx frameworks.
             val method: Method = View::class.java.getMethod("setEnablePenSideButton", Boolean::class.javaPrimitiveType)
             method.invoke(view, false)
-            Log.d(TAG, "Successfully disabled system side-button handling for view.")
+            Logger.d(TAG, "Successfully disabled system side-button handling for view.")
         } catch (e: NoSuchMethodException) {
-            Log.w(TAG, "Device does not support setEnablePenSideButton (Not an Onyx device or API changed).")
+            Logger.w(TAG, "Device does not support setEnablePenSideButton (Not an Onyx device or API changed).")
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to invoke setEnablePenSideButton", e)
+            Logger.e(TAG, "Failed to invoke setEnablePenSideButton", e)
         }
     }
 }

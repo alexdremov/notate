@@ -1,8 +1,8 @@
 package com.alexdremov.notate.data
 
 import android.graphics.RectF
-import android.util.Log
 import com.alexdremov.notate.model.Stroke
+import com.alexdremov.notate.util.Logger
 import com.alexdremov.notate.util.StrokeGeometry
 import com.onyx.android.sdk.api.device.epd.EpdController
 import com.onyx.android.sdk.data.note.TouchPoint
@@ -192,7 +192,7 @@ object CanvasSerializer {
                 )
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Error loading canvas data", e)
+            Logger.e(TAG, "Error loading canvas data", e)
         }
     }
 
@@ -299,7 +299,7 @@ object CanvasSerializer {
                                 zIndex = sData.zIndex,
                             )
                         } catch (e: Exception) {
-                            Log.e(TAG, "Error parsing stroke", e)
+                            Logger.e(TAG, "Error parsing stroke", e)
                             null
                         }
                     }
@@ -356,11 +356,11 @@ object CanvasSerializer {
             }
             val insertTime = System.currentTimeMillis()
 
-            Log.d(TAG, "Canvas Load Stats: Items=${items.size}")
-            Log.d(TAG, "  Parallel Parse: ${parallelTime - startTime}ms")
-            Log.d(TAG, "  Bounds Calc:    ${boundsTime - parallelTime}ms")
-            Log.d(TAG, "  Quadtree Build: ${insertTime - boundsTime}ms")
-            Log.d(TAG, "  Total Parse:    ${insertTime - startTime}ms")
+            Logger.d(TAG, "Canvas Load Stats: Items=${items.size}")
+            Logger.d(TAG, "  Parallel Parse: ${parallelTime - startTime}ms")
+            Logger.d(TAG, "  Bounds Calc:    ${boundsTime - parallelTime}ms")
+            Logger.d(TAG, "  Quadtree Build: ${insertTime - boundsTime}ms")
+            Logger.d(TAG, "  Total Parse:    ${insertTime - startTime}ms")
 
             LoadedCanvasState(
                 items = items,

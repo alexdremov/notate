@@ -38,7 +38,7 @@ object EpdFastModeController {
                 // Ignore
             }
         } catch (e: Exception) {
-            e.printStackTrace()
+            Logger.w("EpdFastMode", "Failed to init reflection", e)
         } finally {
             initialized = true
         }
@@ -55,7 +55,7 @@ object EpdFastModeController {
             // Note: UpdateMode is an enum.
             applyTransientUpdateMethod?.invoke(null, UpdateMode.ANIMATION)
         } catch (e: Exception) {
-            e.printStackTrace()
+            Logger.w("EpdFastMode", "Failed to enter fast mode", e)
         }
     }
 
@@ -70,7 +70,7 @@ object EpdFastModeController {
             // Disable Turbo
             setEpdTurboMethod?.invoke(null, false)
         } catch (e: Exception) {
-            e.printStackTrace()
+            Logger.w("EpdFastMode", "Failed to exit fast mode", e)
         }
     }
 }

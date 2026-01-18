@@ -28,6 +28,7 @@ import com.alexdremov.notate.data.CanvasItem
 import com.alexdremov.notate.data.ProjectItem
 import com.alexdremov.notate.ui.home.*
 import com.alexdremov.notate.ui.theme.NotateTheme
+import com.alexdremov.notate.util.Logger
 import com.alexdremov.notate.vm.HomeViewModel
 import com.onyx.android.sdk.api.device.EpdDeviceManager
 
@@ -99,6 +100,14 @@ fun MainScreen(viewModel: HomeViewModel) {
     val syncingProjectIds by viewModel.syncingProjectIds.collectAsState()
 
     val context = LocalContext.current
+    val snackbarHostState = remember { SnackbarHostState() }
+
+    // Listen for global errors
+    LaunchedEffect(Unit) {
+        Logger.userEvents.collect { event ->
+            snackbarHostState.showSnackbar(event.message)
+        }
+    }
 
     // Dialog State
     var showNameDialog by remember { mutableStateOf<DialogType?>(null) }
@@ -149,6 +158,7 @@ fun MainScreen(viewModel: HomeViewModel) {
     }
 
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
                 title = {

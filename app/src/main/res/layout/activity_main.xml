@@ -61,4 +61,12 @@
         android:clickable="true"
         android:focusable="true" />
 
+    <!-- 5. Error Banner (Notification Layer) -->
+    <com.alexdremov.notate.ui.ErrorBannerView
+        android:id="@+id/errorBanner"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top|center_horizontal"
+        android:layout_marginTop="32dp" />
+
 </FrameLayout>

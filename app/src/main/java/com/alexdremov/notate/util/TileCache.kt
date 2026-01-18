@@ -1,7 +1,6 @@
 package com.alexdremov.notate.util
 
 import android.graphics.Bitmap
-import android.util.Log
 import android.util.LruCache
 import com.alexdremov.notate.config.CanvasConfig
 import java.util.Collections
@@ -46,7 +45,7 @@ class TileCache(
         val maxMemory = Runtime.getRuntime().maxMemory()
         val initialSize = (maxMemory * CanvasConfig.CACHE_MEMORY_PERCENT * 0.3).toInt() // Start with 30% of total budget
 
-        Log.i("TileCache", "Initializing with ${initialSize / (1024 * 1024)} MB")
+        Logger.i("TileCache", "Initializing with ${initialSize / (1024 * 1024)} MB")
 
         memoryCache =
             object : LruCache<TileKey, Bitmap>(initialSize) {
@@ -124,7 +123,7 @@ class TileCache(
             val newSize = min(targetSize, maxSafeSize)
             if (newSize != memoryCache.maxSize()) {
                 memoryCache.resize(newSize)
-                Log.i("TileCache", "Resized cache to ${newSize / (1024 * 1024)} MB")
+                Logger.i("TileCache", "Resized cache to ${newSize / (1024 * 1024)} MB")
             }
         }
     }

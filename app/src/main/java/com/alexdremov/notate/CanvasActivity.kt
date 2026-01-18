@@ -38,6 +38,7 @@ import com.alexdremov.notate.ui.ToolbarCoordinator
 import com.alexdremov.notate.ui.export.ExportAction
 import com.alexdremov.notate.ui.navigation.CompactPageNavigation
 import com.alexdremov.notate.ui.toolbar.MainToolbar
+import com.alexdremov.notate.util.Logger
 import com.alexdremov.notate.vm.DrawingViewModel
 import com.onyx.android.sdk.api.device.EpdDeviceManager
 import com.onyx.android.sdk.api.device.epd.EpdController
@@ -104,7 +105,7 @@ class CanvasActivity : AppCompatActivity() {
                                             android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION,
                                         )
                                     } catch (e: Exception) {
-                                        e.printStackTrace()
+                                        Logger.e("ImageImport", "Failed to take permission", e)
                                     }
                                     uri
                                 }
@@ -136,7 +137,7 @@ class CanvasActivity : AppCompatActivity() {
                                     }
                                 }
                             } catch (e: Exception) {
-                                e.printStackTrace()
+                                Logger.e("ImageImport", "Failed to decode dimensions", e, showToUser = true)
                             }
                             Triple(uriToUse.toString(), width, height)
                         }
@@ -363,6 +364,11 @@ class CanvasActivity : AppCompatActivity() {
         // ViewModel observation
         lifecycleScope.launch {
             launch {
+                Logger.userEvents.collect { event ->
+                    binding.errorBanner.show(event.message)
+                }
+            }
+            launch {
                 // Legacy support for Eraser cursor update
                 viewModel.activeTool.collect { tool ->
                     binding.canvasView.setTool(tool)
@@ -384,7 +390,7 @@ class CanvasActivity : AppCompatActivity() {
             }
             launch {
                 viewModel.isEditMode.collect { isEdit ->
-                    android.util.Log.d("BooxVibesDebug", "CanvasActivity: isEditMode=$isEdit, setting isDragEnabled=${!isEdit}")
+                    Logger.d("BooxVibesDebug", "CanvasActivity: isEditMode=$isEdit, setting isDragEnabled=${!isEdit}")
                     binding.toolbarContainer.isDragEnabled = !isEdit
                 }
             }
@@ -434,11 +440,11 @@ class CanvasActivity : AppCompatActivity() {
                     }
 
                     val tUiEnd = System.currentTimeMillis()
-                    android.util.Log.d("CanvasActivity", "  UI Load: ${tUiEnd - tUiStart}ms")
+                    Logger.d("CanvasActivity", "  UI Load: ${tUiEnd - tUiStart}ms")
 
                     if (result.migrationPerformed && result.newPath != null) {
                         currentCanvasPath = result.newPath
-                        android.util.Log.d("CanvasActivity", "Migration completed, new path: $currentCanvasPath")
+                        Logger.d("CanvasActivity", "Migration completed, new path: $currentCanvasPath")
                     }
                 }
             }
@@ -450,19 +456,19 @@ class CanvasActivity : AppCompatActivity() {
         saveCanvas()
         // Trigger background sync if project is configured
         currentCanvasPath?.let { path ->
-            android.util.Log.d("CanvasActivity", "onPause: Attempting to sync for file $path")
+            Logger.d("CanvasActivity", "onPause: Attempting to sync for file $path")
             // Use ProcessLifecycleOwner to ensure sync continues after Activity pause/destroy
             androidx.lifecycle.ProcessLifecycleOwner.get().lifecycleScope.launch(Dispatchers.IO) {
                 try {
                     val projectId = syncManager.findProjectForFile(path)
                     if (projectId != null) {
-                        android.util.Log.d("CanvasActivity", "Triggering background sync for project $projectId")
+                        Logger.d("CanvasActivity", "Triggering background sync for project $projectId")
                         syncManager.syncProject(projectId)
                     } else {
-                        android.util.Log.w("CanvasActivity", "Could not find project for file $path, sync skipped.")
+                        Logger.w("CanvasActivity", "Could not find project for file $path, sync skipped.")
                     }
                 } catch (e: Exception) {
-                    android.util.Log.e("CanvasActivity", "Background sync failed", e)
+                    Logger.e("CanvasActivity", "Background sync failed", e)
                 }
             }
         }
@@ -471,7 +477,7 @@ class CanvasActivity : AppCompatActivity() {
     @androidx.annotation.OptIn(kotlinx.serialization.ExperimentalSerializationApi::class)
     private fun saveCanvas() {
         val path = currentCanvasPath ?: return
-        android.util.Log.d("CanvasActivity", "Saving canvas to $path")
+        Logger.d("CanvasActivity", "Saving canvas to $path")
         val rawData =
             binding.canvasView.getCanvasData().copy(
                 toolbarItems = viewModel.toolbarItems.value,
@@ -483,7 +489,7 @@ class CanvasActivity : AppCompatActivity() {
                     try {
                         canvasRepository.saveCanvas(path, rawData)
                     } catch (e: Exception) {
-                        e.printStackTrace()
+                        Logger.e("CanvasActivity", "Failed to save canvas", e, showToUser = true)
                     }
                 }
             }
@@ -520,7 +526,7 @@ class CanvasActivity : AppCompatActivity() {
         toolId: String,
         targetRect: android.graphics.Rect,
     ) {
-        android.util.Log.d(
+        Logger.d(
             "BooxVibesDebug",
             "CanvasActivity: handleToolClick ID=$toolId, Rect=$targetRect, ActiveID=${viewModel.activeToolId.value}",
         )
@@ -574,7 +580,7 @@ class CanvasActivity : AppCompatActivity() {
             com.alexdremov.notate.util.EpdFastModeController
                 .enterFastMode()
 
-            android.util.Log.d("BooxVibesDebug", "CanvasActivity: Showing Popup!")
+            Logger.d("BooxVibesDebug", "CanvasActivity: Showing Popup!")
             activePenPopup?.show(binding.root, targetRect)
         } else {
             viewModel.selectTool(toolId)

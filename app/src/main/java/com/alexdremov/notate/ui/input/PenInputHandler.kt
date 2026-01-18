@@ -12,6 +12,7 @@ import com.alexdremov.notate.model.PenTool
 import com.alexdremov.notate.model.StrokeType
 import com.alexdremov.notate.model.ToolType
 import com.alexdremov.notate.util.ColorUtils
+import com.alexdremov.notate.util.Logger
 import com.alexdremov.notate.util.ShapeRecognizer
 import com.onyx.android.sdk.api.device.epd.EpdController
 import com.onyx.android.sdk.api.device.epd.UpdateMode
@@ -550,7 +551,7 @@ class PenInputHandler(
                                 .isShapePerfectionEnabled(view.context)
 
                         val result = pendingPerfectShape
-                        android.util.Log.d("PenInputHandler", "onEndRawDrawing: pendingPerfectShape=$result")
+                        Logger.d("PenInputHandler", "onEndRawDrawing: pendingPerfectShape=$result")
 
                         if (shapeEnabled && originalStroke != null && result != null &&
                             result.shape != ShapeRecognizer.RecognizedShape.NONE

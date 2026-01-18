@@ -2,10 +2,10 @@ package com.alexdremov.notate.data
 
 import android.content.Context
 import android.net.Uri
-import android.util.Log
 import androidx.documentfile.provider.DocumentFile
 import com.alexdremov.notate.export.PdfExporter
 import com.alexdremov.notate.model.InfiniteCanvasModel
+import com.alexdremov.notate.util.Logger
 import kotlinx.coroutines.*
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
@@ -59,22 +59,22 @@ class SyncManager(
         projectId: String,
         progressCallback: ((Int, String) -> Unit)? = null,
     ) = withContext(Dispatchers.IO) {
-        Log.d("SyncManager", "Starting sync for project ID: $projectId")
+        Logger.d("SyncManager", "Starting sync for project ID: $projectId")
         val config = SyncPreferencesManager.getProjectSyncConfig(context, projectId)
 
         if (config == null) {
-            Log.w("SyncManager", "No sync config found for project $projectId")
+            Logger.w("SyncManager", "No sync config found for project $projectId")
             return@withContext
         }
 
         if (!config.isEnabled) {
-            Log.d("SyncManager", "Sync disabled for project $projectId")
+            Logger.d("SyncManager", "Sync disabled for project $projectId")
             return@withContext
         }
 
         val storageConfig = SyncPreferencesManager.getRemoteStorages(context).find { it.id == config.remoteStorageId }
         if (storageConfig == null) {
-            Log.e("SyncManager", "Storage config not found for ID: ${config.remoteStorageId}")
+            Logger.e("SyncManager", "Storage config not found for ID: ${config.remoteStorageId}", showToUser = true)
             return@withContext
         }
 
@@ -91,10 +91,10 @@ class SyncManager(
             val remoteFiles =
                 try {
                     progressCallback?.invoke(5, "Listing remote files...")
-                    Log.d("SyncManager", "Listing remote files at ${config.remotePath}")
+                    Logger.d("SyncManager", "Listing remote files at ${config.remotePath}")
                     provider.listFiles(config.remotePath)
                 } catch (e: java.io.FileNotFoundException) {
-                    Log.w("SyncManager", "Remote directory not found, creating: ${config.remotePath}")
+                    Logger.w("SyncManager", "Remote directory not found, creating: ${config.remotePath}")
                     progressCallback?.invoke(10, "Creating remote directory...")
                     if (provider.createDirectory(config.remotePath)) {
                         emptyList()
@@ -102,14 +102,14 @@ class SyncManager(
                         throw java.io.IOException("Failed to create remote directory: ${config.remotePath}")
                     }
                 } catch (e: Exception) {
-                    Log.e("SyncManager", "Error listing files", e)
+                    Logger.e("SyncManager", "Error listing files", e, showToUser = true)
                     throw e
                 }
 
             progressCallback?.invoke(15, "Scanning local project...")
             val projects = PreferencesManager.getProjects(context)
             val projectConfig = projects.find { it.id == projectId } ?: return@withContext
-            Log.d("SyncManager", "Syncing local project at ${projectConfig.uri}")
+            Logger.d("SyncManager", "Syncing local project at ${projectConfig.uri}")
 
             val localFiles = mutableListOf<LocalFile>()
 
@@ -124,7 +124,7 @@ class SyncManager(
                 }
             }
 
-            Log.d("SyncManager", "Found ${localFiles.size} local files and ${remoteFiles.size} remote files")
+            Logger.d("SyncManager", "Found ${localFiles.size} local files and ${remoteFiles.size} remote files")
 
             val totalSteps = localFiles.size + remoteFiles.size
             var currentStep = 0
@@ -143,7 +143,7 @@ class SyncManager(
                 val remotePath = "${config.remotePath.trimEnd('/')}/$cleanRelativePath"
 
                 if (remoteFile == null || localFile.lastModified > remoteFile.lastModified) {
-                    Log.d(
+                    Logger.d(
                         "SyncManager",
                         "Uploading ${localFile.name} (Local: ${localFile.lastModified}, Remote: ${remoteFile?.lastModified})",
                     )
@@ -154,7 +154,7 @@ class SyncManager(
 
                     // Also sync PDF if enabled
                     if (config.syncPdf) {
-                        Log.d("SyncManager", "Generating/Uploading PDF for ${localFile.name}")
+                        Logger.d("SyncManager", "Generating/Uploading PDF for ${localFile.name}")
                         syncPdf(localFile, config.remotePath, provider)
                     }
                 }
@@ -166,7 +166,7 @@ class SyncManager(
 
                 val localFile = localFiles.find { it.name == remoteFile.name }
                 if (localFile == null || remoteFile.lastModified > localFile.lastModified) {
-                    Log.d(
+                    Logger.d(
                         "SyncManager",
                         "Downloading ${remoteFile.name} (Remote: ${remoteFile.lastModified}, Local: ${localFile?.lastModified})",
                     )
@@ -195,29 +195,29 @@ class SyncManager(
             // Update last sync time
             SyncPreferencesManager.updateProjectSyncConfig(context, config.copy(lastSyncTimestamp = System.currentTimeMillis()))
             progressCallback?.invoke(100, "Sync complete")
-            Log.d("SyncManager", "Sync finished successfully")
+            Logger.d("SyncManager", "Sync finished successfully")
         } catch (e: Exception) {
-            Log.e("SyncManager", "Sync failed", e)
+            Logger.e("SyncManager", "Sync failed", e, showToUser = true)
             progressCallback?.invoke(0, "Sync failed: ${e.message}")
         }
     }
 
     suspend fun findProjectForFile(filePath: String): String? =
         withContext(Dispatchers.IO) {
-            Log.d("SyncManager", "Searching project for file: $filePath")
+            Logger.d("SyncManager", "Searching project for file: $filePath")
             val projects = PreferencesManager.getProjects(context)
 
             // Normalize file path if it's content://
             val targetUri = if (filePath.startsWith("content://")) Uri.parse(filePath) else Uri.fromFile(File(filePath))
 
             for (project in projects) {
-                Log.d("SyncManager", "Checking against project: ${project.name} (${project.uri})")
+                Logger.d("SyncManager", "Checking against project: ${project.name} (${project.uri})")
 
                 if (filePath.startsWith("content://") && project.uri.startsWith("content://")) {
                     // For SAF, simple string prefix check is weak but often sufficient for tree URIs
                     // A better check would be seeing if the file URI contains the project Tree URI's ID
                     if (filePath.contains(project.uri) || filePath.startsWith(project.uri)) {
-                        Log.d("SyncManager", "Match found via SAF prefix")
+                        Logger.d("SyncManager", "Match found via SAF prefix")
                         return@withContext project.id
                     }
                 } else if (!filePath.startsWith("content://") && !project.uri.startsWith("content://")) {
@@ -226,15 +226,15 @@ class SyncManager(
                         val fileCanonical = File(filePath).canonicalPath
                         val projectCanonical = File(project.uri).canonicalPath
                         if (fileCanonical.startsWith(projectCanonical)) {
-                            Log.d("SyncManager", "Match found via File path")
+                            Logger.d("SyncManager", "Match found via File path")
                             return@withContext project.id
                         }
                     } catch (e: Exception) {
-                        Log.w("SyncManager", "Path comparison error", e)
+                        Logger.w("SyncManager", "Path comparison error", e)
                     }
                 }
             }
-            Log.w("SyncManager", "No matching project found for $filePath")
+            Logger.w("SyncManager", "No matching project found for $filePath")
             return@withContext null
         }
 
@@ -258,7 +258,7 @@ class SyncManager(
             val pdfInput = ByteArrayInputStream(out.toByteArray())
             provider.uploadFile(remotePdfPath, pdfInput)
         } catch (e: Exception) {
-            Log.e("SyncManager", "Failed to sync PDF for ${localFile.name}", e)
+            Logger.e("SyncManager", "Failed to sync PDF for ${localFile.name}", e)
         }
     }
 
