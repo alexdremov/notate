@@ -214,19 +214,6 @@ class PdfExporterTest {
             // Rows: ceil(5000/2048) = 3
             // Total tiles: 9.
             // However, tiles are only rendered if they intersect items.
-            // The stroke is at 100,100 (top-left tile).
-            // So actually only 1 tile will have items and be rendered.
-            // Wait, the logic is:
-            // val tileItems = items.filter { RectF.intersects(it.bounds, tileRect) }
-            // if (tileItems.isNotEmpty()) { ... render ... }
-
-            // So to verify multi-threading/tiling logic, I need items in different tiles.
-
-            // Ideally I should have verified that the loop runs.
-            // But verifying drawBitmap calls is good enough if I have items distributed.
-
-            // Let's rely on the fact that at least one drawBitmap is called for now,
-            // or add another stroke at 4000,4000.
         }
 
     @Test
