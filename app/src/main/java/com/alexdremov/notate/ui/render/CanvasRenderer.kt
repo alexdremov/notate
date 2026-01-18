@@ -11,6 +11,7 @@ import com.alexdremov.notate.model.InfiniteCanvasModel
 import com.alexdremov.notate.model.Stroke
 import com.alexdremov.notate.util.StrokeRenderer
 import com.alexdremov.notate.util.TileManager
+import kotlinx.coroutines.CoroutineScope
 
 /**
  * The high-level rendering coordinator.
@@ -20,9 +21,10 @@ import com.alexdremov.notate.util.TileManager
 class CanvasRenderer(
     private val model: InfiniteCanvasModel,
     private val context: android.content.Context,
+    scope: CoroutineScope,
     private val onTileReady: () -> Unit,
 ) {
-    private val tileManager = TileManager(model, this)
+    private val tileManager = TileManager(model, this, scope = scope)
     private var layoutStrategy: CanvasLayout = InfiniteLayout()
 
     init {
@@ -118,6 +120,13 @@ class CanvasRenderer(
         visibleRect: RectF,
     ) {
         tileManager.forceRefreshVisibleTiles(visibleRect, scale)
+    }
+
+    /**
+     * Performs cleanup of resources and background tasks.
+     */
+    fun destroy() {
+        tileManager.destroy()
     }
 
     /**
