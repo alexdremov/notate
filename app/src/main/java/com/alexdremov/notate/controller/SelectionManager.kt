@@ -3,7 +3,6 @@ package com.alexdremov.notate.controller
 import android.graphics.Matrix
 import android.graphics.RectF
 import com.alexdremov.notate.model.CanvasItem
-import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Manages the state of the active selection.
@@ -11,54 +10,68 @@ import java.util.concurrent.ConcurrentHashMap
  * Thread-safe.
  */
 class SelectionManager {
-    private val _selectedItems = ConcurrentHashMap.newKeySet<CanvasItem>()
-    val selectedItems: Set<CanvasItem> get() = _selectedItems
+    private val lock = Any()
+    private val _selectedItems = HashSet<CanvasItem>()
+    val selectedItems: Set<CanvasItem>
+        get() = synchronized(lock) { _selectedItems.toSet() }
 
     // Backwards compatibility for callers expecting Stroke
     val selectedStrokes: Set<com.alexdremov.notate.model.Stroke>
-        get() = _selectedItems.filterIsInstance<com.alexdremov.notate.model.Stroke>().toSet()
+        get() = synchronized(lock) { _selectedItems.filterIsInstance<com.alexdremov.notate.model.Stroke>().toSet() }
 
     // Current transformation applied to the selection (transient)
-    val transformMatrix = Matrix()
+    private val transformMatrix = Matrix()
 
     // Bounding box of the original selection (before transform)
     private val selectionBounds = RectF()
 
+    fun getTransform(): Matrix {
+        synchronized(lock) {
+            return Matrix(transformMatrix)
+        }
+    }
+
+    fun resetTransform() {
+        synchronized(lock) {
+            transformMatrix.reset()
+        }
+    }
+
     fun select(item: CanvasItem) {
-        synchronized(_selectedItems) {
+        synchronized(lock) {
             _selectedItems.add(item)
             recomputeBoundsInternal()
         }
     }
 
     fun selectAll(items: List<CanvasItem>) {
-        synchronized(_selectedItems) {
+        synchronized(lock) {
             _selectedItems.addAll(items)
             recomputeBoundsInternal()
         }
     }
 
     fun deselect(item: CanvasItem) {
-        synchronized(_selectedItems) {
+        synchronized(lock) {
             _selectedItems.remove(item)
             recomputeBoundsInternal()
         }
     }
 
     fun clearSelection() {
-        synchronized(_selectedItems) {
+        synchronized(lock) {
             _selectedItems.clear()
             transformMatrix.reset()
             selectionBounds.setEmpty()
         }
     }
 
-    fun hasSelection() = _selectedItems.isNotEmpty()
+    fun hasSelection(): Boolean = synchronized(lock) { _selectedItems.isNotEmpty() }
 
-    fun isSelected(item: CanvasItem) = _selectedItems.contains(item)
+    fun isSelected(item: CanvasItem): Boolean = synchronized(lock) { _selectedItems.contains(item) }
 
     private fun recomputeBounds() {
-        synchronized(_selectedItems) {
+        synchronized(lock) {
             recomputeBoundsInternal()
         }
     }
@@ -87,7 +100,7 @@ class SelectionManager {
      * Note: This is an AABB (Axis Aligned Bounding Box) of the transformed shape.
      */
     fun getTransformedBounds(): RectF {
-        synchronized(_selectedItems) {
+        synchronized(lock) {
             val r = RectF(selectionBounds)
             transformMatrix.mapRect(r)
             return r
@@ -100,7 +113,7 @@ class SelectionManager {
      * Order: Top-Left, Top-Right, Bottom-Right, Bottom-Left.
      */
     fun getTransformedCorners(): FloatArray {
-        synchronized(_selectedItems) {
+        synchronized(lock) {
             val pts =
                 floatArrayOf(
                     selectionBounds.left,
@@ -122,7 +135,7 @@ class SelectionManager {
      * with the current transform applied.
      */
     fun getSelectionCenter(): FloatArray {
-        synchronized(_selectedItems) {
+        synchronized(lock) {
             val pts = floatArrayOf(selectionBounds.centerX(), selectionBounds.centerY())
             transformMatrix.mapPoints(pts)
             return pts
@@ -133,13 +146,13 @@ class SelectionManager {
         dx: Float,
         dy: Float,
     ) {
-        synchronized(_selectedItems) {
+        synchronized(lock) {
             transformMatrix.postTranslate(dx, dy)
         }
     }
 
     fun applyTransform(matrix: Matrix) {
-        synchronized(_selectedItems) {
+        synchronized(lock) {
             transformMatrix.postConcat(matrix)
         }
     }

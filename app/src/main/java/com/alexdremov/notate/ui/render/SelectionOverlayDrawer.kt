@@ -63,7 +63,7 @@ class SelectionOverlayDrawer(
             // Apply View Matrix (World -> Screen)
             canvas.concat(viewMatrix)
             // Apply Selection Transform (Original -> Current)
-            canvas.concat(selectionManager.transformMatrix)
+            canvas.concat(selectionManager.getTransform())
 
             selectionManager.selectedStrokes.forEach { stroke ->
                 renderer.drawStrokeToCanvas(canvas, stroke)

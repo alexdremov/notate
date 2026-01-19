@@ -57,15 +57,11 @@ class StrokeGeometryTest {
 
         val result = StrokeGeometry.splitStroke(target, eraser)
 
-        // It should produce two strokes: [0, 0] and [100, 0]
-        // BUT each of these has only 1 point.
-        // With current implementation, they might be "invalid" or just dots.
+        // Due to interpolation, we expect the segments A->nearB and nearB->C to be preserved.
+        assertFalse("Result should not be empty (interpolation preserves partial strokes)", result.isEmpty())
 
         for (stroke in result) {
-            assertTrue(
-                "Each resulting stroke should have at least 2 points or be handled as a dot",
-                stroke.points.size >= 2,
-            )
+            assertTrue("Each resulting stroke must have at least 2 points", stroke.points.size >= 2)
         }
     }
 

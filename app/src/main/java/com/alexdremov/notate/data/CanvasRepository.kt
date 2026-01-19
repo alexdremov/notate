@@ -133,16 +133,30 @@ class CanvasRepository(
             // Atomic write for local files
             val targetFile = File(path)
             val tmpFile = File(targetFile.parent, "${targetFile.name}.tmp")
+            val backupFile = File(targetFile.parent, "${targetFile.name}.bak")
 
             try {
                 tmpFile.writeBytes(bytes)
 
-                if (targetFile.exists() && !targetFile.delete()) {
-                    throw java.io.IOException("Failed to delete existing file: ${targetFile.absolutePath}")
+                if (targetFile.exists()) {
+                    // Create backup
+                    if (backupFile.exists()) backupFile.delete()
+                    if (!targetFile.renameTo(backupFile)) {
+                        throw java.io.IOException("Failed to create backup file: ${backupFile.absolutePath}")
+                    }
                 }
 
                 if (!tmpFile.renameTo(targetFile)) {
+                    // Restore from backup if rename fails
+                    if (backupFile.exists()) {
+                        backupFile.renameTo(targetFile)
+                    }
                     throw java.io.IOException("Failed to rename temp file to: ${targetFile.absolutePath}")
+                }
+
+                // Success, delete backup
+                if (backupFile.exists()) {
+                    backupFile.delete()
                 }
             } finally {
                 // Cleanup tmp file if it still exists (e.g. if delete or rename failed)
