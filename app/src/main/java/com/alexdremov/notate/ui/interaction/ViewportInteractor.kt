@@ -26,6 +26,7 @@ class ViewportInteractor(
     private var isPanning = false
     private var isInteracting = false
     private var hasPerformedScale = false
+    private var isFastModeActive = false
 
     private var lastTouchX = 0f
     private var lastTouchY = 0f
@@ -40,6 +41,7 @@ class ViewportInteractor(
             object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
                 override fun onScaleBegin(detector: ScaleGestureDetector): Boolean {
                     hasPerformedScale = true
+                    startInteraction()
                     return super.onScaleBegin(detector)
                 }
 
@@ -175,11 +177,15 @@ class ViewportInteractor(
     }
 
     private fun startInteraction() {
+        if (isFastModeActive) return
+        isFastModeActive = true
         onInteractionStart()
         EpdFastModeController.enterFastMode()
     }
 
     private fun endInteraction() {
+        if (!isFastModeActive) return
+        isFastModeActive = false
         onInteractionEnd()
         EpdFastModeController.exitFastMode()
     }

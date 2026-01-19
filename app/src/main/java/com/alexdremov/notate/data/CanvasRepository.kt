@@ -53,10 +53,11 @@ class CanvasRepository(
                         Logger.d("CanvasRepository", "Loaded via JSON Fallback")
                     } catch (e2: Exception) {
                         Logger.e("CanvasRepository", "JSON Fallback failed", e2)
-                        val ioException = java.io.IOException(
-                            "Failed to parse canvas data. Protobuf: ${e.message}, JSON: ${e2.message}",
-                            e,
-                        )
+                        val ioException =
+                            java.io.IOException(
+                                "Failed to parse canvas data. Protobuf: ${e.message}, JSON: ${e2.message}",
+                                e,
+                            )
                         ioException.addSuppressed(e2)
                         throw ioException
                     }
@@ -159,15 +160,22 @@ class CanvasRepository(
                         restoreAttempted = true
                         restoreSucceeded = backupFile.renameTo(targetFile)
                     }
-                    val restoreMessage = when {
-                        restoreAttempted && !restoreSucceeded ->
-                            " Backup restore also failed; backup may remain at ${backupFile.absolutePath}."
-                        restoreAttempted && restoreSucceeded ->
-                            " Backup restored successfully from ${backupFile.absolutePath}."
-                        else -> ""
-                    }
+                    val restoreMessage =
+                        when {
+                            restoreAttempted && !restoreSucceeded -> {
+                                " Backup restore also failed; backup may remain at ${backupFile.absolutePath}."
+                            }
+
+                            restoreAttempted && restoreSucceeded -> {
+                                " Backup restored successfully from ${backupFile.absolutePath}."
+                            }
+
+                            else -> {
+                                ""
+                            }
+                        }
                     throw java.io.IOException(
-                        "Failed to rename temp file to: ${targetFile.absolutePath}.$restoreMessage"
+                        "Failed to rename temp file to: ${targetFile.absolutePath}.$restoreMessage",
                     )
                 }
 

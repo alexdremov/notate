@@ -49,6 +49,7 @@ class SelectionManager {
             return block(transformMatrix)
         }
     }
+
     fun resetTransform() {
         synchronized(lock) {
             transformMatrix.reset()
