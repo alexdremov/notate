@@ -352,7 +352,21 @@ class OnyxCanvasView
 
         private fun drawContent() {
             com.alexdremov.notate.util.PerformanceProfiler.trace("OnyxCanvasView.drawContent") {
-                val cv = holder.lockCanvas() ?: return
+                // Use hardware canvas for GPU acceleration (API 26+)
+                // Critical for smooth zoom/pan with bitmap scaling
+                val cv =
+                    try {
+                        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                            holder.lockHardwareCanvas()
+                        } else {
+                            holder.lockCanvas()
+                        }
+                    } catch (e: Exception) {
+                        com.alexdremov.notate.util.Logger
+                            .e("OnyxCanvasView", "Failed to lock canvas", e)
+                        null
+                    } ?: return
+
                 try {
                     val bgColor =
                         if (canvasModel.canvasType ==
