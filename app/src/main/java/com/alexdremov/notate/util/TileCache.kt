@@ -104,8 +104,9 @@ class TileCache(
             bitmap = Bitmap.createBitmap(tileSize, tileSize, Bitmap.Config.ARGB_8888)
         }
 
-        bitmap!!.eraseColor(android.graphics.Color.TRANSPARENT)
-        return bitmap!!
+        bitmap = bitmap ?: throw OutOfMemoryError("Failed to allocate tile bitmap")
+        bitmap.eraseColor(android.graphics.Color.TRANSPARENT)
+        return bitmap
     }
 
     /**

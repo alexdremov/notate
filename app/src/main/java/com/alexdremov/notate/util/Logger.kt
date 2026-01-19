@@ -53,7 +53,7 @@ object Logger {
         message: String,
     ) {
         Log.d(formatTag(tag), message)
-        if (Level.DEBUG.priority >= minLogLevelToShow.priority) {
+        if (minLogLevelToShow.priority <= Level.DEBUG.priority) {
             _userEvents.tryEmit(UserEvent(message, Level.DEBUG))
         }
     }
@@ -63,7 +63,7 @@ object Logger {
         message: String,
     ) {
         Log.i(formatTag(tag), message)
-        if (Level.INFO.priority >= minLogLevelToShow.priority) {
+        if (minLogLevelToShow.priority <= Level.INFO.priority) {
             _userEvents.tryEmit(UserEvent(message, Level.INFO))
         }
     }
@@ -78,7 +78,7 @@ object Logger {
         } else {
             Log.w(formatTag(tag), message)
         }
-        if (Level.WARNING.priority >= minLogLevelToShow.priority) {
+        if (minLogLevelToShow.priority <= Level.WARNING.priority) {
             _userEvents.tryEmit(UserEvent(message, Level.WARNING, throwable))
         }
     }
@@ -96,7 +96,7 @@ object Logger {
             Log.e(finalTag, message)
         }
 
-        if (showToUser || Level.ERROR.priority >= minLogLevelToShow.priority) {
+        if (showToUser || minLogLevelToShow.priority <= Level.ERROR.priority) {
             _userEvents.tryEmit(UserEvent(message, Level.ERROR, throwable))
         }
     }

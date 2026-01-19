@@ -145,13 +145,14 @@ object BackgroundDrawer {
         val startY = floor((rect.top - offsetY) / spacing) * spacing + offsetY
 
         // Estimate count to allocate buffer
-        val cols = ((rect.right + spacing - startX) / spacing).toInt().coerceAtLeast(0) + 1
-        val rows = ((rect.bottom + spacing - startY) / spacing).toInt().coerceAtLeast(0) + 1
+        val cols = ((rect.right + spacing - startX) / spacing).toLong().coerceAtLeast(0) + 1
+        val rows = ((rect.bottom + spacing - startY) / spacing).toLong().coerceAtLeast(0) + 1
         val maxPoints = cols * rows
 
         if (!force && maxPoints > MAX_PRIMITIVES) return // Should have used cache
+        if (maxPoints > Int.MAX_VALUE / 2) return // Prevent OOM
 
-        val pts = FloatArray(maxPoints * 2)
+        val pts = FloatArray((maxPoints * 2).toInt())
         var count = 0
 
         var x = startX

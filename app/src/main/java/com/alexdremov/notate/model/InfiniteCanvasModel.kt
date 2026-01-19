@@ -162,6 +162,10 @@ class InfiniteCanvasModel {
         val actionsToApply = ArrayList<HistoryAction>()
         var boundsToInvalidate = RectF()
 
+        // Temporary storage for granular replacements (Target -> New Parts)
+        val pendingReplacements = ArrayList<Pair<CanvasItem, List<CanvasItem>>>()
+        val toRemove = ArrayList<CanvasItem>()
+
         rwLock.read {
             val candidates = ArrayList<CanvasItem>()
             val searchBounds = RectF(eraserStroke.bounds)
@@ -169,10 +173,6 @@ class InfiniteCanvasModel {
             quadtree.retrieve(candidates, searchBounds)
 
             if (candidates.isEmpty()) return@read
-
-            val toRemove = ArrayList<CanvasItem>()
-            val toReplaceRemoved = ArrayList<CanvasItem>()
-            val toReplaceAdded = ArrayList<CanvasItem>()
 
             when (type) {
                 EraserType.STROKE -> {
@@ -223,42 +223,48 @@ class InfiniteCanvasModel {
                         if (RectF.intersects(target.bounds, eraserStroke.bounds)) {
                             val newParts = StrokeGeometry.splitStroke(target, eraserStroke)
                             if (newParts.size != 1 || newParts[0] !== target) {
-                                toReplaceRemoved.add(target)
-                                toReplaceAdded.addAll(newParts)
+                                pendingReplacements.add(target to newParts)
                             }
                         }
                     }
                 }
             }
-
-            if (toRemove.isNotEmpty()) {
-                actionsToApply.add(HistoryAction.Remove(toRemove))
-                boundsToInvalidate.union(calculateBounds(toRemove))
-            }
-            if (toReplaceRemoved.isNotEmpty()) {
-                actionsToApply.add(HistoryAction.Replace(toReplaceRemoved, toReplaceAdded))
-                boundsToInvalidate.union(calculateBounds(toReplaceRemoved))
-                boundsToInvalidate.union(calculateBounds(toReplaceAdded))
-            }
         }
 
         // Phase 2: Write
-        if (actionsToApply.isNotEmpty()) {
+        if (toRemove.isNotEmpty() || pendingReplacements.isNotEmpty()) {
             rwLock.write {
-                actionsToApply.forEach { action ->
-                    val finalAction =
-                        if (action is HistoryAction.Replace) {
-                            val orderedAdded =
-                                action.added.map { item ->
-                                    if (item is Stroke) item.copy(strokeOrder = nextOrder++) else item
-                                }
-                            HistoryAction.Replace(action.removed, orderedAdded)
-                        } else {
-                            action
+                // VALIDATION: Ensure items still exist (TOCTOU fix)
+                // Filter removals to only those currently in the model
+                val validRemovals = toRemove.filter { allItems.contains(it) }
+
+                // Filter replacements to only those whose target is currently in the model
+                val validReplacements = pendingReplacements.filter { allItems.contains(it.first) }
+
+                if (validRemovals.isNotEmpty()) {
+                    val action = HistoryAction.Remove(validRemovals)
+                    actionsToApply.add(action)
+                    boundsToInvalidate.union(calculateBounds(validRemovals))
+                    historyManager.applyAction(action)
+                }
+
+                if (validReplacements.isNotEmpty()) {
+                    val finalRemoved = validReplacements.map { it.first }
+                    val finalAdded = validReplacements.flatMap { it.second }
+
+                    // Assign order to new parts (must happen inside write lock)
+                    val orderedAdded =
+                        finalAdded.map { item ->
+                            if (item is Stroke) item.copy(strokeOrder = nextOrder++) else item
                         }
 
-                    historyManager.applyAction(finalAction)
+                    val action = HistoryAction.Replace(finalRemoved, orderedAdded)
+                    actionsToApply.add(action)
+                    boundsToInvalidate.union(calculateBounds(finalRemoved))
+                    boundsToInvalidate.union(calculateBounds(orderedAdded))
+                    historyManager.applyAction(action)
                 }
+
                 invalidatedBounds = boundsToInvalidate
             }
         }

@@ -52,7 +52,8 @@ class CanvasRepository(
                         wasJson = true
                         Logger.d("CanvasRepository", "Loaded via JSON Fallback")
                     } catch (e2: Exception) {
-                        Logger.w("CanvasRepository", "JSON Fallback failed", e2)
+                        Logger.e("CanvasRepository", "JSON Fallback failed", e2)
+                        throw java.io.IOException("Failed to parse canvas data. Protobuf: ${e.message}, JSON: ${e2.message}", e)
                     }
                 }
                 tDecode = System.currentTimeMillis()
@@ -122,18 +123,33 @@ class CanvasRepository(
         bytes: ByteArray,
     ) {
         if (path.startsWith("content://")) {
-            context.contentResolver.openOutputStream(Uri.parse(path), "wt")?.use {
+            val os =
+                context.contentResolver.openOutputStream(Uri.parse(path), "wt")
+                    ?: throw java.io.IOException("Failed to open output stream for SAF path: $path")
+            os.use {
                 it.write(bytes)
             }
         } else {
             // Atomic write for local files
             val targetFile = File(path)
             val tmpFile = File(targetFile.parent, "${targetFile.name}.tmp")
-            tmpFile.writeBytes(bytes)
-            if (targetFile.exists()) {
-                targetFile.delete()
+
+            try {
+                tmpFile.writeBytes(bytes)
+
+                if (targetFile.exists() && !targetFile.delete()) {
+                    throw java.io.IOException("Failed to delete existing file: ${targetFile.absolutePath}")
+                }
+
+                if (!tmpFile.renameTo(targetFile)) {
+                    throw java.io.IOException("Failed to rename temp file to: ${targetFile.absolutePath}")
+                }
+            } finally {
+                // Cleanup tmp file if it still exists (e.g. if delete or rename failed)
+                if (tmpFile.exists()) {
+                    tmpFile.delete()
+                }
             }
-            tmpFile.renameTo(targetFile)
         }
     }
 

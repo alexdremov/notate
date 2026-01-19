@@ -123,7 +123,10 @@ object ShapeRecognizer {
 
         // Calculate true vertex count (remove duplicate end point)
         var vertexCount = simplified.size
-        if (simplified.size > 1 && simplified.first().equals(simplified.last())) {
+        val EPSILON = 1e-4f
+        if (simplified.size > 1 &&
+            hypot(simplified.first().x - simplified.last().x, simplified.first().y - simplified.last().y) < EPSILON
+        ) {
             vertexCount--
         }
 
@@ -188,7 +191,7 @@ object ShapeRecognizer {
     ): RecognitionResult {
         // Remove duplicate end point
         val uniquePoints =
-            if (points.size > 1 && points.first().equals(points.last())) {
+            if (points.size > 1 && hypot(points.first().x - points.last().x, points.first().y - points.last().y) < 1e-4f) {
                 points.dropLast(1)
             } else {
                 points
@@ -244,7 +247,7 @@ object ShapeRecognizer {
 
     private fun createRectangleResult(points: List<PointF>): RecognitionResult {
         val uniquePoints =
-            if (points.size > 1 && points.first().equals(points.last())) {
+            if (points.size > 1 && hypot(points.first().x - points.last().x, points.first().y - points.last().y) < 1e-4f) {
                 points.dropLast(1)
             } else {
                 points
@@ -352,7 +355,7 @@ object ShapeRecognizer {
     ): RecognitionResult {
         // Ensure unique points (Douglas Peucker sometimes leaves dupe start/end)
         val uniquePoints =
-            if (points.size > 1 && points.first().equals(points.last())) {
+            if (points.size > 1 && hypot(points.first().x - points.last().x, points.first().y - points.last().y) < 1e-4f) {
                 points.dropLast(1)
             } else {
                 points
@@ -409,7 +412,7 @@ object ShapeRecognizer {
                 if (d < minD) minD = d
             }
             // Check closing segment if implies closed
-            if (simplified.first().equals(simplified.last())) {
+            if (hypot(simplified.first().x - simplified.last().x, simplified.first().y - simplified.last().y) < 1e-4f) {
                 // already handled by loop
             } else {
                 val d = pointSegmentDist(p, simplified.last(), simplified.first())
