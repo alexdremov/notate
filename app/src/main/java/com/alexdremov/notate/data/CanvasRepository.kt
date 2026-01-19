@@ -148,10 +148,22 @@ class CanvasRepository(
 
                 if (!tmpFile.renameTo(targetFile)) {
                     // Restore from backup if rename fails
+                    var restoreAttempted = false
+                    var restoreSucceeded = false
                     if (backupFile.exists()) {
-                        backupFile.renameTo(targetFile)
+                        restoreAttempted = true
+                        restoreSucceeded = backupFile.renameTo(targetFile)
                     }
-                    throw java.io.IOException("Failed to rename temp file to: ${targetFile.absolutePath}")
+                    val restoreMessage = when {
+                        restoreAttempted && !restoreSucceeded ->
+                            " Backup restore also failed; backup may remain at ${backupFile.absolutePath}."
+                        restoreAttempted && restoreSucceeded ->
+                            " Backup restored successfully from ${backupFile.absolutePath}."
+                        else -> ""
+                    }
+                    throw java.io.IOException(
+                        "Failed to rename temp file to: ${targetFile.absolutePath}.$restoreMessage"
+                    )
                 }
 
                 // Success, delete backup
