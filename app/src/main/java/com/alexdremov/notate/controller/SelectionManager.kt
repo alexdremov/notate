@@ -25,12 +25,30 @@ class SelectionManager {
     // Bounding box of the original selection (before transform)
     private val selectionBounds = RectF()
 
+    /**
+     * Returns a defensive copy of the current transformation matrix.
+     *
+     * Note: this allocates a new [Matrix] on every call. For performance-critical,
+     * read-only access that avoids allocations, use [withTransformReadLocked].
+     */
     fun getTransform(): Matrix {
         synchronized(lock) {
             return Matrix(transformMatrix)
         }
     }
 
+    /**
+     * Executes [block] while holding the internal lock, providing direct read-only
+     * access to the current transformation matrix without creating a copy.
+     *
+     * Callers must not mutate [Matrix] inside [block]. Violating this contract can
+     * break invariants and thread-safety guarantees of [SelectionManager].
+     */
+    fun <T> withTransformReadLocked(block: (Matrix) -> T): T {
+        synchronized(lock) {
+            return block(transformMatrix)
+        }
+    }
     fun resetTransform() {
         synchronized(lock) {
             transformMatrix.reset()
