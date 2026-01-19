@@ -61,6 +61,11 @@ object CanvasConfig {
     const val TOOLS_MAX_STROKE_MM = 3.0f
     const val EINK_RENDER_THRESHOLD_MM = 10.0f
 
+    // Gestures
+    const val TWO_FINGER_TAP_MAX_DELAY = 250L
+    const val TWO_FINGER_TAP_DOUBLE_TIMEOUT = 500L
+    const val TWO_FINGER_TAP_SLOP_SQ = 2500f // 50px squared
+
     // Fixed Page Defaults (A4 @ ~300 DPI or Logic Units)
     // Using standard A4 ratio 1 : 1.414
     // Width 2480, Height 3508

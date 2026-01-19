@@ -87,11 +87,10 @@ class OnyxCanvasView
         private var twoFingerTapDownTime = 0L
         private var lastTwoFingerTapTime = 0L
         private var isTwoFingerTapCheck = false
-        private val TWO_FINGER_TAP_MAX_DELAY = 250L
-        private val DOUBLE_TAP_TIMEOUT = 400L
-        private val TWO_FINGER_TAP_SLOP_SQ = 2500f // 50px squared
         private var twoFingerStartPt1 = floatArrayOf(0f, 0f)
         private var twoFingerStartPt2 = floatArrayOf(0f, 0f)
+        private var twoFingerPointerId1 = -1
+        private var twoFingerPointerId2 = -1
 
         private var currentTool: PenTool = PenTool.defaultPens()[0]
 
@@ -245,6 +244,8 @@ class OnyxCanvasView
             if (action == MotionEvent.ACTION_POINTER_DOWN && event.pointerCount == 2) {
                 twoFingerTapDownTime = System.currentTimeMillis()
                 isTwoFingerTapCheck = true
+                twoFingerPointerId1 = event.getPointerId(0)
+                twoFingerPointerId2 = event.getPointerId(1)
                 twoFingerStartPt1[0] = event.getX(0)
                 twoFingerStartPt1[1] = event.getY(0)
                 twoFingerStartPt2[0] = event.getX(1)
@@ -253,11 +254,11 @@ class OnyxCanvasView
                 if (isTwoFingerTapCheck) {
                     val now = System.currentTimeMillis()
                     val duration = now - twoFingerTapDownTime
-                    if (duration < TWO_FINGER_TAP_MAX_DELAY) {
+                    if (duration < CanvasConfig.TWO_FINGER_TAP_MAX_DELAY) {
                         if (!isTapSlopExceeded(event)) {
-                            if (now - lastTwoFingerTapTime < DOUBLE_TAP_TIMEOUT) {
+                            if (now - lastTwoFingerTapTime < CanvasConfig.TWO_FINGER_TAP_DOUBLE_TIMEOUT) {
                                 undo()
-                                lastTwoFingerTapTime = 0L // Reset to prevent triple-tap triggering undo twice
+                                lastTwoFingerTapTime = 0L // Reset to prevent a 3rd tap from pairing with the 2nd to trigger another undo
                             } else {
                                 lastTwoFingerTapTime = now
                             }
@@ -277,10 +278,14 @@ class OnyxCanvasView
         }
 
         private fun isTapSlopExceeded(event: MotionEvent): Boolean {
-            if (event.pointerCount < 2) return false
-            val d1 = distSq(event.getX(0), event.getY(0), twoFingerStartPt1[0], twoFingerStartPt1[1])
-            val d2 = distSq(event.getX(1), event.getY(1), twoFingerStartPt2[0], twoFingerStartPt2[1])
-            return d1 > TWO_FINGER_TAP_SLOP_SQ || d2 > TWO_FINGER_TAP_SLOP_SQ
+            val index1 = event.findPointerIndex(twoFingerPointerId1)
+            val index2 = event.findPointerIndex(twoFingerPointerId2)
+
+            if (index1 == -1 || index2 == -1) return true // Pointers lost, invalidate tap
+
+            val d1 = distSq(event.getX(index1), event.getY(index1), twoFingerStartPt1[0], twoFingerStartPt1[1])
+            val d2 = distSq(event.getX(index2), event.getY(index2), twoFingerStartPt2[0], twoFingerStartPt2[1])
+            return d1 > CanvasConfig.TWO_FINGER_TAP_SLOP_SQ || d2 > CanvasConfig.TWO_FINGER_TAP_SLOP_SQ
         }
 
         private fun distSq(
