@@ -55,6 +55,11 @@ class SyncManager(
         override val isDirectory: Boolean get() = file.isDirectory
     }
 
+    private data class RemoteFileWithRelativePath(
+        val file: RemoteFile,
+        val relativePath: String,
+    )
+
     suspend fun syncProject(
         projectId: String,
         progressCallback: ((Int, String) -> Unit)? = null,
@@ -88,23 +93,25 @@ class SyncManager(
 
         try {
             progressCallback?.invoke(0, "Initializing sync...")
-            val remoteFiles =
-                try {
-                    progressCallback?.invoke(5, "Listing remote files...")
-                    Logger.d("SyncManager", "Listing remote files at ${config.remotePath}")
-                    provider.listFiles(config.remotePath)
-                } catch (e: java.io.FileNotFoundException) {
-                    Logger.w("SyncManager", "Remote directory not found, creating: ${config.remotePath}")
-                    progressCallback?.invoke(10, "Creating remote directory...")
-                    if (provider.createDirectory(config.remotePath)) {
-                        emptyList()
-                    } else {
-                        throw java.io.IOException("Failed to create remote directory: ${config.remotePath}")
-                    }
-                } catch (e: Exception) {
-                    Logger.e("SyncManager", "Error listing files", e, showToUser = true)
-                    throw e
+
+            // Check/Create Root Directory
+            try {
+                // Just check existence of root
+                provider.listFiles(config.remotePath)
+            } catch (e: java.io.FileNotFoundException) {
+                Logger.w("SyncManager", "Remote directory not found, creating: ${config.remotePath}")
+                progressCallback?.invoke(5, "Creating remote directory...")
+                if (!provider.createDirectory(config.remotePath)) {
+                    throw java.io.IOException("Failed to create remote directory: ${config.remotePath}")
                 }
+            } catch (e: Exception) {
+                Logger.e("SyncManager", "Error checking remote root", e)
+                // Continue, listFiles might fail later or succeed
+            }
+
+            progressCallback?.invoke(10, "Listing remote files recursively...")
+            Logger.d("SyncManager", "Scanning remote files at ${config.remotePath}")
+            val allRemoteFiles = scanRemoteFilesRecursively(provider, config.remotePath, "")
 
             progressCallback?.invoke(15, "Scanning local project...")
             val projects = PreferencesManager.getProjects(context)
@@ -124,19 +131,18 @@ class SyncManager(
                 }
             }
 
-            Logger.d("SyncManager", "Found ${localFiles.size} local files and ${remoteFiles.size} remote files")
+            Logger.d("SyncManager", "Found ${localFiles.size} local files and ${allRemoteFiles.size} remote files")
 
-            val totalSteps = localFiles.size + remoteFiles.size
+            val totalSteps = localFiles.size + allRemoteFiles.size
             var currentStep = 0
 
             progressCallback?.invoke(20, "Synchronizing files...")
 
             // 1. Upload/Update local files to remote
             for (localFile in localFiles) {
-                // Note: For nested files, remoteFiles (which is shallow) won't find a match,
-                // so we defaults to upload/update. This ensures nested files are synced,
-                // relying on the provider to handle overwrite logic.
-                val remoteFile = remoteFiles.find { it.name == localFile.name }
+                // Match by RELATIVE PATH
+                val remoteEntry = allRemoteFiles.find { it.relativePath == localFile.relativePath }
+                val remoteFile = remoteEntry?.file
 
                 // Ensure we use forward slashes for remote paths regardless of local OS
                 val cleanRelativePath = localFile.relativePath.replace("\\", "/")
@@ -161,28 +167,38 @@ class SyncManager(
             }
 
             // 2. Download remote files that don't exist locally or are newer
-            for (remoteFile in remoteFiles) {
+            for (remoteEntry in allRemoteFiles) {
+                val remoteFile = remoteEntry.file
                 if (remoteFile.isDirectory || !remoteFile.name.endsWith(".notate")) continue
 
-                val localFile = localFiles.find { it.name == remoteFile.name }
+                val localFile = localFiles.find { it.relativePath == remoteEntry.relativePath }
                 if (localFile == null || remoteFile.lastModified > localFile.lastModified) {
                     Logger.d(
                         "SyncManager",
                         "Downloading ${remoteFile.name} (Remote: ${remoteFile.lastModified}, Local: ${localFile?.lastModified})",
                     )
                     progressCallback?.invoke((20 + (currentStep++ * 60 / totalSteps)), "Downloading ${remoteFile.name}...")
+
                     provider.downloadFile(remoteFile.path)?.use { input ->
                         if (projectConfig.uri.startsWith("content://")) {
                             val dir = DocumentFile.fromTreeUri(context, Uri.parse(projectConfig.uri))
-                            val existing = dir?.findFile(remoteFile.name)
-                            val file = existing ?: dir?.createFile("application/octet-stream", remoteFile.name)
+                            // Handle nested directories for SAF
+                            val relativeParts = remoteEntry.relativePath.split('/').dropLast(1)
+                            var currentDir = dir
+                            for (part in relativeParts) {
+                                currentDir = currentDir?.findFile(part) ?: currentDir?.createDirectory(part)
+                            }
+
+                            val existing = currentDir?.findFile(remoteFile.name)
+                            val file = existing ?: currentDir?.createFile("application/octet-stream", remoteFile.name)
                             file?.let {
                                 context.contentResolver.openOutputStream(it.uri)?.use { output ->
                                     input.copyTo(output)
                                 }
                             }
                         } else {
-                            val file = File(projectConfig.uri, remoteFile.name)
+                            val file = File(projectConfig.uri, remoteEntry.relativePath)
+                            file.parentFile?.mkdirs() // Ensure parent exists
                             file.outputStream().use { output ->
                                 input.copyTo(output)
                             }
@@ -200,6 +216,35 @@ class SyncManager(
             Logger.e("SyncManager", "Sync failed", e, showToUser = true)
             progressCallback?.invoke(0, "Sync failed: ${e.message}")
         }
+    }
+
+    private suspend fun scanRemoteFilesRecursively(
+        provider: RemoteStorageProvider,
+        currentRemotePath: String,
+        currentRelativePath: String,
+    ): List<RemoteFileWithRelativePath> {
+        val results = mutableListOf<RemoteFileWithRelativePath>()
+        try {
+            val items = provider.listFiles(currentRemotePath)
+            for (item in items) {
+                // Ensure proper path separation
+                val itemRelativePath = if (currentRelativePath.isEmpty()) item.name else "$currentRelativePath/${item.name}"
+
+                if (item.isDirectory) {
+                    val childRemotePath = "$currentRemotePath/${item.name}"
+                    results.addAll(scanRemoteFilesRecursively(provider, childRemotePath, itemRelativePath))
+                } else {
+                    results.add(RemoteFileWithRelativePath(item, itemRelativePath))
+                }
+            }
+        } catch (e: Exception) {
+            if (e is CancellationException) {
+                throw e
+            }
+            Logger.w("SyncManager", "Error scanning $currentRemotePath", e)
+            throw e
+        }
+        return results
     }
 
     suspend fun findProjectForFile(filePath: String): String? =

@@ -112,7 +112,7 @@ class SelectionInteractor(
 
                 // Get current object rotation
                 val values = FloatArray(9)
-                sm.transformMatrix.getValues(values)
+                sm.getTransform().getValues(values)
                 val rotRad =
                     kotlin.math.atan2(
                         values[android.graphics.Matrix.MSKEW_Y].toDouble(),
@@ -322,7 +322,7 @@ class SelectionInteractor(
         // We need to apply the DIFFERENCE between "finalTargetDeg" and "current actual object rotation"
         // Get current actual rotation
         val values = FloatArray(9)
-        sm.transformMatrix.getValues(values)
+        sm.getTransform().getValues(values)
         val currentObjRotRad =
             kotlin.math.atan2(
                 values[android.graphics.Matrix.MSKEW_Y].toDouble(),

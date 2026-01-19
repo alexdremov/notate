@@ -145,13 +145,18 @@ object BackgroundDrawer {
         val startY = floor((rect.top - offsetY) / spacing) * spacing + offsetY
 
         // Estimate count to allocate buffer
-        val cols = ((rect.right + spacing - startX) / spacing).toInt().coerceAtLeast(0) + 1
-        val rows = ((rect.bottom + spacing - startY) / spacing).toInt().coerceAtLeast(0) + 1
+        val cols = ((rect.right + spacing - startX) / spacing).toLong().coerceAtLeast(0) + 1
+        val rows = ((rect.bottom + spacing - startY) / spacing).toLong().coerceAtLeast(0) + 1
+
+        // Check dimensions individually to prevent overflow in multiplication
+        if (cols > Int.MAX_VALUE / 2 || rows > Int.MAX_VALUE / 2) return
+
         val maxPoints = cols * rows
 
         if (!force && maxPoints > MAX_PRIMITIVES) return // Should have used cache
+        if (maxPoints > Int.MAX_VALUE / 2) return // Prevent OOM
 
-        val pts = FloatArray(maxPoints * 2)
+        val pts = FloatArray((maxPoints * 2).toInt())
         var count = 0
 
         var x = startX
@@ -190,10 +195,13 @@ object BackgroundDrawer {
         val spacing = style.spacing
         val startY = floor((rect.top - offsetY) / spacing) * spacing + offsetY
 
-        val rows = ((rect.bottom + spacing - startY) / spacing).toInt().coerceAtLeast(0) + 1
+        val rows = ((rect.bottom + spacing - startY) / spacing).toLong().coerceAtLeast(0) + 1
+
+        if (rows > Int.MAX_VALUE / 4) return // Prevent OOM and overflow
+
         if (!force && rows > MAX_PRIMITIVES) return
 
-        val pts = FloatArray(rows * 4)
+        val pts = FloatArray((rows * 4).toInt())
         var count = 0
 
         var y = startY
@@ -228,16 +236,20 @@ object BackgroundDrawer {
 
         // Vertical
         val startX = floor((rect.left - offsetX) / spacing) * spacing + offsetX
-        val cols = ((rect.right + spacing - startX) / spacing).toInt().coerceAtLeast(0) + 1
+        val cols = ((rect.right + spacing - startX) / spacing).toLong().coerceAtLeast(0) + 1
 
         // Horizontal
         val startY = floor((rect.top - offsetY) / spacing) * spacing + offsetY
-        val rows = ((rect.bottom + spacing - startY) / spacing).toInt().coerceAtLeast(0) + 1
+        val rows = ((rect.bottom + spacing - startY) / spacing).toLong().coerceAtLeast(0) + 1
+
+        // Check dimensions individually
+        if (cols > Int.MAX_VALUE / 4 || rows > Int.MAX_VALUE / 4) return
 
         val totalLines = cols + rows
         if (!force && totalLines > MAX_PRIMITIVES) return
+        if (totalLines > Int.MAX_VALUE / 4) return // Prevent OOM
 
-        val pts = FloatArray(totalLines * 4)
+        val pts = FloatArray((totalLines * 4).toInt())
         var count = 0
 
         // Vertical Loop

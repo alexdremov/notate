@@ -32,11 +32,37 @@ class StrokeGeometryTest {
         return Stroke(
             path = path,
             points = points,
-            color = -16777216,
+            color = 0,
             width = width,
             style = StrokeType.FINELINER,
             bounds = bounds,
         )
+    }
+
+    @Test
+    fun `test splitStroke creates valid strokes`() {
+        // Create a horizontal line from 0 to 100
+        val targetPoints =
+            listOf(
+                TouchPoint(0f, 0f, 0.5f, 1f, 0),
+                TouchPoint(50f, 0f, 0.5f, 1f, 0),
+                TouchPoint(100f, 0f, 0.5f, 1f, 0),
+            )
+        val target = createStroke(targetPoints, width = 2f)
+
+        // Create an eraser that erases only the middle point (50, 0)
+        // Eraser at (50, 0) with radius 5
+        val eraserPoints = listOf(TouchPoint(50f, 0f, 0.5f, 1f, 0))
+        val eraser = createStroke(eraserPoints, width = 10f) // radius 5
+
+        val result = StrokeGeometry.splitStroke(target, eraser)
+
+        // Due to interpolation, we expect the segments A->nearB and nearB->C to be preserved.
+        assertFalse("Result should not be empty (interpolation preserves partial strokes)", result.isEmpty())
+
+        for (stroke in result) {
+            assertTrue("Each resulting stroke must have at least 2 points", stroke.points.size >= 2)
+        }
     }
 
     @Test

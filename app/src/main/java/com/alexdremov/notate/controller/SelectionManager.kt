@@ -3,7 +3,6 @@ package com.alexdremov.notate.controller
 import android.graphics.Matrix
 import android.graphics.RectF
 import com.alexdremov.notate.model.CanvasItem
-import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Manages the state of the active selection.
@@ -11,56 +10,107 @@ import java.util.concurrent.ConcurrentHashMap
  * Thread-safe.
  */
 class SelectionManager {
-    private val _selectedItems = ConcurrentHashMap.newKeySet<CanvasItem>()
-    val selectedItems: Set<CanvasItem> get() = _selectedItems
+    private val lock = Any()
+    private val _selectedItems = HashSet<CanvasItem>()
+    val selectedItems: Set<CanvasItem>
+        get() = synchronized(lock) { _selectedItems.toSet() }
 
     // Backwards compatibility for callers expecting Stroke
     val selectedStrokes: Set<com.alexdremov.notate.model.Stroke>
-        get() = _selectedItems.filterIsInstance<com.alexdremov.notate.model.Stroke>().toSet()
+        get() = synchronized(lock) { _selectedItems.filterIsInstance<com.alexdremov.notate.model.Stroke>().toSet() }
 
     // Current transformation applied to the selection (transient)
-    val transformMatrix = Matrix()
+    private val transformMatrix = Matrix()
 
     // Bounding box of the original selection (before transform)
     private val selectionBounds = RectF()
 
+    /**
+     * Returns a defensive copy of the current transformation matrix.
+     *
+     * Note: this allocates a new [Matrix] on every call. For performance-critical,
+     * read-only access that avoids allocations, use [withTransformReadLocked].
+     */
+    fun getTransform(): Matrix {
+        synchronized(lock) {
+            return Matrix(transformMatrix)
+        }
+    }
+
+    /**
+     * Executes [block] while holding the internal lock, providing direct read-only
+     * access to the current transformation matrix without creating a copy.
+     *
+     * Callers must not mutate [Matrix] inside [block]. Violating this contract can
+     * break invariants and thread-safety guarantees of [SelectionManager].
+     */
+    fun <T> withTransformReadLocked(block: (Matrix) -> T): T {
+        synchronized(lock) {
+            return block(transformMatrix)
+        }
+    }
+    fun resetTransform() {
+        synchronized(lock) {
+            transformMatrix.reset()
+        }
+    }
+
     fun select(item: CanvasItem) {
-        _selectedItems.add(item)
-        recomputeBounds()
+        synchronized(lock) {
+            _selectedItems.add(item)
+            recomputeBoundsInternal()
+        }
     }
 
     fun selectAll(items: List<CanvasItem>) {
-        _selectedItems.addAll(items)
-        recomputeBounds()
+        synchronized(lock) {
+            _selectedItems.addAll(items)
+            recomputeBoundsInternal()
+        }
     }
 
     fun deselect(item: CanvasItem) {
-        _selectedItems.remove(item)
-        recomputeBounds()
+        synchronized(lock) {
+            _selectedItems.remove(item)
+            recomputeBoundsInternal()
+        }
     }
 
     fun clearSelection() {
-        _selectedItems.clear()
-        transformMatrix.reset()
-        selectionBounds.setEmpty()
+        synchronized(lock) {
+            _selectedItems.clear()
+            transformMatrix.reset()
+            selectionBounds.setEmpty()
+        }
     }
 
-    fun hasSelection() = _selectedItems.isNotEmpty()
+    fun hasSelection(): Boolean = synchronized(lock) { _selectedItems.isNotEmpty() }
 
-    fun isSelected(item: CanvasItem) = _selectedItems.contains(item)
+    fun isSelected(item: CanvasItem): Boolean = synchronized(lock) { _selectedItems.contains(item) }
 
     private fun recomputeBounds() {
+        synchronized(lock) {
+            recomputeBoundsInternal()
+        }
+    }
+
+    private fun recomputeBoundsInternal() {
         if (_selectedItems.isEmpty()) {
             selectionBounds.setEmpty()
             return
         }
-        val iter = _selectedItems.iterator()
-        if (iter.hasNext()) {
-            selectionBounds.set(iter.next().bounds)
+
+        val tempBounds = RectF()
+        var first = true
+        for (item in _selectedItems) {
+            if (first) {
+                tempBounds.set(item.bounds)
+                first = false
+            } else {
+                tempBounds.union(item.bounds)
+            }
         }
-        while (iter.hasNext()) {
-            selectionBounds.union(iter.next().bounds)
-        }
+        selectionBounds.set(tempBounds)
     }
 
     /**
@@ -68,9 +118,11 @@ class SelectionManager {
      * Note: This is an AABB (Axis Aligned Bounding Box) of the transformed shape.
      */
     fun getTransformedBounds(): RectF {
-        val r = RectF(selectionBounds)
-        transformMatrix.mapRect(r)
-        return r
+        synchronized(lock) {
+            val r = RectF(selectionBounds)
+            transformMatrix.mapRect(r)
+            return r
+        }
     }
 
     /**
@@ -79,19 +131,21 @@ class SelectionManager {
      * Order: Top-Left, Top-Right, Bottom-Right, Bottom-Left.
      */
     fun getTransformedCorners(): FloatArray {
-        val pts =
-            floatArrayOf(
-                selectionBounds.left,
-                selectionBounds.top, // TL
-                selectionBounds.right,
-                selectionBounds.top, // TR
-                selectionBounds.right,
-                selectionBounds.bottom, // BR
-                selectionBounds.left,
-                selectionBounds.bottom, // BL
-            )
-        transformMatrix.mapPoints(pts)
-        return pts
+        synchronized(lock) {
+            val pts =
+                floatArrayOf(
+                    selectionBounds.left,
+                    selectionBounds.top, // TL
+                    selectionBounds.right,
+                    selectionBounds.top, // TR
+                    selectionBounds.right,
+                    selectionBounds.bottom, // BR
+                    selectionBounds.left,
+                    selectionBounds.bottom, // BL
+                )
+            transformMatrix.mapPoints(pts)
+            return pts
+        }
     }
 
     /**
@@ -99,19 +153,25 @@ class SelectionManager {
      * with the current transform applied.
      */
     fun getSelectionCenter(): FloatArray {
-        val pts = floatArrayOf(selectionBounds.centerX(), selectionBounds.centerY())
-        transformMatrix.mapPoints(pts)
-        return pts
+        synchronized(lock) {
+            val pts = floatArrayOf(selectionBounds.centerX(), selectionBounds.centerY())
+            transformMatrix.mapPoints(pts)
+            return pts
+        }
     }
 
     fun translate(
         dx: Float,
         dy: Float,
     ) {
-        transformMatrix.postTranslate(dx, dy)
+        synchronized(lock) {
+            transformMatrix.postTranslate(dx, dy)
+        }
     }
 
     fun applyTransform(matrix: Matrix) {
-        transformMatrix.postConcat(matrix)
+        synchronized(lock) {
+            transformMatrix.postConcat(matrix)
+        }
     }
 }

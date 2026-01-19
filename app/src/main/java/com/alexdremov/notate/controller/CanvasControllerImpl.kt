@@ -298,7 +298,7 @@ class CanvasControllerImpl(
         if (!selectionManager.hasSelection()) return
 
         val originals = selectionManager.selectedItems.toList()
-        val transform = selectionManager.transformMatrix
+        val transform = selectionManager.getTransform()
 
         val values = FloatArray(9)
         transform.getValues(values)
@@ -359,7 +359,7 @@ class CanvasControllerImpl(
 
         selectionManager.clearSelection()
         selectionManager.selectAll(newSelected)
-        selectionManager.transformMatrix.reset()
+        selectionManager.resetTransform()
 
         runOnUi {
             renderer.invalidate()

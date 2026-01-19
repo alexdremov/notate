@@ -52,7 +52,13 @@ class CanvasRepository(
                         wasJson = true
                         Logger.d("CanvasRepository", "Loaded via JSON Fallback")
                     } catch (e2: Exception) {
-                        Logger.w("CanvasRepository", "JSON Fallback failed", e2)
+                        Logger.e("CanvasRepository", "JSON Fallback failed", e2)
+                        val ioException = java.io.IOException(
+                            "Failed to parse canvas data. Protobuf: ${e.message}, JSON: ${e2.message}",
+                            e,
+                        )
+                        ioException.addSuppressed(e2)
+                        throw ioException
                     }
                 }
                 tDecode = System.currentTimeMillis()
@@ -122,18 +128,59 @@ class CanvasRepository(
         bytes: ByteArray,
     ) {
         if (path.startsWith("content://")) {
-            context.contentResolver.openOutputStream(Uri.parse(path), "wt")?.use {
+            val os =
+                context.contentResolver.openOutputStream(Uri.parse(path), "wt")
+                    ?: throw java.io.IOException("Failed to open output stream for SAF path: $path")
+            os.use {
                 it.write(bytes)
             }
         } else {
             // Atomic write for local files
             val targetFile = File(path)
             val tmpFile = File(targetFile.parent, "${targetFile.name}.tmp")
-            tmpFile.writeBytes(bytes)
-            if (targetFile.exists()) {
-                targetFile.delete()
+            val backupFile = File(targetFile.parent, "${targetFile.name}.bak")
+
+            try {
+                tmpFile.writeBytes(bytes)
+
+                if (targetFile.exists()) {
+                    // Create backup
+                    if (backupFile.exists()) backupFile.delete()
+                    if (!targetFile.renameTo(backupFile)) {
+                        throw java.io.IOException("Failed to create backup file: ${backupFile.absolutePath}")
+                    }
+                }
+
+                if (!tmpFile.renameTo(targetFile)) {
+                    // Restore from backup if rename fails
+                    var restoreAttempted = false
+                    var restoreSucceeded = false
+                    if (backupFile.exists()) {
+                        restoreAttempted = true
+                        restoreSucceeded = backupFile.renameTo(targetFile)
+                    }
+                    val restoreMessage = when {
+                        restoreAttempted && !restoreSucceeded ->
+                            " Backup restore also failed; backup may remain at ${backupFile.absolutePath}."
+                        restoreAttempted && restoreSucceeded ->
+                            " Backup restored successfully from ${backupFile.absolutePath}."
+                        else -> ""
+                    }
+                    throw java.io.IOException(
+                        "Failed to rename temp file to: ${targetFile.absolutePath}.$restoreMessage"
+                    )
+                }
+
+                // Success, delete backup
+                if (backupFile.exists()) {
+                    backupFile.delete()
+                }
+            } finally {
+                // Cleanup tmp file if it still exists (e.g. if delete or rename failed)
+                if (tmpFile.exists()) {
+                    tmpFile.delete()
+                }
             }
-            tmpFile.renameTo(targetFile)
         }
     }
 

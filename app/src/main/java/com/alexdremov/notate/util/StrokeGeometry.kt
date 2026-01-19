@@ -336,10 +336,10 @@ object StrokeGeometry {
 
             if (isPointErased(currentPoint)) {
                 modificationHappened = true
-                if (currentPoints.isNotEmpty()) {
+                if (currentPoints.size >= 2) {
                     newStrokes.add(createSubStroke(target, currentPoints))
-                    currentPoints.clear()
                 }
+                currentPoints.clear()
             } else {
                 currentPoints.add(currentPoint)
             }
@@ -351,7 +351,7 @@ object StrokeGeometry {
         }
 
         // Add final segment
-        if (currentPoints.isNotEmpty()) {
+        if (currentPoints.size >= 2) {
             newStrokes.add(createSubStroke(target, currentPoints))
         }
 
@@ -374,21 +374,6 @@ object StrokeGeometry {
         original: Stroke,
         points: List<TouchPoint>,
     ): Stroke {
-        if (points.size < 2) {
-            // Single point stroke? Maybe just a dot.
-            // Reconstruct path
-            val path = Path()
-            path.moveTo(points[0].x, points[0].y)
-            path.lineTo(points[0].x + 0.1f, points[0].y + 0.1f)
-            val bounds = computeStrokeBounds(path, original.width, original.style)
-            return original.copy(
-                path = path,
-                points = ArrayList(points),
-                bounds = bounds,
-                strokeOrder = 0, // Will be assigned later
-            )
-        }
-
         val path = Path()
         path.moveTo(points[0].x, points[0].y)
         for (i in 1 until points.size) {
