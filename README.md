@@ -53,6 +53,7 @@ without sacrificing extensive functionality.
 | **Long Press on Empty Area** | Open paste/insert image menu |
 | **Tap Outside Selection** | Deselect current selection |
 | **Tap UI** | Interact with floating toolbar or sidebar |
+| **Two-Finger Double-Tap** | Undo |
 
 ### Selection Transforms (after selecting)
 | Gesture | Action |
