@@ -262,15 +262,17 @@ class OnyxCanvasView
                             } else {
                                 lastTwoFingerTapTime = now
                             }
-                            isTwoFingerTapCheck = false
                         }
                     }
+                    isTwoFingerTapCheck = false
                 }
             } else if (action == MotionEvent.ACTION_MOVE && isTwoFingerTapCheck) {
-                if (event.pointerCount >= 2) {
+                if (event.pointerCount == 2) {
                     if (isTapSlopExceeded(event)) {
                         isTwoFingerTapCheck = false
                     }
+                } else {
+                    isTwoFingerTapCheck = false
                 }
             } else if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) {
                 isTwoFingerTapCheck = false
