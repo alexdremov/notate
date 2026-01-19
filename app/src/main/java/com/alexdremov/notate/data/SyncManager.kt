@@ -238,7 +238,11 @@ class SyncManager(
                 }
             }
         } catch (e: Exception) {
-            Logger.w("SyncManager", "Error scanning $currentRemotePath: ${e.message}")
+            if (e is CancellationException) {
+                throw e
+            }
+            Logger.w("SyncManager", "Error scanning $currentRemotePath", e)
+            throw e
         }
         return results
     }
