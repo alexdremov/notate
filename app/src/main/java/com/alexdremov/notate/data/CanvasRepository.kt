@@ -53,7 +53,12 @@ class CanvasRepository(
                         Logger.d("CanvasRepository", "Loaded via JSON Fallback")
                     } catch (e2: Exception) {
                         Logger.e("CanvasRepository", "JSON Fallback failed", e2)
-                        throw java.io.IOException("Failed to parse canvas data. Protobuf: ${e.message}, JSON: ${e2.message}", e)
+                        val ioException = java.io.IOException(
+                            "Failed to parse canvas data. Protobuf: ${e.message}, JSON: ${e2.message}",
+                            e,
+                        )
+                        ioException.addSuppressed(e2)
+                        throw ioException
                     }
                 }
                 tDecode = System.currentTimeMillis()
