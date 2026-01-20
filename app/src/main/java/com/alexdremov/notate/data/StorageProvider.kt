@@ -187,7 +187,7 @@ internal object StorageUtils {
                 "Failed to extract metadata from protobuf; the data may be malformed or the schema may be incompatible",
                 e,
             )
-            return null
+            null
         }
 
     fun createUpdatedProtobuf(
