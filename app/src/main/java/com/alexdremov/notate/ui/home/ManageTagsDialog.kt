@@ -110,17 +110,23 @@ fun ManageTagsDialog(
                                 onMoveUp = {
                                     val index = tags.indexOf(tag)
                                     if (index > 0) {
-                                        val prev = tags[index - 1]
-                                        onUpdateTag(tag.copy(order = prev.order))
-                                        onUpdateTag(prev.copy(order = tag.order))
+                                        val mutableTags = tags.toMutableList()
+                                        val movedTag = mutableTags.removeAt(index)
+                                        mutableTags.add(index - 1, movedTag)
+                                        mutableTags.forEachIndexed { newIndex, t ->
+                                            onUpdateTag(t.copy(order = newIndex))
+                                        }
                                     }
                                 },
                                 onMoveDown = {
                                     val index = tags.indexOf(tag)
-                                    if (index < tags.size - 1) {
-                                        val next = tags[index + 1]
-                                        onUpdateTag(tag.copy(order = next.order))
-                                        onUpdateTag(next.copy(order = tag.order))
+                                    if (index < tags.size - 1 && index >= 0) {
+                                        val mutableTags = tags.toMutableList()
+                                        val movedTag = mutableTags.removeAt(index)
+                                        mutableTags.add(index + 1, movedTag)
+                                        mutableTags.forEachIndexed { newIndex, t ->
+                                            onUpdateTag(t.copy(order = newIndex))
+                                        }
                                     }
                                 },
                             )
