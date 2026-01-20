@@ -39,7 +39,7 @@ class ToolbarCoordinator(
     var isCollapsible: Boolean = false
     var onRequestCollapse: (() -> Unit)? = null
 
-    private val handler = Handler(Looper.getMainLooper())
+    private val handler = Handler.createAsync(Looper.getMainLooper())
     private val collapseRunnable =
         Runnable {
             if (isCollapsible) {
