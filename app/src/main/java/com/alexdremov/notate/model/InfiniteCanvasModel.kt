@@ -84,6 +84,8 @@ class InfiniteCanvasModel {
     var viewportOffsetX: Float = 0f
     var viewportOffsetY: Float = 0f
     var toolbarItems: List<ToolbarItem> = emptyList()
+    var tagIds: List<String> = emptyList()
+    var tagDefinitions: List<Tag> = emptyList()
 
     /**
      * Updates the background style of the canvas.
@@ -479,6 +481,8 @@ class InfiniteCanvasModel {
                 viewportOffsetX,
                 viewportOffsetY,
                 toolbarItems,
+                tagIds,
+                tagDefinitions,
             )
         }
 
@@ -500,6 +504,8 @@ class InfiniteCanvasModel {
             viewportOffsetX = state.viewportOffsetX
             viewportOffsetY = state.viewportOffsetY
             toolbarItems = state.toolbarItems
+            tagIds = state.tagIds
+            tagDefinitions = state.tagDefinitions
         }
     }
 
@@ -530,6 +536,8 @@ class InfiniteCanvasModel {
             viewportOffsetX = data.offsetX
             viewportOffsetY = data.offsetY
             toolbarItems = data.toolbarItems
+            tagIds = data.tagIds
+            tagDefinitions = data.tagDefinitions
 
             CanvasSerializer.fromData(data) { item ->
                 if (item.order >= nextOrder) nextOrder = item.order + 1
