@@ -14,7 +14,7 @@ object CanvasConfig {
     const val TILE_MANAGER_TARGET_FPS = 30
     const val MIN_ZOOM_LEVEL = -10
     const val MAX_ZOOM_LEVEL = 10
-    const val LOD_BIAS = 0.5f // Switch to lower resolution sooner
+    const val LOD_BIAS = 0.0f // Switch to lower resolution sooner
     const val CACHE_MEMORY_PERCENT = 0.65 // of heap
     const val IMAGE_CACHE_MEMORY_PERCENT = 0.25 // of heap
     const val IMAGE_METADATA_CACHE_SIZE = 200

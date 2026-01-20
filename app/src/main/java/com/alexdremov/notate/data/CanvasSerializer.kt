@@ -2,6 +2,7 @@ package com.alexdremov.notate.data
 
 import android.graphics.RectF
 import com.alexdremov.notate.model.Stroke
+import com.alexdremov.notate.model.Tag
 import com.alexdremov.notate.util.Logger
 import com.alexdremov.notate.util.StrokeGeometry
 import com.onyx.android.sdk.api.device.epd.EpdController
@@ -27,6 +28,8 @@ object CanvasSerializer {
         offsetX: Float,
         offsetY: Float,
         toolbarItems: List<com.alexdremov.notate.model.ToolbarItem> = emptyList(),
+        tagIds: List<String> = emptyList(),
+        tagDefinitions: List<Tag> = emptyList(),
     ): CanvasData {
         val strokeDataList = ArrayList<StrokeData>()
         val imageDataList = ArrayList<CanvasImageData>()
@@ -93,6 +96,8 @@ object CanvasSerializer {
             offsetX = offsetX,
             offsetY = offsetY,
             toolbarItems = toolbarItems,
+            tagIds = tagIds,
+            tagDefinitions = tagDefinitions,
         )
     }
 
@@ -209,6 +214,8 @@ object CanvasSerializer {
         val viewportOffsetX: Float,
         val viewportOffsetY: Float,
         val toolbarItems: List<com.alexdremov.notate.model.ToolbarItem> = emptyList(),
+        val tagIds: List<String> = emptyList(),
+        val tagDefinitions: List<Tag> = emptyList(),
     )
 
     /**
@@ -375,6 +382,8 @@ object CanvasSerializer {
                 viewportOffsetX = data.offsetX,
                 viewportOffsetY = data.offsetY,
                 toolbarItems = data.toolbarItems,
+                tagIds = data.tagIds,
+                tagDefinitions = data.tagDefinitions,
             )
         }
 }

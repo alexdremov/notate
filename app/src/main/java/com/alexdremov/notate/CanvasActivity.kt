@@ -250,6 +250,20 @@ class CanvasActivity : AppCompatActivity() {
 
         toolbarCoordinator.setup()
 
+        // Wire up Auto-Collapse
+        toolbarCoordinator.onRequestCollapse = {
+            // Take a consistent snapshot of relevant state before deciding to collapse
+            val shouldCollapse = with(viewModel) {
+                !isToolbarCollapsed.value &&
+                    !isToolbarDragging.value &&
+                    !isEditMode.value &&
+                    !isPenPopupOpen.value
+            }
+            if (shouldCollapse && !sidebarCoordinator.isOpen) {
+                viewModel.setToolbarCollapsed(true)
+            }
+        }
+
         // Initialize Toolbar UI (Compose)
         binding.toolbarContainer.removeAllViews()
         val composeToolbar =
@@ -326,6 +340,7 @@ class CanvasActivity : AppCompatActivity() {
             SettingsSidebarController(
                 this,
                 binding.settingsSidebarContainer,
+                viewModel,
                 getCurrentStyle = { binding.canvasView.getBackgroundStyle() },
                 isFixedPageMode = { binding.canvasView.getModel().canvasType == com.alexdremov.notate.data.CanvasType.FIXED_PAGES },
                 onStyleUpdate = { newStyle -> binding.canvasView.setBackgroundStyle(newStyle) },

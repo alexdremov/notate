@@ -13,7 +13,7 @@ import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Divider
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -39,6 +39,7 @@ enum class DialogType {
     ADD_PROJECT,
     CREATE_FOLDER,
     CREATE_CANVAS,
+    MANAGE_TAGS,
 }
 
 @Composable
@@ -156,7 +157,7 @@ fun CreateCanvasDialog(
                 }
 
                 if (selectedType == CanvasType.FIXED_PAGES) {
-                    Divider(modifier = Modifier.padding(vertical = 8.dp))
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
 
                     // Paper Size Selection
                     Text("Paper Size", style = MaterialTheme.typography.titleSmall)
@@ -184,7 +185,7 @@ fun CreateCanvasDialog(
                         }
                     }
 
-                    Divider(modifier = Modifier.padding(vertical = 8.dp))
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
 
                     // Orientation Selection
                     Text("Orientation", style = MaterialTheme.typography.titleSmall)
