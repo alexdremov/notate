@@ -340,7 +340,14 @@ class HomeViewModel(
 
             if (newTags.isNotEmpty()) {
                 val current = _tags.value.toMutableList()
-                current.addAll(newTags)
+                val startingOrder = (current.maxOfOrNull { it.order } ?: -1) + 1
+                var nextOrder = startingOrder
+                val orderedNewTags = newTags.map { tag ->
+                    val updatedTag = tag.copy(order = nextOrder)
+                    nextOrder++
+                    updatedTag
+                }
+                current.addAll(orderedNewTags)
                 PreferencesManager.saveTags(getApplication(), current)
                 loadTags()
             }
