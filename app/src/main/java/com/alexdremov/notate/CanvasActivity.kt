@@ -252,10 +252,15 @@ class CanvasActivity : AppCompatActivity() {
 
         // Wire up Auto-Collapse
         toolbarCoordinator.onRequestCollapse = {
-            if (!viewModel.isToolbarCollapsed.value && !viewModel.isToolbarDragging.value && !viewModel.isEditMode.value) {
-                if (!viewModel.isPenPopupOpen.value && !sidebarCoordinator.isOpen) {
-                    viewModel.setToolbarCollapsed(true)
-                }
+            // Take a consistent snapshot of relevant state before deciding to collapse
+            val shouldCollapse = with(viewModel) {
+                !isToolbarCollapsed.value &&
+                    !isToolbarDragging.value &&
+                    !isEditMode.value &&
+                    !isPenPopupOpen.value
+            }
+            if (shouldCollapse && !sidebarCoordinator.isOpen) {
+                viewModel.setToolbarCollapsed(true)
             }
         }
 
