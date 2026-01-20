@@ -259,8 +259,9 @@ class HomeViewModel(
                     repo.setTags(item.path, tagIds, definitions)
                 }
             if (success) {
-                if (_selectedTag.value != null) {
-                    loadTaggedItems(_selectedTag.value!!.id)
+                val selectedTag = _selectedTag.value
+                if (selectedTag != null) {
+                    loadTaggedItems(selectedTag.id)
                 } else {
                     loadBrowserItems(_currentPath.value)
                 }
