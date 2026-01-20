@@ -114,6 +114,13 @@ class ToolbarCoordinator(
         handler.removeCallbacks(collapseRunnable)
     }
 
+    /**
+     * Should be called from an appropriate lifecycle callback (e.g., onDestroy/onDestroyView)
+     * to ensure that any pending collapse callbacks are removed and do not leak this coordinator.
+     */
+    fun destroy() {
+        cancelCollapseTimer()
+    }
     fun savePosition() {
         val lp = toolbarContainer.layoutParams as? ViewGroup.MarginLayoutParams ?: return
         savedPosition = Pair(lp.leftMargin, lp.topMargin)
