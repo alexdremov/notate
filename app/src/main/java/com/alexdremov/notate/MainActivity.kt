@@ -336,8 +336,8 @@ fun MainScreen(viewModel: HomeViewModel) {
     }
 
     // Handle Project Actions Dialogs
-    if (projectToManage != null) {
-        val manageTarget = projectToManage!!
+    val manageTarget = projectToManage
+    if (manageTarget != null) {
         AlertDialog(
             modifier = Modifier.border(2.dp, Color.Black, RoundedCornerShape(28.dp)),
             onDismissRequest = { projectToManage = null },
@@ -388,8 +388,8 @@ fun MainScreen(viewModel: HomeViewModel) {
         )
     }
 
-    if (projectToSync != null) {
-        val syncTarget = projectToSync!!
+    val syncTarget = projectToSync
+    if (syncTarget != null) {
         ProjectSyncConfigDialog(
             projectId = syncTarget.id,
             onDismiss = { projectToSync = null },
@@ -400,8 +400,8 @@ fun MainScreen(viewModel: HomeViewModel) {
         )
     }
 
-    if (projectToRename != null) {
-        val renameTarget = projectToRename!!
+    val renameTarget = projectToRename
+    if (renameTarget != null) {
         TextInputDialog(
             title = "Rename Project",
             initialValue = renameTarget.name,
@@ -414,8 +414,8 @@ fun MainScreen(viewModel: HomeViewModel) {
         )
     }
 
-    if (projectToDelete != null) {
-        val deleteTarget = projectToDelete!!
+    val deleteTarget = projectToDelete
+    if (deleteTarget != null) {
         DeleteConfirmationDialog(
             itemName = deleteTarget.name,
             onDismiss = { projectToDelete = null },

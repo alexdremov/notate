@@ -421,8 +421,9 @@ class HomeViewModel(
                     repo.deleteItem(item.path)
                 }
             if (success) {
-                if (_selectedTag.value != null) {
-                    loadTaggedItems(_selectedTag.value!!.id)
+                val tag = _selectedTag.value
+                if (tag != null) {
+                    loadTaggedItems(tag.id)
                 } else {
                     loadBrowserItems(_currentPath.value)
                 }
@@ -441,8 +442,9 @@ class HomeViewModel(
                     repo.renameItem(item.path, newName)
                 }
             if (success) {
-                if (_selectedTag.value != null) {
-                    loadTaggedItems(_selectedTag.value!!.id)
+                val tag = _selectedTag.value
+                if (tag != null) {
+                    loadTaggedItems(tag.id)
                 } else {
                     loadBrowserItems(_currentPath.value)
                 }
@@ -458,8 +460,9 @@ class HomeViewModel(
                     repo.duplicateItem(item.path, _currentPath.value)
                 }
             if (success) {
-                if (_selectedTag.value != null) {
-                    loadTaggedItems(_selectedTag.value!!.id)
+                val tag = _selectedTag.value
+                if (tag != null) {
+                    loadTaggedItems(tag.id)
                 } else {
                     loadBrowserItems(_currentPath.value)
                 }
@@ -477,8 +480,9 @@ class HomeViewModel(
     }
 
     fun refresh() {
-        if (_selectedTag.value != null) {
-            loadTaggedItems(_selectedTag.value!!.id)
+        val tag = _selectedTag.value
+        if (tag != null) {
+            loadTaggedItems(tag.id)
         } else if (_currentProject.value == null) {
             loadProjects()
         } else {

@@ -58,7 +58,7 @@ fun FileBrowserScreen(
     onSetFileTags: (FileSystemItem, List<String>) -> Unit = { _, _ -> },
 ) {
     var itemToDelete by remember { mutableStateOf<FileSystemItem?>(null) }
-    var itemToManage by remember { mutableStateOf<FileSystemItem?>(null) }
+    var managingItemPath by remember { mutableStateOf<String?>(null) }
     var itemToRename by remember { mutableStateOf<FileSystemItem?>(null) }
 
     Column(Modifier.fillMaxSize()) {
@@ -80,7 +80,7 @@ fun FileBrowserScreen(
                     FileGridItem(
                         item = it,
                         onClick = { onItemClick(it) },
-                        onLongClick = { itemToManage = it },
+                        onLongClick = { managingItemPath = it.path },
                     )
                 }
             }
@@ -88,15 +88,16 @@ fun FileBrowserScreen(
     }
 
     // Context Menu / Options Dialog
-    if (itemToManage != null) {
-        val currentItem = itemToManage!!
+    val currentItem = if (managingItemPath != null) items.find { it.path == managingItemPath } else null
+
+    if (currentItem != null) {
         AlertDialog(
             modifier = Modifier.border(2.dp, Color.Black, RoundedCornerShape(28.dp)),
-            onDismissRequest = { itemToManage = null },
+            onDismissRequest = { managingItemPath = null },
             title = { Text("Actions for \"${currentItem.name}\"") },
             confirmButton = {},
             dismissButton = {
-                OutlinedButton(onClick = { itemToManage = null }) {
+                OutlinedButton(onClick = { managingItemPath = null }) {
                     Text("Cancel")
                 }
             },
@@ -105,7 +106,7 @@ fun FileBrowserScreen(
                     OutlinedButton(
                         onClick = {
                             itemToRename = currentItem
-                            itemToManage = null
+                            managingItemPath = null
                         },
                         modifier = Modifier.fillMaxWidth(),
                     ) {
@@ -117,7 +118,7 @@ fun FileBrowserScreen(
                     OutlinedButton(
                         onClick = {
                             onItemDuplicate(currentItem)
-                            itemToManage = null
+                            managingItemPath = null
                         },
                         modifier = Modifier.fillMaxWidth(),
                     ) {
@@ -129,7 +130,7 @@ fun FileBrowserScreen(
                     OutlinedButton(
                         onClick = {
                             itemToDelete = currentItem
-                            itemToManage = null
+                            managingItemPath = null
                         },
                         modifier = Modifier.fillMaxWidth(),
                     ) {
@@ -156,11 +157,7 @@ fun FileBrowserScreen(
                                             } else {
                                                 currentItem.tagIds + tag.id
                                             }
-                                        // Create a single updated item instance and use it consistently
-                                        val updatedItem = currentItem.copy(tagIds = newTags)
-                                        onSetFileTags(updatedItem, newTags)
-                                        // Update local state so the dialog reflects the change immediately
-                                        itemToManage = updatedItem
+                                        onSetFileTags(currentItem, newTags)
                                     },
                                     label = { Text(tag.name) },
                                     colors =

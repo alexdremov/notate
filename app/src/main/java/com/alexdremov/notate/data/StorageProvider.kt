@@ -125,16 +125,154 @@ internal object StorageUtils {
         }
     }
 
-    private fun extractMetadataProtobuf(streamProvider: () -> InputStream?): CanvasDataPreview? {
-        return try {
+    private fun extractMetadataProtobuf(streamProvider: () -> InputStream?): CanvasDataPreview? =
+        try {
             streamProvider()?.use { stream ->
-                val bytes = stream.readBytes()
-                if (bytes.isEmpty()) return null
-                ProtoBuf.decodeFromByteArray(CanvasDataPreview.serializer(), bytes)
+                var thumbnail: String? = null
+                val tagIds = mutableListOf<String>()
+                val tagDefinitions = mutableListOf<Tag>()
+
+                while (true) {
+                    val tag = readVarint(stream)
+                    if (tag == -1L) break
+
+                    val fieldNumber = (tag ushr 3).toInt()
+                    val wireType = (tag and 0x07).toInt()
+
+                    when (fieldNumber) {
+                        1 -> { // thumbnail
+                            if (wireType != 2) {
+                                skipField(stream, wireType)
+                            } else {
+                                val length = readVarint(stream)
+                                if (length > 0) {
+                                    val bytes = ByteArray(length.toInt())
+                                    readFully(stream, bytes)
+                                    thumbnail = String(bytes, Charsets.UTF_8)
+                                }
+                            }
+                        }
+
+                        13 -> { // tagIds
+                            if (wireType != 2) {
+                                skipField(stream, wireType)
+                            } else {
+                                val length = readVarint(stream)
+                                if (length > 0) {
+                                    val bytes = ByteArray(length.toInt())
+                                    readFully(stream, bytes)
+                                    tagIds.add(String(bytes, Charsets.UTF_8))
+                                }
+                            }
+                        }
+
+                        14 -> { // tagDefinitions
+                            if (wireType != 2) {
+                                skipField(stream, wireType)
+                            } else {
+                                val length = readVarint(stream)
+                                if (length > 0) {
+                                    val bytes = ByteArray(length.toInt())
+                                    readFully(stream, bytes)
+                                    try {
+                                        val tagVal = ProtoBuf.decodeFromByteArray(Tag.serializer(), bytes)
+                                        tagDefinitions.add(tagVal)
+                                    } catch (e: Exception) {
+                                        // Ignore malformed tag
+                                    }
+                                }
+                            }
+                        }
+
+                        else -> {
+                            skipField(stream, wireType)
+                        }
+                    }
+                }
+                CanvasDataPreview(thumbnail, tagIds, tagDefinitions)
             }
         } catch (e: Exception) {
             Logger.e("Metadata", "Failed to extract metadata from protobuf", e)
             null
+        }
+
+    private fun readVarint(stream: InputStream): Long {
+        var value = 0L
+        var shift = 0
+        var count = 0
+        while (true) {
+            val b = stream.read()
+            if (b == -1) {
+                if (count == 0) return -1L // EOF at start
+                throw java.io.EOFException("Unexpected EOF inside varint")
+            }
+            value = value or ((b.toLong() and 0x7F) shl shift)
+            if ((b and 0x80) == 0) break
+            shift += 7
+            count++
+            if (shift > 63) throw java.io.IOException("Varint too long")
+        }
+        return value
+    }
+
+    private fun readFully(
+        stream: InputStream,
+        bytes: ByteArray,
+    ) {
+        var pos = 0
+        while (pos < bytes.size) {
+            val r = stream.read(bytes, pos, bytes.size - pos)
+            if (r == -1) throw java.io.EOFException("Unexpected EOF reading bytes")
+            pos += r
+        }
+    }
+
+    private fun skipField(
+        stream: InputStream,
+        wireType: Int,
+    ) {
+        when (wireType) {
+            0 -> {
+                readVarint(stream)
+            }
+
+            // Varint
+            1 -> {
+                skipBytes(stream, 8)
+            }
+
+            // 64-bit
+            2 -> {
+                val length = readVarint(stream)
+                skipBytes(stream, length)
+            }
+
+            // Length Delimited
+            5 -> {
+                skipBytes(stream, 4)
+            }
+
+            // 32-bit
+            else -> {
+                throw java.io.IOException("Unsupported wire type: $wireType")
+            }
+        }
+    }
+
+    private fun skipBytes(
+        stream: InputStream,
+        count: Long,
+    ) {
+        var remaining = count
+        while (remaining > 0) {
+            val skipped = stream.skip(remaining)
+            if (skipped <= 0) {
+                // If skip returns 0, try read
+                if (stream.read() == -1) throw java.io.EOFException("Unexpected EOF skipping bytes")
+                remaining--
+            } else {
+                remaining -= skipped
+            }
         }
     }
 }
