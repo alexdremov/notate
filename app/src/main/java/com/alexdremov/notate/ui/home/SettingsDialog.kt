@@ -63,7 +63,7 @@ fun SettingsDialog(
     val context = LocalContext.current
 
     AlertDialog(
-        containerColor = Color.White,
+        containerColor = MaterialTheme.colorScheme.surface,
         modifier = Modifier.border(2.dp, Color.Black, RoundedCornerShape(28.dp)), // Keep border for E-Ink visibility
         onDismissRequest = onDismiss,
         confirmButton = {},
