@@ -160,7 +160,16 @@ class ProjectRepository(
             }.sortedByDescending { it.lastModified }
     }
 
+    // Throttle full index refreshes to avoid excessive I/O when called repeatedly.
+    private var lastIndexRefreshTime: Long = 0L
+    private val minIndexRefreshIntervalMs: Long = 1_000L
+
     suspend fun refreshIndex() {
+        val now = System.currentTimeMillis()
+        if (now - lastIndexRefreshTime < minIndexRefreshIntervalMs) {
+            return
+        }
+        lastIndexRefreshTime = now
         indexManager.updateIndex(getProvider(null))
     }
 
