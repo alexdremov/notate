@@ -103,7 +103,21 @@ internal object StorageUtils {
                 val match = Regex(""""thumbnail"\s*:\s*"([^"]+)"""").find(header)
                 val thumbnail = match?.groupValues?.get(1)
                 CanvasDataPreview(thumbnail = thumbnail)
-                // Tags extraction from JSON skipped for performance/legacy reasons
+                /*
+                 * Only the thumbnail is extracted from JSON here.
+                 *
+                 * Tags present in JSON files are intentionally ignored during this
+                 * lightweight metadata read for performance/legacy reasons:
+                 *  - Parsing the full JSON structure on large files is expensive and
+                 *    this method is called frequently (e.g. when listing many items).
+                 *  - Historical JSON formats may not have stable/consistent tag
+                 *    representations, so decoding them here would be brittle.
+                 *
+                 * As a result, CanvasDataPreview instances created from JSON will not
+                 * contain tag information, whereas protobuf-based previews may. Any
+                 * tag data for JSON-backed canvases is resolved elsewhere when the
+                 * full canvas content is loaded, not during this preview extraction.
+                 */
             }
         } catch (e: Exception) {
             Logger.e("Metadata", "Failed to extract metadata from JSON", e)
