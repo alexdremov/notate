@@ -2,6 +2,8 @@ package com.alexdremov.notate.ui
 
 import android.content.Context
 import android.graphics.Rect
+import android.os.Handler
+import android.os.Looper
 import android.view.View
 import android.view.ViewGroup
 import android.view.ViewTreeObserver
@@ -32,6 +34,19 @@ class ToolbarCoordinator(
     var onOrientationChanged: (() -> Unit)? = null
     var onDragStateChanged: ((Boolean) -> Unit)? = null
 
+    // Auto-Collapse
+    var collapseTimeoutMs: Long = 3000L
+    var isCollapsible: Boolean = false
+    var onRequestCollapse: (() -> Unit)? = null
+
+    private val handler = Handler(Looper.getMainLooper())
+    private val collapseRunnable =
+        Runnable {
+            if (isCollapsible) {
+                onRequestCollapse?.invoke()
+            }
+        }
+
     fun setup() {
         // 1. Monitor layout changes to detect rotation
         rootView.viewTreeObserver.addOnGlobalLayoutListener(
@@ -58,6 +73,7 @@ class ToolbarCoordinator(
         }
 
         toolbarContainer.onDragStart = {
+            cancelCollapseTimer()
             onDragStateChanged?.invoke(true)
             EpdDeviceManager.enterAnimationUpdate(true)
         }
@@ -69,19 +85,33 @@ class ToolbarCoordinator(
                 savedPosition = Pair(lp.leftMargin, lp.topMargin)
             }
 
+            resetCollapseTimer()
             onDragStateChanged?.invoke(false)
             EpdDeviceManager.exitAnimationUpdate(true)
         }
 
         toolbarContainer.onDown = {
+            cancelCollapseTimer()
             EpdDeviceManager.enterAnimationUpdate(true)
         }
 
         toolbarContainer.onUp = {
+            resetCollapseTimer()
             EpdDeviceManager.exitAnimationUpdate(true)
         }
 
         resetToTopLeft()
+    }
+
+    fun resetCollapseTimer() {
+        cancelCollapseTimer()
+        if (isCollapsible) {
+            handler.postDelayed(collapseRunnable, collapseTimeoutMs)
+        }
+    }
+
+    fun cancelCollapseTimer() {
+        handler.removeCallbacks(collapseRunnable)
     }
 
     fun savePosition() {
@@ -98,6 +128,7 @@ class ToolbarCoordinator(
         // We might need to ensure it's on screen if screen rotated, but resetToTopLeft handles rotation
         // Just in case, clamp lightly? No, restore EXACTLY as requested.
         updateExclusionRect()
+        resetCollapseTimer() // Reset timer on restore/expand
     }
 
     private fun resetToTopLeft() {

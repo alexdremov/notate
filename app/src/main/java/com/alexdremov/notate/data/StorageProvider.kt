@@ -5,6 +5,7 @@ package com.alexdremov.notate.data
 import android.content.Context
 import android.net.Uri
 import androidx.documentfile.provider.DocumentFile
+import com.alexdremov.notate.model.Tag
 import com.alexdremov.notate.util.Logger
 import kotlinx.serialization.encodeToByteArray
 import kotlinx.serialization.protobuf.ProtoBuf
@@ -40,9 +41,19 @@ interface StorageProvider {
         path: String,
         parentPath: String?,
     ): Boolean
+
+    fun setTags(
+        path: String,
+        tagIds: List<String>,
+        tagDefinitions: List<Tag> = emptyList(),
+    ): Boolean
+
+    fun findFilesWithTag(tagId: String): List<CanvasItem>
 }
 
 internal object StorageUtils {
+    private const val LARGE_FILE_THRESHOLD = 10 * 1024 * 1024 // 10MB
+
     fun getSafeFileName(name: String): String = name.replace("[^a-zA-Z0-9\\s]".toRegex(), "").trim()
 
     fun getDuplicateName(originalName: String): String =
@@ -54,10 +65,15 @@ internal object StorageUtils {
             "$originalName Copy"
         }
 
-    fun extractThumbnail(
+    fun extractMetadata(
         fileName: String?,
         streamProvider: () -> InputStream?,
-    ): String? {
+        fileSize: Long = 0,
+    ): CanvasDataPreview? {
+        if (fileSize > LARGE_FILE_THRESHOLD) {
+            Logger.w("Storage", "Reading metadata from large file: $fileName (${fileSize / 1024 / 1024}MB)")
+        }
+
         var isJson = false
         try {
             streamProvider()?.use { stream ->
@@ -73,10 +89,10 @@ internal object StorageUtils {
             isJson = fileName?.endsWith(".json") == true
         }
 
-        return if (isJson) extractThumbnailJson(streamProvider) else extractThumbnailProtobuf(streamProvider)
+        return if (isJson) extractMetadataJson(streamProvider) else extractMetadataProtobuf(streamProvider)
     }
 
-    private fun extractThumbnailJson(streamProvider: () -> InputStream?): String? {
+    private fun extractMetadataJson(streamProvider: () -> InputStream?): CanvasDataPreview? {
         return try {
             streamProvider()?.use { stream ->
                 val buffer = ByteArray(500 * 1024) // 500KB
@@ -84,23 +100,25 @@ internal object StorageUtils {
                 if (read <= 0) return null
                 val header = String(buffer, 0, read, Charsets.UTF_8)
                 val match = Regex("\"thumbnail\"\\s*:\\s*\"([^\"]+)\"").find(header)
-                match?.groupValues?.get(1)
+                val thumbnail = match?.groupValues?.get(1)
+                CanvasDataPreview(thumbnail = thumbnail)
+                // Tags extraction from JSON skipped for performance/legacy reasons
             }
         } catch (e: Exception) {
-            Logger.i("Thumbnail", "Failed to extract thumbnail from JSON")
+            Logger.e("Metadata", "Failed to extract metadata from JSON", e)
             null
         }
     }
 
-    private fun extractThumbnailProtobuf(streamProvider: () -> InputStream?): String? {
+    private fun extractMetadataProtobuf(streamProvider: () -> InputStream?): CanvasDataPreview? {
         return try {
             streamProvider()?.use { stream ->
                 val bytes = stream.readBytes()
                 if (bytes.isEmpty()) return null
-                ProtoBuf.decodeFromByteArray(CanvasDataPreview.serializer(), bytes).thumbnail
+                ProtoBuf.decodeFromByteArray(CanvasDataPreview.serializer(), bytes)
             }
         } catch (e: Exception) {
-            Logger.i("Thumbnail", "Failed to extract thumbnail from protobuf")
+            Logger.e("Metadata", "Failed to extract metadata from protobuf", e)
             null
         }
     }
@@ -117,35 +135,46 @@ class LocalStorageProvider(
     override fun getItems(path: String?): List<FileSystemItem> {
         val targetPath = path ?: rootDir.absolutePath
         val targetDir = File(targetPath)
-        if (!targetDir.exists()) return emptyList()
+        if (!targetDir.exists()) {
+            Logger.w("Storage", "Directory not found: $targetPath")
+            return emptyList()
+        }
 
-        return targetDir
-            .listFiles()
-            ?.mapNotNull {
-                when {
-                    it.isDirectory -> {
-                        ProjectItem(
-                            name = it.name,
-                            path = it.absolutePath,
-                            lastModified = it.lastModified(),
-                            itemsCount = it.list()?.size ?: 0,
-                        )
-                    }
+        return try {
+            targetDir
+                .listFiles()
+                ?.mapNotNull {
+                    when {
+                        it.isDirectory -> {
+                            ProjectItem(
+                                name = it.name,
+                                path = it.absolutePath,
+                                lastModified = it.lastModified(),
+                                itemsCount = it.list()?.size ?: 0,
+                            )
+                        }
 
-                    it.extension == "json" || it.extension == "notate" -> {
-                        CanvasItem(
-                            name = it.nameWithoutExtension,
-                            path = it.absolutePath,
-                            lastModified = it.lastModified(),
-                            thumbnail = StorageUtils.extractThumbnail(it.name) { it.inputStream() },
-                        )
-                    }
+                        it.extension == "json" || it.extension == "notate" -> {
+                            val metadata = StorageUtils.extractMetadata(it.name, { it.inputStream() }, it.length())
+                            CanvasItem(
+                                name = it.nameWithoutExtension,
+                                path = it.absolutePath,
+                                lastModified = it.lastModified(),
+                                thumbnail = metadata?.thumbnail,
+                                tagIds = metadata?.tagIds ?: emptyList(),
+                                embeddedTags = metadata?.tagDefinitions ?: emptyList(),
+                            )
+                        }
 
-                    else -> {
-                        null
+                        else -> {
+                            null
+                        }
                     }
-                }
-            }?.sortedByDescending { it.lastModified } ?: emptyList()
+                }?.sortedByDescending { it.lastModified } ?: emptyList()
+        } catch (e: Exception) {
+            Logger.e("Storage", "Failed to list items in $targetPath", e, showToUser = true)
+            emptyList()
+        }
     }
 
     override fun createFolder(
@@ -155,7 +184,12 @@ class LocalStorageProvider(
         val targetPath = parentPath ?: rootDir.absolutePath
         val parent = File(targetPath)
         val newDir = File(parent, name)
-        return if (!newDir.exists()) newDir.mkdirs() else false
+        return try {
+            if (!newDir.exists()) newDir.mkdirs() else false
+        } catch (e: Exception) {
+            Logger.e("Storage", "Failed to create folder $name", e, showToUser = true)
+            false
+        }
     }
 
     override fun createCanvas(
@@ -170,18 +204,29 @@ class LocalStorageProvider(
         val parent = File(targetPath)
         val file = File(parent, fileName)
 
-        return if (!file.exists()) {
-            val bytes = ProtoBuf.encodeToByteArray(data)
-            file.writeBytes(bytes)
-            file.absolutePath
-        } else {
+        return try {
+            if (!file.exists()) {
+                val bytes = ProtoBuf.encodeToByteArray(data)
+                file.writeBytes(bytes)
+                file.absolutePath
+            } else {
+                Logger.w("Storage", "File already exists: $fileName")
+                null
+            }
+        } catch (e: Exception) {
+            Logger.e("Storage", "Failed to create canvas $name", e, showToUser = true)
             null
         }
     }
 
     override fun deleteItem(path: String): Boolean {
         val file = File(path)
-        return if (file.exists()) file.deleteRecursively() else false
+        return try {
+            if (file.exists()) file.deleteRecursively() else false
+        } catch (e: Exception) {
+            Logger.e("Storage", "Failed to delete item $path", e, showToUser = true)
+            false
+        }
     }
 
     override fun renameItem(
@@ -204,7 +249,12 @@ class LocalStorageProvider(
             }
 
         val newFile = File(file.parent, finalName)
-        return file.renameTo(newFile)
+        return try {
+            file.renameTo(newFile)
+        } catch (e: Exception) {
+            Logger.e("Storage", "Failed to rename item $path", e, showToUser = true)
+            false
+        }
     }
 
     override fun duplicateItem(
@@ -214,20 +264,69 @@ class LocalStorageProvider(
         val file = File(path)
         if (!file.exists()) return false
 
-        if (file.isDirectory) {
-            val newDir = File(file.parent, "${file.name} Copy")
-            return file.copyRecursively(newDir, overwrite = false)
-        } else {
-            val newName = StorageUtils.getDuplicateName(file.name)
-            val newFile = File(file.parent, newName)
-            return try {
-                file.copyTo(newFile, overwrite = false)
-                true
-            } catch (e: Exception) {
-                false
+        try {
+            if (file.isDirectory) {
+                val newDir = File(file.parent, "${file.name} Copy")
+                return file.copyRecursively(newDir, overwrite = false)
+            } else {
+                val newName = StorageUtils.getDuplicateName(file.name)
+                val newFile = File(file.parent, newName)
+                return file.copyTo(newFile, overwrite = false).exists()
             }
+        } catch (e: Exception) {
+            Logger.e("Storage", "Failed to duplicate item $path", e, showToUser = true)
+            return false
         }
     }
+
+    override fun setTags(
+        path: String,
+        tagIds: List<String>,
+        tagDefinitions: List<Tag>,
+    ): Boolean {
+        val file = File(path)
+        if (!file.exists() || file.isDirectory) return false
+
+        if (file.extension != "notate") return false
+
+        return try {
+            val bytes = file.readBytes()
+            val canvasData = ProtoBuf.decodeFromByteArray(CanvasData.serializer(), bytes)
+            val updatedData = canvasData.copy(tagIds = tagIds, tagDefinitions = tagDefinitions)
+            val newBytes = ProtoBuf.encodeToByteArray(updatedData)
+            file.writeBytes(newBytes)
+            true
+        } catch (e: Exception) {
+            Logger.e("Storage", "Failed to set tags for $path", e, showToUser = true)
+            false
+        }
+    }
+
+    override fun findFilesWithTag(tagId: String): List<CanvasItem> =
+        try {
+            rootDir
+                .walk()
+                .filter { it.isFile && (it.extension == "json" || it.extension == "notate") }
+                .mapNotNull { file ->
+                    val metadata = StorageUtils.extractMetadata(file.name, { file.inputStream() }, file.length())
+                    if (metadata?.tagIds?.contains(tagId) == true) {
+                        CanvasItem(
+                            name = file.nameWithoutExtension,
+                            path = file.absolutePath,
+                            lastModified = file.lastModified(),
+                            thumbnail = metadata.thumbnail,
+                            tagIds = metadata.tagIds,
+                            embeddedTags = metadata.tagDefinitions,
+                        )
+                    } else {
+                        null
+                    }
+                }.toList()
+                .sortedByDescending { it.lastModified }
+        } catch (e: Exception) {
+            Logger.e("Storage", "Failed to search files in ${rootDir.absolutePath}", e)
+            emptyList()
+        }
 }
 
 class SafStorageProvider(
@@ -242,42 +341,50 @@ class SafStorageProvider(
         val targetUri = if (path != null) Uri.parse(path) else Uri.parse(rootUriString)
         val dir = DocumentFile.fromTreeUri(context, targetUri) ?: return emptyList()
 
-        return dir
-            .listFiles()
-            .mapNotNull {
-                when {
-                    it.isDirectory -> {
-                        ProjectItem(
-                            name = it.name ?: "Unknown",
-                            path = it.uri.toString(),
-                            lastModified = it.lastModified(),
-                            itemsCount = 0,
-                        )
-                    }
+        return try {
+            dir
+                .listFiles()
+                .mapNotNull {
+                    when {
+                        it.isDirectory -> {
+                            ProjectItem(
+                                name = it.name ?: "Unknown",
+                                path = it.uri.toString(),
+                                lastModified = it.lastModified(),
+                                itemsCount = 0,
+                            )
+                        }
 
-                    it.name?.endsWith(".json") == true || it.name?.endsWith(".notate") == true -> {
-                        val name = it.name ?: "Unknown"
-                        val isJsonExt = name.endsWith(".json")
-                        CanvasItem(
-                            name = name.removeSuffix(if (isJsonExt) ".json" else ".notate"),
-                            path = it.uri.toString(),
-                            lastModified = it.lastModified(),
-                            thumbnail =
-                                StorageUtils.extractThumbnail(it.name) {
+                        it.name?.endsWith(".json") == true || it.name?.endsWith(".notate") == true -> {
+                            val name = it.name ?: "Unknown"
+                            val isJsonExt = name.endsWith(".json")
+                            val metadata =
+                                StorageUtils.extractMetadata(it.name, {
                                     try {
                                         context.contentResolver.openInputStream(it.uri)
                                     } catch (e: Exception) {
                                         null
                                     }
-                                },
-                        )
-                    }
+                                }, it.length())
+                            CanvasItem(
+                                name = name.removeSuffix(if (isJsonExt) ".json" else ".notate"),
+                                path = it.uri.toString(),
+                                lastModified = it.lastModified(),
+                                thumbnail = metadata?.thumbnail,
+                                tagIds = metadata?.tagIds ?: emptyList(),
+                                embeddedTags = metadata?.tagDefinitions ?: emptyList(),
+                            )
+                        }
 
-                    else -> {
-                        null
+                        else -> {
+                            null
+                        }
                     }
-                }
-            }.sortedByDescending { it.lastModified }
+                }.sortedByDescending { it.lastModified }
+        } catch (e: Exception) {
+            Logger.e("Storage", "Failed to list items in $rootUriString", e, showToUser = true)
+            emptyList()
+        }
     }
 
     override fun createFolder(
@@ -287,9 +394,14 @@ class SafStorageProvider(
         val targetUri = if (parentPath != null) Uri.parse(parentPath) else Uri.parse(rootUriString)
         val parentDir = DocumentFile.fromTreeUri(context, targetUri) ?: return false
 
-        return if (parentDir.findFile(name) == null) {
-            parentDir.createDirectory(name) != null
-        } else {
+        return try {
+            if (parentDir.findFile(name) == null) {
+                parentDir.createDirectory(name) != null
+            } else {
+                false
+            }
+        } catch (e: Exception) {
+            Logger.e("Storage", "Failed to create folder $name", e, showToUser = true)
             false
         }
     }
@@ -325,7 +437,12 @@ class SafStorageProvider(
     override fun deleteItem(path: String): Boolean {
         val uri = Uri.parse(path)
         val df = DocumentFile.fromTreeUri(context, uri) ?: DocumentFile.fromSingleUri(context, uri)
-        return df?.delete() == true
+        return try {
+            df?.delete() == true
+        } catch (e: Exception) {
+            Logger.e("Storage", "Failed to delete item $path", e, showToUser = true)
+            false
+        }
     }
 
     override fun renameItem(
@@ -349,7 +466,12 @@ class SafStorageProvider(
                 }
             }
 
-        return df.renameTo(finalName)
+        return try {
+            df.renameTo(finalName)
+        } catch (e: Exception) {
+            Logger.e("Storage", "Failed to rename item $path", e, showToUser = true)
+            false
+        }
     }
 
     override fun duplicateItem(
@@ -379,8 +501,82 @@ class SafStorageProvider(
             }
             true
         } catch (e: Exception) {
+            Logger.e("Storage", "Failed to duplicate item $path", e, showToUser = true)
             newFile.delete()
             false
+        }
+    }
+
+    override fun setTags(
+        path: String,
+        tagIds: List<String>,
+        tagDefinitions: List<Tag>,
+    ): Boolean {
+        val uri = Uri.parse(path)
+        val file = DocumentFile.fromSingleUri(context, uri) ?: return false
+
+        if (file.isDirectory) return false
+        // Basic check for file extension from name
+        if (file.name?.endsWith(".notate") != true) return false
+
+        return try {
+            val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: return false
+            val canvasData = ProtoBuf.decodeFromByteArray(CanvasData.serializer(), bytes)
+            val updatedData = canvasData.copy(tagIds = tagIds, tagDefinitions = tagDefinitions)
+            val newBytes = ProtoBuf.encodeToByteArray(updatedData)
+
+            context.contentResolver.openOutputStream(uri, "wt")?.use { it.write(newBytes) }
+            true
+        } catch (e: Exception) {
+            Logger.e("Storage", "Failed to set tags SAF", e, showToUser = true)
+            false
+        }
+    }
+
+    override fun findFilesWithTag(tagId: String): List<CanvasItem> {
+        val rootUri = Uri.parse(rootUriString)
+        val rootDir = DocumentFile.fromTreeUri(context, rootUri) ?: return emptyList()
+        val results = mutableListOf<CanvasItem>()
+        try {
+            searchRecursive(rootDir, tagId, results)
+        } catch (e: Exception) {
+            Logger.e("Storage", "Failed to search SAF", e)
+        }
+        return results.sortedByDescending { it.lastModified }
+    }
+
+    private fun searchRecursive(
+        dir: DocumentFile,
+        tagId: String,
+        results: MutableList<CanvasItem>,
+    ) {
+        dir.listFiles().forEach { file ->
+            if (file.isDirectory) {
+                searchRecursive(file, tagId, results)
+            } else if (file.name?.endsWith(".json") == true || file.name?.endsWith(".notate") == true) {
+                val metadata =
+                    StorageUtils.extractMetadata(file.name, {
+                        try {
+                            context.contentResolver.openInputStream(file.uri)
+                        } catch (e: Exception) {
+                            null
+                        }
+                    }, file.length())
+                if (metadata?.tagIds?.contains(tagId) == true) {
+                    val name = file.name ?: "Unknown"
+                    val isJsonExt = name.endsWith(".json")
+                    results.add(
+                        CanvasItem(
+                            name = name.removeSuffix(if (isJsonExt) ".json" else ".notate"),
+                            path = file.uri.toString(),
+                            lastModified = file.lastModified(),
+                            thumbnail = metadata.thumbnail,
+                            tagIds = metadata.tagIds,
+                            embeddedTags = metadata.tagDefinitions,
+                        ),
+                    )
+                }
+            }
         }
     }
 }

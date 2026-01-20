@@ -3,6 +3,7 @@ package com.alexdremov.notate.data
 import android.content.Context
 import android.net.Uri
 import androidx.documentfile.provider.DocumentFile
+import com.alexdremov.notate.model.Tag
 import java.io.File
 import java.io.OutputStreamWriter
 
@@ -24,6 +25,8 @@ data class CanvasItem(
     override val path: String,
     override val lastModified: Long,
     val thumbnail: String? = null,
+    val tagIds: List<String> = emptyList(),
+    val embeddedTags: List<Tag> = emptyList(),
 ) : FileSystemItem
 
 class ProjectRepository(
@@ -87,4 +90,12 @@ class ProjectRepository(
         path: String,
         parentPath: String?,
     ): Boolean = getProvider(path).duplicateItem(path, parentPath)
+
+    fun setTags(
+        path: String,
+        tagIds: List<String>,
+        tagDefinitions: List<Tag> = emptyList(),
+    ): Boolean = getProvider(path).setTags(path, tagIds, tagDefinitions)
+
+    fun findFilesWithTag(tagId: String): List<CanvasItem> = getProvider(null).findFilesWithTag(tagId)
 }

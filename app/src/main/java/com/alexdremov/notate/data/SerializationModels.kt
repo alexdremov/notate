@@ -4,6 +4,7 @@ package com.alexdremov.notate.data
 
 import com.alexdremov.notate.model.BackgroundStyle
 import com.alexdremov.notate.model.StrokeType
+import com.alexdremov.notate.model.Tag
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.protobuf.ProtoNumber
 
@@ -38,6 +39,10 @@ data class CanvasData(
     val images: List<CanvasImageData> = emptyList(),
     @ProtoNumber(12)
     val toolbarItems: List<com.alexdremov.notate.model.ToolbarItem> = emptyList(),
+    @ProtoNumber(13)
+    val tagIds: List<String> = emptyList(),
+    @ProtoNumber(14)
+    val tagDefinitions: List<Tag> = emptyList(),
 )
 
 @Serializable
@@ -146,4 +151,8 @@ data class PointData(
 data class CanvasDataPreview(
     @ProtoNumber(1)
     val thumbnail: String? = null,
+    @ProtoNumber(13)
+    val tagIds: List<String> = emptyList(),
+    @ProtoNumber(14)
+    val tagDefinitions: List<Tag> = emptyList(),
 )

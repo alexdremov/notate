@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.SharedPreferences
 import android.util.Base64
 import com.alexdremov.notate.model.PenTool
+import com.alexdremov.notate.model.Tag
 import com.alexdremov.notate.model.ToolbarItem
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.ListSerializer
@@ -13,6 +14,16 @@ import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.protobuf.ProtoBuf
 import kotlinx.serialization.protobuf.ProtoNumber
+
+@Serializable
+enum class SortOption(
+    val displayName: String,
+) {
+    NAME_ASC("Name (A-Z)"),
+    NAME_DESC("Name (Z-A)"),
+    DATE_NEWEST("Date (Newest)"),
+    DATE_OLDEST("Date (Oldest)"),
+}
 
 @Serializable
 data class ProjectConfig(
@@ -35,6 +46,8 @@ object PreferencesManager {
     private const val KEY_PROJECTS = "projects_list"
     private const val KEY_TOOLBAR_ITEMS = "toolbar_items_config"
     private const val KEY_COLORS = "favorite_colors"
+    private const val KEY_TAGS = "defined_tags"
+    private const val KEY_SORT_OPTION = "browser_sort_option"
     private const val KEY_SCRIBBLE_TO_ERASE = "scribble_to_erase"
     private const val KEY_SHAPE_PERFECTION_ENABLED = "shape_perfection_enabled"
     private const val KEY_SHAPE_PERFECTION_DELAY = "shape_perfection_delay"
@@ -47,6 +60,22 @@ object PreferencesManager {
     private val protoBuf = ProtoBuf
 
     private fun getPrefs(context: Context): SharedPreferences = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+
+    fun getSortOption(context: Context): SortOption {
+        val name = getPrefs(context).getString(KEY_SORT_OPTION, SortOption.DATE_NEWEST.name)
+        return try {
+            SortOption.valueOf(name ?: SortOption.DATE_NEWEST.name)
+        } catch (e: Exception) {
+            SortOption.DATE_NEWEST
+        }
+    }
+
+    fun saveSortOption(
+        context: Context,
+        option: SortOption,
+    ) {
+        getPrefs(context).edit().putString(KEY_SORT_OPTION, option.name).apply()
+    }
 
     fun getMinLogLevel(context: Context): Int = getPrefs(context).getInt(KEY_MIN_LOG_LEVEL, 4) // Default to NONE (4)
 
@@ -178,6 +207,27 @@ object PreferencesManager {
         val bytes = protoBuf.encodeToByteArray(ListSerializer(ProjectConfig.serializer()), list)
         val string = Base64.encodeToString(bytes, Base64.DEFAULT)
         getPrefs(context).edit().putString(KEY_PROJECTS, string).apply()
+    }
+
+    // --- Tags Persistence ---
+
+    fun getTags(context: Context): List<Tag> {
+        val data = getPrefs(context).getString(KEY_TAGS, null) ?: return emptyList()
+        return try {
+            val bytes = Base64.decode(data, Base64.DEFAULT)
+            protoBuf.decodeFromByteArray(ListSerializer(Tag.serializer()), bytes).sortedBy { it.order }
+        } catch (e: Exception) {
+            emptyList()
+        }
+    }
+
+    fun saveTags(
+        context: Context,
+        tags: List<Tag>,
+    ) {
+        val bytes = protoBuf.encodeToByteArray(ListSerializer(Tag.serializer()), tags)
+        val string = Base64.encodeToString(bytes, Base64.DEFAULT)
+        getPrefs(context).edit().putString(KEY_TAGS, string).apply()
     }
 
     // --- Toolbox Persistence ---

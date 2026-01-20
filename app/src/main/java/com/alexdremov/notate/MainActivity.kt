@@ -29,7 +29,9 @@ import androidx.lifecycle.repeatOnLifecycle
 import com.alexdremov.notate.CanvasActivity
 import com.alexdremov.notate.data.CanvasItem
 import com.alexdremov.notate.data.ProjectItem
+import com.alexdremov.notate.data.SortOption
 import com.alexdremov.notate.ui.home.*
+import com.alexdremov.notate.ui.home.components.DeleteConfirmationDialog
 import com.alexdremov.notate.ui.theme.NotateTheme
 import com.alexdremov.notate.util.Logger
 import com.alexdremov.notate.vm.HomeViewModel
@@ -102,6 +104,9 @@ fun MainScreen(viewModel: HomeViewModel) {
     val title by viewModel.title.collectAsState()
     val syncProgress by viewModel.syncProgress.collectAsState()
     val syncingProjectIds by viewModel.syncingProjectIds.collectAsState()
+    val tags by viewModel.tags.collectAsState()
+    val selectedTag by viewModel.selectedTag.collectAsState()
+    val sortOption by viewModel.sortOption.collectAsState()
 
     val context = LocalContext.current
     val snackbarHostState = remember { SnackbarHostState() }
@@ -125,6 +130,14 @@ fun MainScreen(viewModel: HomeViewModel) {
     var showRemoteStorages by remember { mutableStateOf(false) }
     var showEditStorage by remember { mutableStateOf(false) }
     var editingStorage by remember { mutableStateOf<com.alexdremov.notate.data.RemoteStorageConfig?>(null) }
+    var showSortMenu by remember { mutableStateOf(false) }
+    var showSettingsDialog by remember { mutableStateOf(false) }
+
+    // Project Actions State
+    var projectToDelete by remember { mutableStateOf<com.alexdremov.notate.data.ProjectConfig?>(null) }
+    var projectToManage by remember { mutableStateOf<com.alexdremov.notate.data.ProjectConfig?>(null) }
+    var projectToRename by remember { mutableStateOf<com.alexdremov.notate.data.ProjectConfig?>(null) }
+    var projectToSync by remember { mutableStateOf<com.alexdremov.notate.data.ProjectConfig?>(null) }
 
     // Temporary state for Project Creation flow
     var pendingProjectName by remember { mutableStateOf<String?>(null) }
@@ -168,182 +181,338 @@ fun MainScreen(viewModel: HomeViewModel) {
         viewModel.navigateUp() // Will close project if at root
     }
 
-    Scaffold(
-        snackbarHost = { SnackbarHost(snackbarHostState) },
-        topBar = {
-            TopAppBar(
-                title = {
-                    Text(
-                        text = title,
-                        style = MaterialTheme.typography.headlineMedium,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                },
-                actions = {
-                    if (currentProject == null) {
-                        // Project List Actions
-                        IconButton(onClick = { showRemoteStorages = true }) {
-                            Icon(Icons.Filled.CloudSync, contentDescription = "Sync Settings")
-                        }
-                        IconButton(onClick = { showNameDialog = DialogType.ADD_PROJECT }) {
-                            Icon(Icons.Filled.Add, contentDescription = "Add Project")
-                        }
-                    } else {
-                        // Browser Actions
-                        IconButton(onClick = { showNameDialog = DialogType.CREATE_FOLDER }) {
-                            Icon(Icons.Filled.CreateNewFolder, contentDescription = "New Folder")
-                        }
-                        IconButton(onClick = { showNameDialog = DialogType.CREATE_CANVAS }) {
-                            Icon(Icons.Filled.Edit, contentDescription = "New Canvas")
-                        }
-                    }
-                },
-            )
-        },
-    ) { innerPadding ->
-        Box(modifier = Modifier.padding(innerPadding)) {
-            if (currentProject == null) {
-                // --- Level 0: Project List ---
-                ProjectListScreen(
-                    projects = projects,
-                    onOpenProject = { viewModel.openProject(it) },
-                    onDeleteProject = { viewModel.removeProject(it) },
-                    onRenameProject = { p, n -> viewModel.renameProject(p, n) },
-                    onSyncProject = { viewModel.syncProject(it.id) },
-                    syncingProjectIds = syncingProjectIds,
-                )
-            } else {
-                // --- Level 1+: File Browser ---
-                FileBrowserScreen(
-                    items = browserItems,
-                    breadcrumbs = breadcrumbs,
-                    onBreadcrumbClick = { viewModel.loadBrowserItems(it.path) },
-                    onItemClick = { item ->
-                        when (item) {
-                            is ProjectItem -> {
-                                viewModel.loadBrowserItems(item.path)
+    Row(modifier = Modifier.fillMaxSize()) {
+        // --- Sidebar (Left) ---
+        Sidebar(
+            projects = projects,
+            tags = tags,
+            selectedProject = currentProject,
+            selectedTag = selectedTag,
+            onProjectSelected = { viewModel.openProject(it) },
+            onProjectLongClick = { projectToManage = it },
+            onTagSelected = { viewModel.selectTag(it) },
+            onAddProject = { showNameDialog = DialogType.ADD_PROJECT },
+            onManageTags = { showNameDialog = DialogType.MANAGE_TAGS },
+            onSettingsClick = { showSettingsDialog = true },
+        )
+
+        // --- Content Area (Right) ---
+        Scaffold(
+            modifier = Modifier.weight(1f),
+            snackbarHost = { SnackbarHost(snackbarHostState) },
+            topBar = {
+                TopAppBar(
+                    title = {
+                        Text(
+                            text = title,
+                            style = MaterialTheme.typography.headlineMedium,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    },
+                    actions = {
+                        if (currentProject != null || selectedTag != null) {
+                            // Sort Action
+                            IconButton(onClick = { showSortMenu = true }) {
+                                Icon(Icons.Filled.SortByAlpha, contentDescription = "Sort")
+                            }
+                            DropdownMenu(
+                                expanded = showSortMenu,
+                                onDismissRequest = { showSortMenu = false },
+                            ) {
+                                SortOption.values().forEach { option ->
+                                    DropdownMenuItem(
+                                        text = { Text(option.displayName) },
+                                        onClick = {
+                                            viewModel.setSortOption(option)
+                                            showSortMenu = false
+                                        },
+                                        leadingIcon =
+                                            if (option == sortOption) {
+                                                { Icon(Icons.Filled.Check, contentDescription = null) }
+                                            } else {
+                                                null
+                                            },
+                                    )
+                                }
                             }
 
-                            is CanvasItem -> {
-                                val intent =
-                                    Intent(context, CanvasActivity::class.java).apply {
-                                        putExtra("CANVAS_PATH", item.path)
-                                    }
-                                context.startActivity(intent)
+                            // Browser Actions
+                            if (currentProject != null && selectedTag == null) {
+                                IconButton(onClick = { showNameDialog = DialogType.CREATE_FOLDER }) {
+                                    Icon(Icons.Filled.CreateNewFolder, contentDescription = "New Folder")
+                                }
+                                IconButton(onClick = { showNameDialog = DialogType.CREATE_CANVAS }) {
+                                    Icon(Icons.Filled.Edit, contentDescription = "New Canvas")
+                                }
+                            }
+                        } else {
+                            // Project List Actions
+                            IconButton(onClick = { showSettingsDialog = true }) {
+                                Icon(Icons.Filled.Settings, contentDescription = "Settings")
+                            }
+                            IconButton(onClick = { showNameDialog = DialogType.ADD_PROJECT }) {
+                                Icon(Icons.Filled.Add, contentDescription = "Add Project")
                             }
                         }
                     },
-                    onItemDelete = { viewModel.deleteItem(it) },
-                    onItemRename = { item, newName -> viewModel.renameItem(item, newName) },
-                    onItemDuplicate = { item -> viewModel.duplicateItem(item) },
                 )
-            }
+            },
+        ) { innerPadding ->
+            Box(modifier = Modifier.padding(innerPadding)) {
+                if (currentProject == null && selectedTag == null) {
+                    // --- Empty State ---
+                    Box(
+                        modifier = Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            text = "Select a project from the sidebar",
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                } else {
+                    // --- Level 1+: File Browser ---
+                    FileBrowserScreen(
+                        items = browserItems,
+                        breadcrumbs = breadcrumbs,
+                        allTags = tags,
+                        onBreadcrumbClick = { viewModel.loadBrowserItems(it.path) },
+                        onItemClick = { item ->
+                            when (item) {
+                                is ProjectItem -> {
+                                    viewModel.loadBrowserItems(item.path)
+                                }
 
-            // Sync Progress Overlay
-            syncProgress?.let { (progress, message) ->
-                Box(
-                    modifier =
-                        Modifier
-                            .fillMaxSize()
-                            .background(Color.Black.copy(alpha = 0.1f)),
-                    contentAlignment = Alignment.BottomCenter,
-                ) {
-                    Card(
+                                is CanvasItem -> {
+                                    val intent =
+                                        Intent(context, CanvasActivity::class.java).apply {
+                                            putExtra("CANVAS_PATH", item.path)
+                                        }
+                                    context.startActivity(intent)
+                                }
+                            }
+                        },
+                        onItemDelete = { viewModel.deleteItem(it) },
+                        onItemRename = { item, newName -> viewModel.renameItem(item, newName) },
+                        onItemDuplicate = { item -> viewModel.duplicateItem(item) },
+                        onSetFileTags = { item, newTags -> viewModel.setFileTags(item, newTags) },
+                    )
+                }
+
+                // Sync Progress Overlay
+                syncProgress?.let { (progress, message) ->
+                    Box(
                         modifier =
                             Modifier
-                                .padding(16.dp)
-                                .fillMaxWidth()
-                                .border(2.dp, Color.Black, RoundedCornerShape(12.dp)),
-                        colors = CardDefaults.cardColors(containerColor = Color.White),
+                                .fillMaxSize()
+                                .background(Color.Black.copy(alpha = 0.1f)),
+                        contentAlignment = Alignment.BottomCenter,
                     ) {
-                        Column(Modifier.padding(16.dp)) {
-                            Text(message, style = MaterialTheme.typography.bodyMedium)
-                            Spacer(Modifier.height(8.dp))
-                            LinearProgressIndicator(
-                                progress = progress / 100f,
-                                modifier = Modifier.fillMaxWidth(),
-                                color = Color.Black,
-                                trackColor = Color.LightGray,
-                            )
+                        Card(
+                            modifier =
+                                Modifier
+                                    .padding(16.dp)
+                                    .fillMaxWidth()
+                                    .border(2.dp, Color.Black, RoundedCornerShape(12.dp)),
+                            colors = CardDefaults.cardColors(containerColor = Color.White),
+                        ) {
+                            Column(Modifier.padding(16.dp)) {
+                                Text(message, style = MaterialTheme.typography.bodyMedium)
+                                Spacer(Modifier.height(8.dp))
+                                LinearProgressIndicator(
+                                    progress = progress / 100f,
+                                    modifier = Modifier.fillMaxWidth(),
+                                    color = Color.Black,
+                                    trackColor = Color.LightGray,
+                                )
+                            }
                         }
                     }
                 }
             }
         }
+    }
 
-        // Handle Dialogs
-        if (showRemoteStorages) {
-            RemoteStorageListDialog(
-                onDismiss = { showRemoteStorages = false },
-                onManageStorage = { storage ->
-                    editingStorage = storage
-                    showEditStorage = true
-                },
-            )
-        }
-
-        if (showEditStorage) {
-            EditRemoteStorageDialog(
-                storage = editingStorage,
-                onDismiss = { showEditStorage = false },
-                onConfirm = { config, password ->
-                    val current =
-                        com.alexdremov.notate.data.SyncPreferencesManager
-                            .getRemoteStorages(context)
-                            .toMutableList()
-                    // Remove existing if editing
-                    current.removeAll { it.id == config.id }
-                    current.add(config)
-                    com.alexdremov.notate.data.SyncPreferencesManager
-                        .saveRemoteStorages(context, current)
-
-                    if (password.isNotBlank()) {
-                        com.alexdremov.notate.data.SyncPreferencesManager
-                            .savePassword(context, config.id, password)
+    // Handle Project Actions Dialogs
+    if (projectToManage != null) {
+        AlertDialog(
+            modifier = Modifier.border(2.dp, Color.Black, RoundedCornerShape(28.dp)),
+            onDismissRequest = { projectToManage = null },
+            title = { Text("Actions for \"${projectToManage!!.name}\"") },
+            confirmButton = {},
+            dismissButton = {
+                OutlinedButton(onClick = { projectToManage = null }) {
+                    Text("Cancel")
+                }
+            },
+            text = {
+                Column(Modifier.fillMaxWidth()) {
+                    OutlinedButton(
+                        onClick = {
+                            projectToSync = projectToManage
+                            projectToManage = null
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text("Synchronization", color = Color.Black)
                     }
-                    showEditStorage = false
-                    // Force refresh of the list dialog by toggling visibility (optional, but helps if state isn't observed)
-                    showRemoteStorages = false
-                    showRemoteStorages = true
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    OutlinedButton(
+                        onClick = {
+                            projectToRename = projectToManage
+                            projectToManage = null
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text("Rename", color = Color.Black)
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    OutlinedButton(
+                        onClick = {
+                            projectToDelete = projectToManage
+                            projectToManage = null
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text("Remove Project", color = Color.Red)
+                    }
+                }
+            },
+        )
+    }
+
+    if (projectToSync != null) {
+        ProjectSyncConfigDialog(
+            projectId = projectToSync!!.id,
+            onDismiss = { projectToSync = null },
+            onSyncNow = {
+                viewModel.syncProject(projectToSync!!.id)
+                projectToSync = null
+            },
+        )
+    }
+
+    if (projectToRename != null) {
+        TextInputDialog(
+            title = "Rename Project",
+            initialValue = projectToRename!!.name,
+            confirmText = "Rename",
+            onDismiss = { projectToRename = null },
+            onConfirm = { newName ->
+                viewModel.renameProject(projectToRename!!, newName)
+                projectToRename = null
+            },
+        )
+    }
+
+    if (projectToDelete != null) {
+        DeleteConfirmationDialog(
+            itemName = projectToDelete!!.name,
+            onDismiss = { projectToDelete = null },
+            onConfirm = {
+                viewModel.removeProject(projectToDelete!!)
+                projectToDelete = null
+            },
+        )
+    }
+
+    // Handle Dialogs
+    if (showSettingsDialog) {
+        SettingsDialog(
+            onDismiss = { showSettingsDialog = false },
+            onOpenSync = {
+                showSettingsDialog = false
+                showRemoteStorages = true
+            },
+        )
+    }
+
+    if (showRemoteStorages) {
+        RemoteStorageListDialog(
+            onDismiss = { showRemoteStorages = false },
+            onManageStorage = { storage ->
+                editingStorage = storage
+                showEditStorage = true
+            },
+        )
+    }
+
+    if (showEditStorage) {
+        EditRemoteStorageDialog(
+            storage = editingStorage,
+            onDismiss = { showEditStorage = false },
+            onConfirm = { config, password ->
+                val current =
+                    com.alexdremov.notate.data.SyncPreferencesManager
+                        .getRemoteStorages(context)
+                        .toMutableList()
+                // Remove existing if editing
+                current.removeAll { it.id == config.id }
+                current.add(config)
+                com.alexdremov.notate.data.SyncPreferencesManager
+                    .saveRemoteStorages(context, current)
+
+                if (password.isNotBlank()) {
+                    com.alexdremov.notate.data.SyncPreferencesManager
+                        .savePassword(context, config.id, password)
+                }
+                showEditStorage = false
+                // Force refresh of the list dialog by toggling visibility (optional, but helps if state isn't observed)
+                showRemoteStorages = false
+                showRemoteStorages = true
+            },
+        )
+    }
+
+    when (showNameDialog) {
+        DialogType.MANAGE_TAGS -> {
+            ManageTagsDialog(
+                tags = tags,
+                onAddTag = { name, color -> viewModel.addTag(name, color) },
+                onUpdateTag = { tag -> viewModel.updateTag(tag) },
+                onRemoveTag = { id -> viewModel.removeTag(id) },
+                onDismiss = { showNameDialog = null },
+            )
+        }
+
+        DialogType.CREATE_CANVAS -> {
+            CreateCanvasDialog(
+                onDismiss = { showNameDialog = null },
+                onConfirm = { name, type, w, h ->
+                    viewModel.createCanvas(name, type, w, h) { path ->
+                        val intent =
+                            Intent(context, CanvasActivity::class.java).apply {
+                                putExtra("CANVAS_PATH", path)
+                            }
+                        context.startActivity(intent)
+                    }
+                    showNameDialog = null
                 },
             )
         }
 
-        when (showNameDialog) {
-            DialogType.CREATE_CANVAS -> {
-                CreateCanvasDialog(
-                    onDismiss = { showNameDialog = null },
-                    onConfirm = { name, type, w, h ->
-                        viewModel.createCanvas(name, type, w, h) { path ->
-                            val intent =
-                                Intent(context, CanvasActivity::class.java).apply {
-                                    putExtra("CANVAS_PATH", path)
-                                }
-                            context.startActivity(intent)
-                        }
-                        showNameDialog = null
-                    },
-                )
-            }
-
-            DialogType.ADD_PROJECT, DialogType.CREATE_FOLDER -> {
-                TextInputDialog(
-                    title = if (showNameDialog == DialogType.ADD_PROJECT) "New Project" else "New Folder",
-                    onDismiss = { showNameDialog = null },
-                    onConfirm = { name ->
-                        if (showNameDialog == DialogType.ADD_PROJECT) {
-                            pendingProjectName = name
-                            projectLocationPicker.launch(null)
-                        } else {
-                            viewModel.createFolder(name)
-                        }
-                        showNameDialog = null
-                    },
-                )
-            }
-
-            null -> {}
+        DialogType.ADD_PROJECT, DialogType.CREATE_FOLDER -> {
+            TextInputDialog(
+                title = if (showNameDialog == DialogType.ADD_PROJECT) "New Project" else "New Folder",
+                onDismiss = { showNameDialog = null },
+                onConfirm = { name ->
+                    if (showNameDialog == DialogType.ADD_PROJECT) {
+                        pendingProjectName = name
+                        projectLocationPicker.launch(null)
+                    } else {
+                        viewModel.createFolder(name)
+                    }
+                    showNameDialog = null
+                },
+            )
         }
+
+        null -> {}
     }
 }
