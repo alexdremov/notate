@@ -108,7 +108,7 @@ fun InterfaceSettingsPanel(
                 Text(
                     text = "Collapse after %.1fs".format(state.collapseTimeout / 1000f),
                     style = MaterialTheme.typography.bodySmall,
-                    color = Color.Gray,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Slider(
                     value = state.collapseTimeout,
