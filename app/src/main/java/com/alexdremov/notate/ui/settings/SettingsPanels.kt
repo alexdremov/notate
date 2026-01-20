@@ -59,7 +59,7 @@ fun InputSettingsPanel(
                 Text(
                     text = "Hold stylus (${state.shapeDelay.toLong()} ms)",
                     style = MaterialTheme.typography.bodySmall,
-                    color = Color.Gray,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Slider(
                     value = state.shapeDelay,
