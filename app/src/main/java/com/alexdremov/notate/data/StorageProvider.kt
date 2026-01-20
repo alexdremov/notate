@@ -11,6 +11,7 @@ import kotlinx.serialization.encodeToByteArray
 import kotlinx.serialization.protobuf.ProtoBuf
 import java.io.File
 import java.io.InputStream
+import java.io.OutputStream
 import java.util.ArrayDeque
 
 interface StorageProvider {
@@ -78,15 +79,12 @@ internal object StorageUtils {
         var isJson = false
         try {
             streamProvider()?.use { stream ->
-                // Peek at the first byte to determine format
-                // JSON starts with '{' (0x7B)
                 val firstByte = stream.read()
                 if (firstByte == 0x7B) {
                     isJson = true
                 }
             }
         } catch (e: Exception) {
-            // If read fails, assume based on extension as fallback
             isJson = fileName?.endsWith(".json") == true
         }
 
@@ -100,24 +98,9 @@ internal object StorageUtils {
                 val read = stream.read(buffer)
                 if (read <= 0) return null
                 val header = String(buffer, 0, read, Charsets.UTF_8)
-                val match = Regex(""""thumbnail"\s*:\s*"([^"]+)"""").find(header)
+                val match = Regex("""thumbnail"\s*:\s*"([^"]+)""").find(header)
                 val thumbnail = match?.groupValues?.get(1)
                 CanvasDataPreview(thumbnail = thumbnail)
-                /*
-                 * Only the thumbnail is extracted from JSON here.
-                 *
-                 * Tags present in JSON files are intentionally ignored during this
-                 * lightweight metadata read for performance/legacy reasons:
-                 *  - Parsing the full JSON structure on large files is expensive and
-                 *    this method is called frequently (e.g. when listing many items).
-                 *  - Historical JSON formats may not have stable/consistent tag
-                 *    representations, so decoding them here would be brittle.
-                 *
-                 * As a result, CanvasDataPreview instances created from JSON will not
-                 * contain tag information, whereas protobuf-based previews may. Any
-                 * tag data for JSON-backed canvases is resolved elsewhere when the
-                 * full canvas content is loaded, not during this preview extraction.
-                 */
             }
         } catch (e: Exception) {
             Logger.e("Metadata", "Failed to extract metadata from JSON", e)
@@ -196,6 +179,78 @@ internal object StorageUtils {
             null
         }
 
+    fun createUpdatedProtobuf(
+        inputStream: InputStream,
+        outputStream: OutputStream,
+        newTagIds: List<String>,
+        newTagDefinitions: List<Tag>,
+    ) {
+        while (true) {
+            val tag = readVarint(inputStream)
+            if (tag == -1L) break
+
+            val fieldNumber = (tag ushr 3).toInt()
+            val wireType = (tag and 0x07).toInt()
+
+            if (fieldNumber == 13 || fieldNumber == 14) {
+                // Skip this field
+                skipField(inputStream, wireType)
+            } else {
+                // Write tag
+                writeVarint(outputStream, tag)
+                // Copy payload based on wire type
+                when (wireType) {
+                    0 -> { // Varint
+                        val value = readVarint(inputStream)
+                        writeVarint(outputStream, value)
+                    }
+
+                    1 -> { // 64-bit
+                        val bytes = ByteArray(8)
+                        readFully(inputStream, bytes)
+                        outputStream.write(bytes)
+                    }
+
+                    2 -> { // Length Delimited
+                        val length = readVarint(inputStream)
+                        writeVarint(outputStream, length)
+                        copyBytes(inputStream, outputStream, length)
+                    }
+
+                    5 -> { // 32-bit
+                        val bytes = ByteArray(4)
+                        readFully(inputStream, bytes)
+                        outputStream.write(bytes)
+                    }
+
+                    else -> {
+                        throw java.io.IOException("Unsupported wire type: $wireType")
+                    }
+                }
+            }
+        }
+
+        // Append new tagIds
+        val tagIdFieldNumber = 13
+        val tagIdTag = (tagIdFieldNumber shl 3) or 2
+        for (id in newTagIds) {
+            val bytes = id.toByteArray(Charsets.UTF_8)
+            writeVarint(outputStream, tagIdTag.toLong())
+            writeVarint(outputStream, bytes.size.toLong())
+            outputStream.write(bytes)
+        }
+
+        // Append new tagDefinitions
+        val tagDefFieldNumber = 14
+        val tagDefTag = (tagDefFieldNumber shl 3) or 2
+        for (def in newTagDefinitions) {
+            val bytes = ProtoBuf.encodeToByteArray(Tag.serializer(), def)
+            writeVarint(outputStream, tagDefTag.toLong())
+            writeVarint(outputStream, bytes.size.toLong())
+            outputStream.write(bytes)
+        }
+    }
+
     private fun readVarint(stream: InputStream): Long {
         var value = 0L
         var shift = 0
@@ -203,7 +258,7 @@ internal object StorageUtils {
         while (true) {
             val b = stream.read()
             if (b == -1) {
-                if (count == 0) return -1L // EOF at start
+                if (count == 0) return -1L
                 throw java.io.EOFException("Unexpected EOF inside varint")
             }
             value = value or ((b.toLong() and 0x7F) shl shift)
@@ -213,6 +268,22 @@ internal object StorageUtils {
             if (shift > 63) throw java.io.IOException("Varint too long")
         }
         return value
+    }
+
+    private fun writeVarint(
+        stream: OutputStream,
+        value: Long,
+    ) {
+        var v = value
+        while (true) {
+            if ((v and 0x7F.inv()) == 0L) {
+                stream.write(v.toInt())
+                break
+            } else {
+                stream.write((v.toInt() and 0x7F) or 0x80)
+                v = v ushr 7
+            }
+        }
     }
 
     private fun readFully(
@@ -227,6 +298,22 @@ internal object StorageUtils {
         }
     }
 
+    private fun copyBytes(
+        input: InputStream,
+        output: OutputStream,
+        count: Long,
+    ) {
+        val buffer = ByteArray(8192)
+        var remaining = count
+        while (remaining > 0) {
+            val toRead = minOf(remaining, buffer.size.toLong()).toInt()
+            val read = input.read(buffer, 0, toRead)
+            if (read == -1) throw java.io.EOFException("Unexpected EOF copying bytes")
+            output.write(buffer, 0, read)
+            remaining -= read
+        }
+    }
+
     private fun skipField(
         stream: InputStream,
         wireType: Int,
@@ -236,23 +323,19 @@ internal object StorageUtils {
                 readVarint(stream)
             }
 
-            // Varint
             1 -> {
                 skipBytes(stream, 8)
             }
 
-            // 64-bit
             2 -> {
                 val length = readVarint(stream)
                 skipBytes(stream, length)
             }
 
-            // Length Delimited
             5 -> {
                 skipBytes(stream, 4)
             }
 
-            // 32-bit
             else -> {
                 throw java.io.IOException("Unsupported wire type: $wireType")
             }
@@ -267,7 +350,6 @@ internal object StorageUtils {
         while (remaining > 0) {
             val skipped = stream.skip(remaining)
             if (skipped <= 0) {
-                // If skip returns 0, try read
                 if (stream.read() == -1) throw java.io.EOFException("Unexpected EOF skipping bytes")
                 remaining--
             } else {
@@ -442,15 +524,21 @@ class LocalStorageProvider(
 
         if (file.extension != "notate") return false
 
+        val tempFile = File(file.parent, file.name + ".tmp")
         return try {
-            val bytes = file.readBytes()
-            val canvasData = ProtoBuf.decodeFromByteArray(CanvasData.serializer(), bytes)
-            val updatedData = canvasData.copy(tagIds = tagIds, tagDefinitions = tagDefinitions)
-            val newBytes = ProtoBuf.encodeToByteArray(updatedData)
-            file.writeBytes(newBytes)
-            true
+            file.inputStream().use { input ->
+                tempFile.outputStream().use { output ->
+                    StorageUtils.createUpdatedProtobuf(input, output, tagIds, tagDefinitions)
+                }
+            }
+            if (file.delete()) {
+                tempFile.renameTo(file)
+            } else {
+                false
+            }
         } catch (e: Exception) {
             Logger.e("Storage", "Failed to set tags for $path", e, showToUser = true)
+            tempFile.delete()
             false
         }
     }
@@ -673,17 +761,24 @@ class SafStorageProvider(
         // Basic check for file extension from name
         if (file.name?.endsWith(".notate") != true) return false
 
+        val tempFile = File.createTempFile("saf_update", ".tmp", context.cacheDir)
         return try {
-            val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: return false
-            val canvasData = ProtoBuf.decodeFromByteArray(CanvasData.serializer(), bytes)
-            val updatedData = canvasData.copy(tagIds = tagIds, tagDefinitions = tagDefinitions)
-            val newBytes = ProtoBuf.encodeToByteArray(updatedData)
-
-            context.contentResolver.openOutputStream(uri, "wt")?.use { it.write(newBytes) }
+            context.contentResolver.openInputStream(uri)?.use { input ->
+                tempFile.outputStream().use { output ->
+                    StorageUtils.createUpdatedProtobuf(input, output, tagIds, tagDefinitions)
+                }
+            }
+            context.contentResolver.openOutputStream(uri, "wt")?.use { output ->
+                tempFile.inputStream().use { input ->
+                    input.copyTo(output)
+                }
+            }
             true
         } catch (e: Exception) {
             Logger.e("Storage", "Failed to set tags SAF", e, showToUser = true)
             false
+        } finally {
+            tempFile.delete()
         }
     }
 
