@@ -345,7 +345,7 @@ fun MainScreen(viewModel: HomeViewModel) {
             confirmButton = {},
             dismissButton = {
                 OutlinedButton(onClick = { projectToManage = null }) {
-                    Text("Cancel")
+                    Text("Close")
                 }
             },
             text = {

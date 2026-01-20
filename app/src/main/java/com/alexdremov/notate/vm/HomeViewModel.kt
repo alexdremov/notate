@@ -8,6 +8,7 @@ import androidx.lifecycle.viewModelScope
 import com.alexdremov.notate.data.*
 import com.alexdremov.notate.model.BreadcrumbItem
 import com.alexdremov.notate.model.Tag
+import com.alexdremov.notate.util.Logger
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -16,6 +17,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 
 class HomeViewModel(
     application: Application,
@@ -36,7 +38,9 @@ class HomeViewModel(
     val syncingProjectIds = _syncingProjectIds.asStateFlow()
 
     // File Browser State
+    private val loadedRepositories = ConcurrentHashMap<String, ProjectRepository>()
     private var repository: ProjectRepository? = null
+
     private val canvasRepository = CanvasRepository(application)
     private val syncManager = SyncManager(application, canvasRepository)
 
@@ -67,7 +71,13 @@ class HomeViewModel(
         loadProjects()
         loadTags()
         loadSortOption()
+        startIndexing()
     }
+
+    private fun getRepository(project: ProjectConfig): ProjectRepository =
+        loadedRepositories.getOrPut(project.id) {
+            ProjectRepository(getApplication(), project.uri)
+        }
 
     private fun loadSortOption() {
         _sortOption.value = PreferencesManager.getSortOption(getApplication())
@@ -85,6 +95,61 @@ class HomeViewModel(
 
     private fun loadTags() {
         _tags.value = PreferencesManager.getTags(getApplication())
+    }
+
+    private fun startIndexing() {
+        viewModelScope.launch(Dispatchers.IO) {
+            _projects.value.forEach { project ->
+                try {
+                    val repo = getRepository(project)
+                    repo.refreshIndex()
+                } catch (e: Exception) {
+                    Logger.e("Indexing", "Failed to refresh index for project ${project.name}", e)
+                }
+            }
+            importTagsFromAllProjects()
+
+            withContext(Dispatchers.Main) {
+                val tag = _selectedTag.value
+                if (tag != null) {
+                    loadTaggedItems(tag.id)
+                }
+            }
+        }
+    }
+
+    private suspend fun importTagsFromAllProjects() {
+        val allTags = mutableListOf<Tag>()
+        val knownTagIds = _tags.value.map { it.id }.toMutableSet()
+
+        _projects.value.forEach { project ->
+            try {
+                val repo = getRepository(project)
+                val projectTags = repo.getAllIndexedTags()
+                projectTags.forEach { tag ->
+                    if (!knownTagIds.contains(tag.id)) {
+                        allTags.add(tag)
+                        knownTagIds.add(tag.id)
+                    }
+                }
+            } catch (e: Exception) {
+                Logger.w("Indexing", "Failed to import tags from project ${project.name}", e)
+            }
+        }
+
+        if (allTags.isNotEmpty()) {
+            val current = _tags.value.toMutableList()
+            var nextOrder = (current.maxOfOrNull { it.order } ?: -1) + 1
+            val orderedNewTags =
+                allTags.map { tag ->
+                    val updatedTag = tag.copy(order = nextOrder)
+                    nextOrder++
+                    updatedTag
+                }
+            current.addAll(orderedNewTags)
+            PreferencesManager.saveTags(getApplication(), current)
+            loadTags()
+        }
     }
 
     private fun updateTitle() {
@@ -188,18 +253,27 @@ class HomeViewModel(
             )
         PreferencesManager.addProject(getApplication(), config)
         loadProjects()
+        startIndexing()
     }
 
     fun removeProject(project: ProjectConfig) {
         PreferencesManager.removeProject(getApplication(), project.id)
+        loadedRepositories.remove(project.id)
         loadProjects()
     }
 
     fun openProject(project: ProjectConfig) {
         _selectedTag.value = null // Clear tag selection
         _currentProject.value = project
-        repository = ProjectRepository(getApplication(), project.uri)
-        loadBrowserItems(null)
+        val repo = getRepository(project)
+        repository = repo
+
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) {
+                repo.refreshIndex()
+            }
+            loadBrowserItems(null)
+        }
     }
 
     fun closeProject() {
@@ -253,6 +327,17 @@ class HomeViewModel(
     ) {
         val repo = repository ?: return
         val definitions = _tags.value.filter { it.id in tagIds }
+
+        // Optimistic Update
+        if (item is CanvasItem) {
+            val updatedItem = item.copy(tagIds = tagIds, embeddedTags = definitions)
+            val currentItems =
+                _browserItems.value.map {
+                    if (it.path == item.path) updatedItem else it
+                }
+            _browserItems.value = sortItems(currentItems)
+        }
+
         viewModelScope.launch {
             val success =
                 withContext(Dispatchers.IO) {
@@ -265,6 +350,8 @@ class HomeViewModel(
                 } else {
                     loadBrowserItems(_currentPath.value)
                 }
+            } else {
+                loadBrowserItems(_currentPath.value)
             }
         }
     }
@@ -289,9 +376,14 @@ class HomeViewModel(
             val results =
                 withContext(Dispatchers.IO) {
                     val allFiles = mutableListOf<CanvasItem>()
+
                     _projects.value.forEach { proj ->
-                        val repo = ProjectRepository(getApplication(), proj.uri)
-                        allFiles.addAll(repo.findFilesWithTag(tagId))
+                        val repo = getRepository(proj)
+                        try {
+                            allFiles.addAll(repo.findFilesWithTag(tagId))
+                        } catch (e: Exception) {
+                            Logger.w("Tags", "Failed to search project ${proj.name} for tag $tagId", e)
+                        }
                     }
                     allFiles.sortedByDescending { it.lastModified }
                 }
@@ -318,35 +410,26 @@ class HomeViewModel(
                 }
             _browserItems.value = sortItems(items)
 
-            // Auto-import tags from files
-            // This is fast enough to do on computation/main if list is small, but better on IO or Default if checking strings
-            // However, we need to read from items which are already in memory.
-            val knownTagIds = _tags.value.map { it.id }.toSet()
-            val newTags = mutableListOf<Tag>()
+            // Auto-import tags from index (Project-wide)
+            withContext(Dispatchers.IO) {
+                val indexedTags = repo.getAllIndexedTags()
+                val knownTagIds = _tags.value.map { it.id }.toSet()
+                val newTags = indexedTags.filter { !knownTagIds.contains(it.id) }
 
-            items.forEach { item ->
-                if (item is CanvasItem) {
-                    item.embeddedTags.forEach { tag ->
-                        if (!knownTagIds.contains(tag.id) && newTags.none { it.id == tag.id }) {
-                            newTags.add(tag)
+                if (newTags.isNotEmpty()) {
+                    val current = _tags.value.toMutableList()
+                    val startingOrder = (current.maxOfOrNull { it.order } ?: -1) + 1
+                    var nextOrder = startingOrder
+                    val orderedNewTags =
+                        newTags.map { tag ->
+                            val updatedTag = tag.copy(order = nextOrder)
+                            nextOrder++
+                            updatedTag
                         }
-                    }
+                    current.addAll(orderedNewTags)
+                    PreferencesManager.saveTags(getApplication(), current)
+                    loadTags()
                 }
-            }
-
-            if (newTags.isNotEmpty()) {
-                val current = _tags.value.toMutableList()
-                val startingOrder = (current.maxOfOrNull { it.order } ?: -1) + 1
-                var nextOrder = startingOrder
-                val orderedNewTags =
-                    newTags.map { tag ->
-                        val updatedTag = tag.copy(order = nextOrder)
-                        nextOrder++
-                        updatedTag
-                    }
-                current.addAll(orderedNewTags)
-                PreferencesManager.saveTags(getApplication(), current)
-                loadTags()
             }
         }
     }
@@ -480,13 +563,23 @@ class HomeViewModel(
     }
 
     fun refresh() {
+        val repo = repository
         val tag = _selectedTag.value
-        if (tag != null) {
-            loadTaggedItems(tag.id)
-        } else if (_currentProject.value == null) {
-            loadProjects()
-        } else {
-            loadBrowserItems(_currentPath.value)
+
+        viewModelScope.launch {
+            if (repo != null) {
+                withContext(Dispatchers.IO) {
+                    repo.refreshIndex()
+                }
+            }
+
+            if (tag != null) {
+                loadTaggedItems(tag.id)
+            } else if (_currentProject.value == null) {
+                loadProjects()
+            } else {
+                loadBrowserItems(_currentPath.value)
+            }
         }
     }
 

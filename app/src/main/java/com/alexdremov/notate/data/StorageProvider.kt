@@ -51,6 +51,11 @@ interface StorageProvider {
     ): Boolean
 
     fun findFilesWithTag(tagId: String): List<CanvasItem>
+
+    // New indexing support
+    fun walkFiles(visitor: (String, String, Long) -> Unit)
+
+    fun getFileMetadata(path: String): CanvasDataPreview?
 }
 
 internal object StorageUtils {
@@ -569,6 +574,22 @@ class LocalStorageProvider(
             Logger.e("Storage", "Failed to search files in ${rootDir.absolutePath}", e)
             emptyList()
         }
+
+    override fun walkFiles(visitor: (String, String, Long) -> Unit) {
+        rootDir
+            .walk()
+            .maxDepth(20)
+            .filter { it.isFile && (it.extension == "json" || it.extension == "notate") }
+            .forEach {
+                visitor(it.absolutePath, it.nameWithoutExtension, it.lastModified())
+            }
+    }
+
+    override fun getFileMetadata(path: String): CanvasDataPreview? {
+        val file = File(path)
+        if (!file.exists()) return null
+        return StorageUtils.extractMetadata(file.name, { file.inputStream() }, file.length())
+    }
 }
 
 class SafStorageProvider(
@@ -835,5 +856,40 @@ class SafStorageProvider(
                 }
             }
         }
+    }
+
+    override fun walkFiles(visitor: (String, String, Long) -> Unit) {
+        val rootUri = Uri.parse(rootUriString)
+        val rootDir = DocumentFile.fromTreeUri(context, rootUri) ?: return
+        val stack = ArrayDeque<Pair<DocumentFile, Int>>()
+        stack.add(rootDir to 0)
+
+        while (!stack.isEmpty()) {
+            val (dir, depth) = stack.removeLast()
+            if (depth > 20) continue // Limit recursion depth
+
+            dir.listFiles().forEach { file ->
+                if (file.isDirectory) {
+                    stack.add(file to depth + 1)
+                } else if (file.name?.endsWith(".json") == true || file.name?.endsWith(".notate") == true) {
+                    val name = file.name ?: "Unknown"
+                    val isJsonExt = name.endsWith(".json")
+                    val displayName = name.removeSuffix(if (isJsonExt) ".json" else ".notate")
+                    visitor(file.uri.toString(), displayName, file.lastModified())
+                }
+            }
+        }
+    }
+
+    override fun getFileMetadata(path: String): CanvasDataPreview? {
+        val uri = Uri.parse(path)
+        val name = DocumentFile.fromSingleUri(context, uri)?.name
+        return StorageUtils.extractMetadata(name, {
+            try {
+                context.contentResolver.openInputStream(uri)
+            } catch (e: Exception) {
+                null
+            }
+        })
     }
 }

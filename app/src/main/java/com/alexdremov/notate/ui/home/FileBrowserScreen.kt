@@ -99,7 +99,7 @@ fun FileBrowserScreen(
             confirmButton = {},
             dismissButton = {
                 OutlinedButton(onClick = { managingItemPath = null }) {
-                    Text("Cancel")
+                    Text("Close")
                 }
             },
             text = {

@@ -46,6 +46,17 @@ class ProjectRepository(
         }
     }
 
+    private val indexManager by lazy {
+        val indexFile =
+            if (rootUriString != null) {
+                val hash = rootUriString.hashCode().toString()
+                File(context.cacheDir, "index_$hash.json")
+            } else {
+                File(localStorage.getRootPath(), ".notate_index")
+            }
+        FileIndexManager(indexFile)
+    }
+
     private fun getProvider(path: String?): StorageProvider {
         // If we have a specific SAF root, and the path is either null (root) or content://, use SAF
         if (safStorage != null && (path == null || path.startsWith("content://"))) {
@@ -58,12 +69,16 @@ class ProjectRepository(
 
     fun getItems(path: String?): List<FileSystemItem> = getProvider(path).getItems(path)
 
-    fun createProject(
+    suspend fun createProject(
         name: String,
         parentPath: String?,
-    ): Boolean = getProvider(parentPath).createFolder(name, parentPath)
+    ): Boolean {
+        val success = getProvider(parentPath).createFolder(name, parentPath)
+        if (success) indexManager.updateIndex(getProvider(parentPath))
+        return success
+    }
 
-    fun createCanvas(
+    suspend fun createCanvas(
         name: String,
         parentPath: String?,
         type: CanvasType,
@@ -76,26 +91,78 @@ class ProjectRepository(
                 pageWidth = pageWidth,
                 pageHeight = pageHeight,
             )
-        return getProvider(parentPath).createCanvas(name, parentPath, emptyCanvas)
+        val result = getProvider(parentPath).createCanvas(name, parentPath, emptyCanvas)
+        if (result != null) indexManager.updateIndex(getProvider(parentPath))
+        return result
     }
 
-    fun deleteItem(path: String): Boolean = getProvider(path).deleteItem(path)
+    suspend fun deleteItem(path: String): Boolean {
+        val success = getProvider(path).deleteItem(path)
+        if (success) indexManager.updateIndex(getProvider(path))
+        return success
+    }
 
-    fun renameItem(
+    suspend fun renameItem(
         path: String,
         newName: String,
-    ): Boolean = getProvider(path).renameItem(path, newName)
+    ): Boolean {
+        val success = getProvider(path).renameItem(path, newName)
+        if (success) indexManager.updateIndex(getProvider(path))
+        return success
+    }
 
-    fun duplicateItem(
+    suspend fun duplicateItem(
         path: String,
         parentPath: String?,
-    ): Boolean = getProvider(path).duplicateItem(path, parentPath)
+    ): Boolean {
+        val success = getProvider(path).duplicateItem(path, parentPath)
+        if (success) indexManager.updateIndex(getProvider(path))
+        return success
+    }
 
-    fun setTags(
+    suspend fun setTags(
         path: String,
         tagIds: List<String>,
         tagDefinitions: List<Tag> = emptyList(),
-    ): Boolean = getProvider(path).setTags(path, tagIds, tagDefinitions)
+    ): Boolean {
+        val success = getProvider(path).setTags(path, tagIds, tagDefinitions)
+        if (success) {
+            val currentMeta = indexManager.getFileMetadata(path)
+            if (currentMeta != null) {
+                val newMeta =
+                    currentMeta.copy(
+                        tagIds = tagIds,
+                        embeddedTags = tagDefinitions,
+                    )
+                indexManager.updateFileEntry(path, newMeta)
+            } else {
+                indexManager.updateIndex(getProvider(path))
+            }
+        }
+        return success
+    }
 
-    fun findFilesWithTag(tagId: String): List<CanvasItem> = getProvider(null).findFilesWithTag(tagId)
+    suspend fun findFilesWithTag(tagId: String): List<CanvasItem> {
+        val indexed = indexManager.getIndexedFiles(tagId)
+        val provider = getProvider(null)
+
+        return indexed
+            .mapNotNull { (path, meta) ->
+                val metadata = provider.getFileMetadata(path)
+                CanvasItem(
+                    name = meta.name,
+                    path = path,
+                    lastModified = meta.lastModified,
+                    thumbnail = metadata?.thumbnail,
+                    tagIds = meta.tagIds,
+                    embeddedTags = meta.embeddedTags,
+                )
+            }.sortedByDescending { it.lastModified }
+    }
+
+    suspend fun refreshIndex() {
+        indexManager.updateIndex(getProvider(null))
+    }
+
+    suspend fun getAllIndexedTags(): List<Tag> = indexManager.getAllTags()
 }
