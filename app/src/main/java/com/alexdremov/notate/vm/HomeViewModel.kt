@@ -498,7 +498,9 @@ class HomeViewModel(
             try {
                 withContext(Dispatchers.IO) {
                     syncManager.syncProject(projectId) { progress, message ->
-                        _syncProgress.value = progress to message
+                        viewModelScope.launch(Dispatchers.Main) {
+                            _syncProgress.value = progress to message
+                        }
                     }
                 }
             } finally {
