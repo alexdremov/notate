@@ -156,14 +156,11 @@ fun FileBrowserScreen(
                                             } else {
                                                 currentItem.tagIds + tag.id
                                             }
-                                        onSetFileTags(currentItem, newTags)
-                                        // Update local state to reflect change immediately in UI if itemToManage is not dismissed
-                                        // But itemToManage is a copy from the list.
-                                        // To see updates, we might need to rely on the parent refreshing the list
-                                        // and us picking up the new item.
-                                        // However, since `itemToManage` is local state `var`, it won't auto-update from `items`.
-                                        // We should update `itemToManage` manually to see the toggle effect.
-                                        itemToManage = currentItem.copy(tagIds = newTags)
+                                        // Create a single updated item instance and use it consistently
+                                        val updatedItem = currentItem.copy(tagIds = newTags)
+                                        onSetFileTags(updatedItem, newTags)
+                                        // Update local state so the dialog reflects the change immediately
+                                        itemToManage = updatedItem
                                     },
                                     label = { Text(tag.name) },
                                     colors =
