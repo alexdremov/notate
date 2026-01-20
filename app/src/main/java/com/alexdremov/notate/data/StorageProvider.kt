@@ -12,6 +12,8 @@ import kotlinx.serialization.protobuf.ProtoBuf
 import java.io.File
 import java.io.InputStream
 import java.io.OutputStream
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 import java.util.ArrayDeque
 
 interface StorageProvider {
@@ -540,11 +542,13 @@ class LocalStorageProvider(
                     StorageUtils.createUpdatedProtobuf(input, output, tagIds, tagDefinitions)
                 }
             }
-            if (file.delete()) {
-                tempFile.renameTo(file)
-            } else {
-                false
-            }
+            Files.move(
+                tempFile.toPath(),
+                file.toPath(),
+                StandardCopyOption.REPLACE_EXISTING,
+                StandardCopyOption.ATOMIC_MOVE,
+            )
+            true
         } catch (e: Exception) {
             Logger.e("Storage", "Failed to set tags for $path", e, showToUser = true)
             tempFile.delete()
@@ -558,13 +562,13 @@ class LocalStorageProvider(
                 .walk()
                 .maxDepth(20) // Limit recursion depth
                 .filter { it.isFile && (it.extension == "json" || it.extension == "notate") }
-                .mapNotNull { file ->
-                    val metadata = StorageUtils.extractMetadata(file.name, { file.inputStream() }, file.length())
+                .mapNotNull {
+                    val metadata = StorageUtils.extractMetadata(it.name, { it.inputStream() }, it.length())
                     if (metadata?.tagIds?.contains(tagId) == true) {
                         CanvasItem(
-                            name = file.nameWithoutExtension,
-                            path = file.absolutePath,
-                            lastModified = file.lastModified(),
+                            name = it.nameWithoutExtension,
+                            path = it.absolutePath,
+                            lastModified = it.lastModified(),
                             thumbnail = metadata.thumbnail,
                             tagIds = metadata.tagIds,
                             embeddedTags = metadata.tagDefinitions,
