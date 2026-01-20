@@ -286,19 +286,14 @@ class HomeViewModel(
 
     private fun loadTaggedItems(tagId: String) {
         viewModelScope.launch {
-            val currentProj = _currentProject.value
             val results =
                 withContext(Dispatchers.IO) {
-                    if (currentProj != null) {
-                        repository?.findFilesWithTag(tagId) ?: emptyList()
-                    } else {
-                        val allFiles = mutableListOf<CanvasItem>()
-                        _projects.value.forEach { proj ->
-                            val repo = ProjectRepository(getApplication(), proj.uri)
-                            allFiles.addAll(repo.findFilesWithTag(tagId))
-                        }
-                        allFiles.sortedByDescending { it.lastModified }
+                    val allFiles = mutableListOf<CanvasItem>()
+                    _projects.value.forEach { proj ->
+                        val repo = ProjectRepository(getApplication(), proj.uri)
+                        allFiles.addAll(repo.findFilesWithTag(tagId))
                     }
+                    allFiles.sortedByDescending { it.lastModified }
                 }
             _browserItems.value = sortItems(results)
             updateTitle()
@@ -343,11 +338,12 @@ class HomeViewModel(
                 val current = _tags.value.toMutableList()
                 val startingOrder = (current.maxOfOrNull { it.order } ?: -1) + 1
                 var nextOrder = startingOrder
-                val orderedNewTags = newTags.map { tag ->
-                    val updatedTag = tag.copy(order = nextOrder)
-                    nextOrder++
-                    updatedTag
-                }
+                val orderedNewTags =
+                    newTags.map { tag ->
+                        val updatedTag = tag.copy(order = nextOrder)
+                        nextOrder++
+                        updatedTag
+                    }
                 current.addAll(orderedNewTags)
                 PreferencesManager.saveTags(getApplication(), current)
                 loadTags()

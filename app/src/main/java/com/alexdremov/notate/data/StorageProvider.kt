@@ -11,6 +11,7 @@ import kotlinx.serialization.encodeToByteArray
 import kotlinx.serialization.protobuf.ProtoBuf
 import java.io.File
 import java.io.InputStream
+import java.util.ArrayDeque
 
 interface StorageProvider {
     fun isApplicable(path: String?): Boolean
@@ -99,7 +100,7 @@ internal object StorageUtils {
                 val read = stream.read(buffer)
                 if (read <= 0) return null
                 val header = String(buffer, 0, read, Charsets.UTF_8)
-                val match = Regex("\"thumbnail\"\\s*:\\s*\"([^\"]+)\"").find(header)
+                val match = Regex(""""thumbnail"\s*:\s*"([^"]+)"""").find(header)
                 val thumbnail = match?.groupValues?.get(1)
                 CanvasDataPreview(thumbnail = thumbnail)
                 // Tags extraction from JSON skipped for performance/legacy reasons
@@ -306,6 +307,7 @@ class LocalStorageProvider(
         try {
             rootDir
                 .walk()
+                .maxDepth(20) // Limit recursion depth
                 .filter { it.isFile && (it.extension == "json" || it.extension == "notate") }
                 .mapNotNull { file ->
                     val metadata = StorageUtils.extractMetadata(file.name, { file.inputStream() }, file.length())
@@ -538,43 +540,51 @@ class SafStorageProvider(
         val rootDir = DocumentFile.fromTreeUri(context, rootUri) ?: return emptyList()
         val results = mutableListOf<CanvasItem>()
         try {
-            searchRecursive(rootDir, tagId, results)
+            searchIterative(rootDir, tagId, results)
         } catch (e: Exception) {
             Logger.e("Storage", "Failed to search SAF", e)
         }
         return results.sortedByDescending { it.lastModified }
     }
 
-    private fun searchRecursive(
-        dir: DocumentFile,
+    private fun searchIterative(
+        rootDir: DocumentFile,
         tagId: String,
         results: MutableList<CanvasItem>,
     ) {
-        dir.listFiles().forEach { file ->
-            if (file.isDirectory) {
-                searchRecursive(file, tagId, results)
-            } else if (file.name?.endsWith(".json") == true || file.name?.endsWith(".notate") == true) {
-                val metadata =
-                    StorageUtils.extractMetadata(file.name, {
-                        try {
-                            context.contentResolver.openInputStream(file.uri)
-                        } catch (e: Exception) {
-                            null
-                        }
-                    }, file.length())
-                if (metadata?.tagIds?.contains(tagId) == true) {
-                    val name = file.name ?: "Unknown"
-                    val isJsonExt = name.endsWith(".json")
-                    results.add(
-                        CanvasItem(
-                            name = name.removeSuffix(if (isJsonExt) ".json" else ".notate"),
-                            path = file.uri.toString(),
-                            lastModified = file.lastModified(),
-                            thumbnail = metadata.thumbnail,
-                            tagIds = metadata.tagIds,
-                            embeddedTags = metadata.tagDefinitions,
-                        ),
-                    )
+        val stack = ArrayDeque<Pair<DocumentFile, Int>>()
+        stack.add(rootDir to 0)
+
+        while (!stack.isEmpty()) {
+            val (dir, depth) = stack.removeLast()
+            if (depth > 20) continue // Limit recursion depth
+
+            dir.listFiles().forEach { file ->
+                if (file.isDirectory) {
+                    stack.add(file to depth + 1)
+                } else if (file.name?.endsWith(".json") == true || file.name?.endsWith(".notate") == true) {
+                    val metadata =
+                        StorageUtils.extractMetadata(file.name, {
+                            try {
+                                context.contentResolver.openInputStream(file.uri)
+                            } catch (e: Exception) {
+                                null
+                            }
+                        }, file.length())
+                    if (metadata?.tagIds?.contains(tagId) == true) {
+                        val name = file.name ?: "Unknown"
+                        val isJsonExt = name.endsWith(".json")
+                        results.add(
+                            CanvasItem(
+                                name = name.removeSuffix(if (isJsonExt) ".json" else ".notate"),
+                                path = file.uri.toString(),
+                                lastModified = file.lastModified(),
+                                thumbnail = metadata.thumbnail,
+                                tagIds = metadata.tagIds,
+                                embeddedTags = metadata.tagDefinitions,
+                            ),
+                        )
+                    }
                 }
             }
         }

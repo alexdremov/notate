@@ -337,10 +337,11 @@ fun MainScreen(viewModel: HomeViewModel) {
 
     // Handle Project Actions Dialogs
     if (projectToManage != null) {
+        val manageTarget = projectToManage!!
         AlertDialog(
             modifier = Modifier.border(2.dp, Color.Black, RoundedCornerShape(28.dp)),
             onDismissRequest = { projectToManage = null },
-            title = { Text("Actions for \"${projectToManage!!.name}\"") },
+            title = { Text("Actions for \"${manageTarget.name}\"") },
             confirmButton = {},
             dismissButton = {
                 OutlinedButton(onClick = { projectToManage = null }) {
@@ -351,7 +352,7 @@ fun MainScreen(viewModel: HomeViewModel) {
                 Column(Modifier.fillMaxWidth()) {
                     OutlinedButton(
                         onClick = {
-                            projectToSync = projectToManage
+                            projectToSync = manageTarget
                             projectToManage = null
                         },
                         modifier = Modifier.fillMaxWidth(),
@@ -363,7 +364,7 @@ fun MainScreen(viewModel: HomeViewModel) {
 
                     OutlinedButton(
                         onClick = {
-                            projectToRename = projectToManage
+                            projectToRename = manageTarget
                             projectToManage = null
                         },
                         modifier = Modifier.fillMaxWidth(),
@@ -375,7 +376,7 @@ fun MainScreen(viewModel: HomeViewModel) {
 
                     OutlinedButton(
                         onClick = {
-                            projectToDelete = projectToManage
+                            projectToDelete = manageTarget
                             projectToManage = null
                         },
                         modifier = Modifier.fillMaxWidth(),
@@ -388,35 +389,38 @@ fun MainScreen(viewModel: HomeViewModel) {
     }
 
     if (projectToSync != null) {
+        val syncTarget = projectToSync!!
         ProjectSyncConfigDialog(
-            projectId = projectToSync!!.id,
+            projectId = syncTarget.id,
             onDismiss = { projectToSync = null },
             onSyncNow = {
-                viewModel.syncProject(projectToSync!!.id)
+                viewModel.syncProject(syncTarget.id)
                 projectToSync = null
             },
         )
     }
 
     if (projectToRename != null) {
+        val renameTarget = projectToRename!!
         TextInputDialog(
             title = "Rename Project",
-            initialValue = projectToRename!!.name,
+            initialValue = renameTarget.name,
             confirmText = "Rename",
             onDismiss = { projectToRename = null },
             onConfirm = { newName ->
-                viewModel.renameProject(projectToRename!!, newName)
+                viewModel.renameProject(renameTarget, newName)
                 projectToRename = null
             },
         )
     }
 
     if (projectToDelete != null) {
+        val deleteTarget = projectToDelete!!
         DeleteConfirmationDialog(
-            itemName = projectToDelete!!.name,
+            itemName = deleteTarget.name,
             onDismiss = { projectToDelete = null },
             onConfirm = {
-                viewModel.removeProject(projectToDelete!!)
+                viewModel.removeProject(deleteTarget)
                 projectToDelete = null
             },
         )
