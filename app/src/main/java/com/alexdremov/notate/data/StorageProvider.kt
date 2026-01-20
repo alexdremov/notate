@@ -180,8 +180,12 @@ internal object StorageUtils {
                 CanvasDataPreview(thumbnail, tagIds, tagDefinitions)
             }
         } catch (e: Exception) {
-            Logger.e("Metadata", "Failed to extract metadata from protobuf", e)
-            null
+            Logger.e(
+                "Metadata",
+                "Failed to extract metadata from protobuf; the data may be malformed or the schema may be incompatible",
+                e,
+            )
+            return null
         }
 
     fun createUpdatedProtobuf(
