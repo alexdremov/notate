@@ -11,12 +11,12 @@ plugins {
 
 android {
     namespace = "com.alexdremov.notate"
-    compileSdk = 36
+    compileSdk = 34
 
     defaultConfig {
         applicationId = "com.alexdremov.notate"
         minSdk = 26
-        targetSdk = 36
+        targetSdk = 34
         versionCode = 1
         versionName = "1.0"
         vectorDrawables {
@@ -61,7 +61,7 @@ android {
     }
 
     kotlin {
-        jvmToolchain(21)
+        jvmToolchain(17)
     }
 
     packaging {
