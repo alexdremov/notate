@@ -232,7 +232,7 @@ class CanvasRepository(
     }
 
     private fun hashPath(path: String): String {
-        val digest = MessageDigest.getInstance("MD5")
+        val digest = MessageDigest.getInstance("SHA-256")
         digest.update(path.toByteArray())
         return bytesToHex(digest.digest())
     }
