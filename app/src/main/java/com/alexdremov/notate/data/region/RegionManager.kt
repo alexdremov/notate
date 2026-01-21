@@ -132,8 +132,11 @@ class RegionManager(
 
         if (loadedCount > 0) {
             // Save the repaired index
-            storage.saveIndex(regionIndex)
-            Logger.i("RegionManager", "Index rebuilt with $loadedCount regions and saved.")
+            if (storage.saveIndex(regionIndex)) {
+                Logger.i("RegionManager", "Index rebuilt with $loadedCount regions and saved.")
+            } else {
+                Logger.e("RegionManager", "Index rebuilt with $loadedCount regions but failed to save!")
+            }
         }
     }
 
@@ -149,36 +152,37 @@ class RegionManager(
             return region
         }
 
-        // 2. Load from Disk (No Global Lock to avoid blocking readers)
-        // We accept potential double-loading race condition here as harmless/rare
-        region = storage.loadRegion(id)
-
-        if (region == null) {
-            // Handle missing region logic
-            // Need lock only if we suspect index inconsistency
-            var inIndex = false
-            lock.read { inIndex = regionIndex.containsKey(id) }
-
-            if (inIndex) {
-                lock.write {
-                    if (regionIndex.containsKey(id)) {
-                        Logger.e("RegionManager", "Region $id indexed but missing on disk! Data loss possible.")
-                        removeRegionIndex(id)
-                    }
-                }
+        // 2. Use lock for atomic check-then-load-then-put to prevent
+        // double-loading race conditions that could cause data loss
+        lock.write {
+            // Re-check cache under lock (another thread may have loaded it)
+            region = regionCache.get(id)
+            if (region != null) {
+                return region!!
             }
-            region = RegionData(id)
-        } else {
-            region.rebuildQuadtree(regionSize)
+
+            // Load from Disk
+            region = storage.loadRegion(id)
+
+            if (region == null) {
+                // Handle missing region - check index consistency
+                if (regionIndex.containsKey(id)) {
+                    Logger.e("RegionManager", "Region $id indexed but missing on disk! Data loss possible.")
+                    removeRegionIndex(id)
+                }
+                region = RegionData(id)
+            } else {
+                region!!.rebuildQuadtree(regionSize)
+            }
+
+            regionCache.put(id, region!!)
+
+            if (region!!.sizeBytes() > memoryLimitBytes) {
+                Logger.w("RegionManager", "Region $id size (${region!!.sizeBytes() / 1024 / 1024}MB) exceeds cache limit! Thrashing likely.")
+            }
         }
 
-        regionCache.put(id, region)
-
-        if (region.sizeBytes() > memoryLimitBytes) {
-            Logger.w("RegionManager", "Region $id size (${region.sizeBytes() / 1024 / 1024}MB) exceeds cache limit! Thrashing likely.")
-        }
-
-        return region
+        return region!!
     }
 
     fun getAvailableRegionsAndMissingIds(rect: RectF): Pair<List<RegionData>, List<RegionId>> {
@@ -222,22 +226,21 @@ class RegionManager(
         var region = regionCache.get(id)
         if (region != null) return region
 
-        // 2. Load from Disk (No Global Lock)
-        // Check index existence first to avoid useless IO (Index is in memory, fast check)
-        // Accessing regionIndex needs Read Lock? It's ConcurrentHashMap? No, MutableMap.
-        // But reads are usually safe if writes are atomic.
-        // Safest is to use lock.read for index check.
+        // 2. Use lock for atomic check-then-load-then-put
+        lock.write {
+            // Re-check cache under lock
+            region = regionCache.get(id)
+            if (region != null) return region
 
-        var exists = false
-        lock.read {
-            exists = regionIndex.containsKey(id)
-        }
+            // Check index existence
+            if (!regionIndex.containsKey(id)) {
+                return null
+            }
 
-        if (exists) {
             region = storage.loadRegion(id)
             if (region != null) {
-                region.rebuildQuadtree(regionSize)
-                regionCache.put(id, region)
+                region!!.rebuildQuadtree(regionSize)
+                regionCache.put(id, region!!)
             }
         }
 
@@ -361,7 +364,9 @@ class RegionManager(
                     }
                 }
             }
-            storage.saveIndex(regionIndex)
+            if (!storage.saveIndex(regionIndex)) {
+                Logger.e("RegionManager", "Failed to save index during flush!")
+            }
         }
     }
 

@@ -49,7 +49,13 @@ class CanvasRepositorySafeWriteTest {
             storage.init()
             val regionManager = RegionManager(storage, metadata.regionSize)
 
-            val session = CanvasSession(sessionDir, metadata, regionManager)
+            val session = CanvasSession(
+                sessionDir = sessionDir,
+                regionManager = regionManager,
+                originLastModified = 0L,
+                originSize = 0L,
+                metadata = metadata
+            )
 
             // Initial write
             val result1 = repository.saveCanvasSession(path, session)
@@ -57,18 +63,21 @@ class CanvasRepositorySafeWriteTest {
             val targetFile = File(path)
             assertTrue("Target file should exist", targetFile.exists())
 
-            // Modify data
+            // Modify data using the session's updateMetadata method
             val newMetadata = metadata.copy(pageWidth = 2000f)
-            val newSession = session.copy(metadata = newMetadata)
-            val result2 = repository.saveCanvasSession(path, newSession)
+            session.updateMetadata(newMetadata)
+            val result2 = repository.saveCanvasSession(path, session)
             assertEquals(path, result2.savedPath)
 
             assertTrue("Target file should still exist", targetFile.exists())
             assertFalse("Backup file should be deleted on success", File(path + ".bak").exists())
             assertFalse("Temp file should be deleted", File(path + ".tmp").exists())
 
-            val result = repository.loadCanvas(path)
-            assertNotNull(result)
-            assertEquals(2000f, result!!.canvasState.pageWidth, 0.1f)
+            // Close the session before reopening
+            session.close()
+
+            val loadedSession = repository.openCanvasSession(path)
+            assertNotNull(loadedSession)
+            assertEquals(2000f, loadedSession!!.metadata.pageWidth, 0.1f)
         }
 }

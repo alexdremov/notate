@@ -176,18 +176,20 @@ class RegionStorage(
     private fun getRegionFile(id: RegionId): File = File(baseDir, "r_${id.x}_${id.y}.bin")
 
     @OptIn(ExperimentalSerializationApi::class)
-    fun saveIndex(index: Map<RegionId, RectF>) {
+    fun saveIndex(index: Map<RegionId, RectF>): Boolean {
         val list =
             index.map { (id, rect) ->
                 RegionBoundsProto(id.x, id.y, rect.left, rect.top, rect.right, rect.bottom)
             }
         val file = File(baseDir, "index.bin")
-        try {
+        return try {
             val bytes = ProtoBuf.encodeToByteArray(ListSerializer(RegionBoundsProto.serializer()), list)
             writeAtomic(file, bytes)
             Logger.d("RegionStorage", "Saved index (${index.size} regions)")
+            true
         } catch (e: Exception) {
             Logger.e("RegionStorage", "Failed to save index", e)
+            false
         }
     }
 
@@ -230,14 +232,38 @@ class RegionStorage(
         val tmpFile = File(parent, "${file.name}.tmp")
         try {
             tmpFile.writeBytes(bytes)
+
+            // Verify temp file was written correctly
+            if (!tmpFile.exists() || tmpFile.length() != bytes.size.toLong()) {
+                throw java.io.IOException("Temp file verification failed: expected ${bytes.size} bytes, got ${tmpFile.length()}")
+            }
+
             if (file.exists()) {
                 if (!file.delete()) {
-                    Logger.w("RegionStorage", "Atomic write: Failed to delete existing target $file")
+                    // Delete failed - try overwriting instead
+                    Logger.w("RegionStorage", "Atomic write: Failed to delete existing target $file, attempting overwrite")
+                    file.writeBytes(bytes)
+                    // Verify the overwrite
+                    if (file.length() != bytes.size.toLong()) {
+                        throw java.io.IOException("Overwrite verification failed")
+                    }
+                    tmpFile.delete()
+                    return
                 }
             }
             if (!tmpFile.renameTo(file)) {
-                Logger.e("RegionStorage", "Atomic write: Failed to rename temp file to $file")
-                throw java.io.IOException("Failed to rename $tmpFile to $file")
+                // Rename failed - try copy instead
+                Logger.w("RegionStorage", "Atomic write: Failed to rename temp file to $file, attempting copy")
+                tmpFile.inputStream().use { input ->
+                    file.outputStream().use { output ->
+                        input.copyTo(output)
+                    }
+                }
+                // Verify the copy
+                if (file.length() != bytes.size.toLong()) {
+                    throw java.io.IOException("Copy verification failed")
+                }
+                tmpFile.delete()
             }
         } catch (e: Exception) {
             Logger.e("RegionStorage", "Atomic write failed for $file", e)

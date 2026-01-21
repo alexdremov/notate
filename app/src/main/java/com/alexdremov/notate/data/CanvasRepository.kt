@@ -176,7 +176,7 @@ class CanvasRepository(
                 }
 
                 // 4. Create ZIP in a temp location OUTSIDE the session directory
-                val tempZip = File(context.cacheDir, "save_${System.currentTimeMillis()}.zip. tmp")
+                val tempZip = File(context.cacheDir, "save_${System.currentTimeMillis()}.zip.tmp")
                 try {
                     ZipUtils.zip(session.sessionDir, tempZip)
 
