@@ -283,6 +283,50 @@ class SyncManager(
             return@withContext null
         }
 
+    suspend fun deleteFromRemote(
+        projectId: String,
+        relativePath: String,
+    ): Boolean =
+        withContext(Dispatchers.IO) {
+            val config = SyncPreferencesManager.getProjectSyncConfig(context, projectId)
+            if (config == null || !config.isEnabled) return@withContext false
+
+            val storageConfig = SyncPreferencesManager.getRemoteStorages(context).find { it.id == config.remoteStorageId }
+            if (storageConfig == null) return@withContext false
+
+            val password = SyncPreferencesManager.getPassword(context, storageConfig.id) ?: ""
+
+            val provider: RemoteStorageProvider =
+                when (storageConfig.type) {
+                    RemoteStorageType.WEBDAV -> WebDavProvider(storageConfig, password)
+                    RemoteStorageType.GOOGLE_DRIVE -> GoogleDriveProvider(context, storageConfig)
+                }
+
+            val cleanRelativePath = relativePath.replace("\\", "/")
+            val remotePath = "${config.remotePath.trimEnd('/')}/$cleanRelativePath"
+
+            try {
+                Logger.d("SyncManager", "Deleting remote file: $remotePath")
+                var success = provider.deleteFile(remotePath)
+
+                if (config.syncPdf && relativePath.endsWith(".notate")) {
+                    val pdfRelativePath = cleanRelativePath.substringBeforeLast(".") + ".pdf"
+                    val remotePdfPath = "${config.remotePath.trimEnd('/')}/$pdfRelativePath"
+                    Logger.d("SyncManager", "Deleting remote PDF: $remotePdfPath")
+                    // We don't fail the whole operation if PDF delete fails, but we try
+                    try {
+                        provider.deleteFile(remotePdfPath)
+                    } catch (e: Exception) {
+                        Logger.w("SyncManager", "Failed to delete remote PDF", e)
+                    }
+                }
+                return@withContext success
+            } catch (e: Exception) {
+                Logger.e("SyncManager", "Failed to delete remote file", e)
+                return@withContext false
+            }
+        }
+
     private suspend fun syncPdf(
         localFile: LocalFile,
         remoteDir: String,

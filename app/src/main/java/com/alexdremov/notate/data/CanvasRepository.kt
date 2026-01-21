@@ -30,7 +30,17 @@ data class CanvasSession(
     val regionManager: RegionManager,
     val originLastModified: Long = 0L,
     val originSize: Long = 0L,
-)
+) {
+    fun close() {
+        try {
+            if (sessionDir.exists()) {
+                sessionDir.deleteRecursively()
+            }
+        } catch (e: Exception) {
+            // Ignore close errors
+        }
+    }
+}
 
 /**
  * Repository responsible for loading and saving Canvas data (V2: ZIP Format only).
@@ -51,13 +61,10 @@ class CanvasRepository(
     suspend fun openCanvasSession(path: String): CanvasSession? =
         withContext(Dispatchers.IO) {
             try {
-                val sessionName = hashPath(path)
+                // Use unique directory for each session to prevent concurrent processes (Sync, Export)
+                // from clobbering the active editing session.
+                val sessionName = "${hashPath(path)}_${java.util.UUID.randomUUID()}"
                 val sessionDir = File(sessionsDir, sessionName)
-                if (sessionDir.exists()) {
-                    // Ideally clean up old session or reuse if matching file timestamp?
-                    // For safety, let's clean up to ensure fresh state from file
-                    sessionDir.deleteRecursively()
-                }
                 sessionDir.mkdirs()
 
                 val inputStream = openInputStream(path) ?: return@withContext null

@@ -451,7 +451,13 @@ class CanvasActivity : AppCompatActivity() {
     private fun loadCanvas() {
         val path = currentCanvasPath ?: return
         lifecycleScope.launch(Dispatchers.IO) {
+            // Close previous session if any, ensuring we don't leak disk space on reload
+            // Note: If saving is in progress, this might be risky, but loadCanvas implies new state.
+            // Ideally we'd wait for save. But for now, we rely on unique dirs.
+            // currentSession?.close() // Disabled to prevent race with background save of previous session.
+
             val session = canvasRepository.openCanvasSession(path)
+// ...
 
             if (session != null) {
                 currentSession = session

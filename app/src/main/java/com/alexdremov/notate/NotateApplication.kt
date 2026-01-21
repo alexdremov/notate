@@ -44,6 +44,20 @@ class NotateApplication : Application() {
                 Logger.e(TAG, "HiddenApiBypass failed", e)
             }
         }
+
+        cleanupSessions()
+    }
+
+    private fun cleanupSessions() {
+        try {
+            val sessionsDir = java.io.File(cacheDir, "sessions")
+            if (sessionsDir.exists()) {
+                sessionsDir.deleteRecursively()
+                Logger.i(TAG, "Cleaned up old sessions directory.")
+            }
+        } catch (e: Exception) {
+            Logger.e(TAG, "Failed to cleanup sessions", e)
+        }
     }
 
     private fun logDeviceInfo() {

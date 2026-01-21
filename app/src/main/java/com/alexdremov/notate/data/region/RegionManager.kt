@@ -269,9 +269,7 @@ class RegionManager(
             Logger.d("RegionManager", "Query $rect found ${ids.size} regions: $ids")
         }
 
-        lock.write {
-            return ids.map { getRegion(it) }
-        }
+        return ids.map { getRegion(it) }
     }
 
     fun getContentBounds(): RectF {

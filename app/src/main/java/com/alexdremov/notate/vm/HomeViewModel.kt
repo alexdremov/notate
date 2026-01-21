@@ -519,12 +519,28 @@ class HomeViewModel(
 
     fun deleteItem(item: FileSystemItem) {
         val repo = repository ?: return
+        val currentProject = _currentProject.value
+        val currentProjectId = currentProject?.id
+        val projectUri = currentProject?.uri
+
         viewModelScope.launch {
             val success =
                 withContext(Dispatchers.IO) {
                     repo.deleteItem(item.path)
                 }
             if (success) {
+                // Try to delete from remote if applicable
+                if (currentProjectId != null && projectUri != null && !projectUri.startsWith("content://")) {
+                    try {
+                        withContext(Dispatchers.IO) {
+                            val relativePath = File(item.path).relativeTo(File(projectUri)).path
+                            syncManager.deleteFromRemote(currentProjectId, relativePath)
+                        }
+                    } catch (e: Exception) {
+                        Logger.w("HomeViewModel", "Failed to delete remote file: ${item.path}", e)
+                    }
+                }
+
                 val tag = _selectedTag.value
                 if (tag != null) {
                     loadTaggedItems(tag.id)

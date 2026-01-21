@@ -7,6 +7,7 @@ import android.graphics.Matrix
 import android.graphics.Rect
 import android.graphics.RectF
 import android.util.AttributeSet
+import android.view.Choreographer
 import android.view.MotionEvent
 import android.view.SurfaceHolder
 import android.view.SurfaceView
@@ -54,6 +55,13 @@ class OnyxCanvasView
         private val matrix = Matrix()
         private val inverseMatrix = Matrix()
         var onViewportChanged: (() -> Unit)? = null
+
+        private var drawScheduled = false
+        private val frameCallback =
+            Choreographer.FrameCallback {
+                drawScheduled = false
+                drawContent()
+            }
 
         private val viewportInteractor =
             ViewportInteractor(
@@ -348,7 +356,10 @@ class OnyxCanvasView
         }
 
         private fun invalidateCanvas() {
-            drawContent()
+            if (!drawScheduled) {
+                drawScheduled = true
+                Choreographer.getInstance().postFrameCallback(frameCallback)
+            }
         }
 
         private fun drawContent() {
