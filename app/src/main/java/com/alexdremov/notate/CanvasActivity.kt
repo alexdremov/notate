@@ -9,7 +9,6 @@ import androidx.activity.addCallback
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.appcompat.app.AppCompatActivity
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -61,7 +60,8 @@ class CanvasActivity : AppCompatActivity() {
     private var autoSaveJob: Job? = null
 
     // Thread-safe session management
-    private val saveMutex = Mutex()
+    // The mutex protects session transitions and save operations
+    private val sessionMutex = Mutex()
     private val currentSessionRef = AtomicReference<com.alexdremov.notate.data.CanvasSession?>(null)
 
     private var currentCanvasPath: String? = null
@@ -396,7 +396,7 @@ class CanvasActivity : AppCompatActivity() {
                 }
                 launch {
                     viewModel.isEditMode.collect { isEdit ->
-                        Logger.d("NotateDebug", "CanvasActivity: isEditMode=$isEdit")
+                        Logger.d("NotateDebug", "CanvasActivity:  isEditMode=$isEdit")
                         binding.toolbarContainer.isDragEnabled = !isEdit
                     }
                 }
@@ -429,14 +429,11 @@ class CanvasActivity : AppCompatActivity() {
     private fun loadCanvas() {
         val path = currentCanvasPath ?: return
         lifecycleScope.launch(Dispatchers.IO) {
-            // Close previous session safely
-            val oldSession = currentSessionRef.getAndSet(null)
-            if (oldSession != null) {
-                withContext(NonCancellable) {
-                    saveMutex.withLock {
-                        oldSession.close()
-                    }
-                }
+            // Acquire mutex to prevent races with save
+            sessionMutex.withLock {
+                // Close previous session safely
+                val oldSession = currentSessionRef.getAndSet(null)
+                oldSession?.close()
             }
 
             val session = canvasRepository.openCanvasSession(path)
@@ -470,7 +467,7 @@ class CanvasActivity : AppCompatActivity() {
         saveCanvas()
 
         // Trigger sync in background
-        currentCanvasPath?. let { path ->
+        currentCanvasPath?.let { path ->
             ProcessLifecycleOwner.get().lifecycleScope.launch(Dispatchers.IO) {
                 try {
                     val projectId = syncManager.findProjectForFile(path)
@@ -517,25 +514,13 @@ class CanvasActivity : AppCompatActivity() {
      */
     private suspend fun saveCanvasSuspend() {
         val path = currentCanvasPath ?: return
-        val session = currentSessionRef.get()
-
-        // Guard:  No session yet (load still in progress)
-        if (session == null) {
-            Logger.w("CanvasActivity", "Skipping save:  no active session")
-            return
-        }
-
-        // Guard: Session already closed
-        if (session.isClosed()) {
-            Logger.w("CanvasActivity", "Skipping save: session is closed")
-            return
-        }
 
         com.alexdremov.notate.data.SaveStatusManager
             .startSaving(path)
 
         try {
-            // Capture metadata from UI thread
+            // Capture metadata from UI thread BEFORE acquiring mutex
+            // This is safe because we're just reading view state
             val updatedMetadata =
                 withContext(Dispatchers.Main) {
                     try {
@@ -553,35 +538,35 @@ class CanvasActivity : AppCompatActivity() {
                 return
             }
 
-            Logger.d("CanvasActivity", "Saving canvas session to $path")
-
             withContext(NonCancellable) {
-                saveMutex.withLock {
-                    // Re-check session state under lock
-                    val currentSession = currentSessionRef.get()
-                    if (currentSession == null || currentSession.isClosed()) {
-                        Logger.w("CanvasActivity", "Session changed/closed during save, aborting")
+                sessionMutex.withLock {
+                    // Get session INSIDE the lock to prevent races with loadCanvas
+                    val session = currentSessionRef.get()
+
+                    // Guard:  No session yet (load still in progress or failed)
+                    if (session == null) {
+                        Logger.w("CanvasActivity", "Skipping save: no active session")
                         return@withLock
                     }
 
-                    // Create updated session with fresh metadata
-                    val sessionToSave = currentSession.copy(metadata = updatedMetadata)
+                    // Guard: Session already closed
+                    if (session.isClosed()) {
+                        Logger.w("CanvasActivity", "Skipping save: session is closed")
+                        return@withLock
+                    }
+
+                    // Update metadata in the session (in-place, no copy)
+                    session.updateMetadata(updatedMetadata)
+
+                    Logger.d("CanvasActivity", "Saving canvas session to $path")
 
                     try {
-                        val result = canvasRepository.saveCanvasSession(path, sessionToSave)
+                        val result = canvasRepository.saveCanvasSession(path, session)
 
-                        // Update origin timestamps for conflict detection
-                        // Create new session with updated origin info
-                        val updatedSessionWithOrigin =
-                            sessionToSave.copy(
-                                originLastModified = result.newLastModified,
-                                originSize = result.newSize,
-                            )
+                        // Update origin timestamps for conflict detection (in-place)
+                        session.updateOrigin(result.newLastModified, result.newSize)
 
-                        // Only update if session hasn't been swapped
-                        currentSessionRef.compareAndSet(currentSession, updatedSessionWithOrigin)
-
-                        Logger.i("CanvasActivity", "Save complete:  ${result.savedPath}")
+                        Logger.i("CanvasActivity", "Save complete: ${result.savedPath}")
                     } catch (e: Exception) {
                         Logger.e("CanvasActivity", "Failed to save canvas", e, showToUser = true)
                         // Don't rethrow - allow app to continue

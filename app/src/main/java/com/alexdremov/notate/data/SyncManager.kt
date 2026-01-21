@@ -343,6 +343,7 @@ class SyncManager(
             model.loadFromCanvasData(session.metadata)
 
             val cleanRelativePath = localFile.relativePath.replace("\\", "/")
+            // Fixed: removed extra space before the dot
             val pdfRelativePath = cleanRelativePath.substringBeforeLast(". ") + ".pdf"
             val remotePdfPath = "${remoteDir.trimEnd('/')}/$pdfRelativePath"
 

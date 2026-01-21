@@ -9,27 +9,68 @@ import java.util.concurrent.atomic.AtomicInteger
 /**
  * Represents an active editing session for a canvas.
  * Thread-safe lifecycle management to prevent deletion during active saves.
+ *
+ * NOTE: This is NOT a data class because we need mutable state with proper
+ * synchronization. The atomics must be shared across all references to the
+ * same session, not copied.
  */
-data class CanvasSession(
+class CanvasSession(
     val sessionDir: File,
-    val metadata: CanvasData,
     val regionManager: RegionManager,
-    val originLastModified: Long = 0L,
-    val originSize: Long = 0L,
+    originLastModified: Long = 0L,
+    originSize: Long = 0L,
+    metadata: CanvasData,
 ) {
+    // Mutable state - updated in place, not copied
+    @Volatile
+    var metadata: CanvasData = metadata
+        private set
+
+    @Volatile
+    var originLastModified: Long = originLastModified
+        private set
+
+    @Volatile
+    var originSize: Long = originSize
+        private set
+
     // Track active operations (saves) to prevent premature cleanup
     private val activeOperations = AtomicInteger(0)
-    private val isClosed = AtomicBoolean(false)
+    private val closed = AtomicBoolean(false)
+
+    /**
+     * Updates the metadata for this session.
+     * Thread-safe.
+     */
+    fun updateMetadata(newMetadata: CanvasData) {
+        metadata = newMetadata
+    }
+
+    /**
+     * Updates the origin file information for conflict detection.
+     * Thread-safe.
+     */
+    fun updateOrigin(
+        lastModified: Long,
+        size: Long,
+    ) {
+        originLastModified = lastModified
+        originSize = size
+    }
 
     /**
      * Marks the start of an operation (e.g., save) that requires the session directory.
      * Returns false if the session is already closed.
      */
     fun acquireForOperation(): Boolean {
-        if (isClosed.get()) return false
+        // First check without modifying
+        if (closed.get()) return false
+
+        // Increment operation count
         activeOperations.incrementAndGet()
-        // Double-check after increment
-        if (isClosed.get()) {
+
+        // Double-check after increment (handles race with close())
+        if (closed.get()) {
             activeOperations.decrementAndGet()
             return false
         }
@@ -50,10 +91,12 @@ data class CanvasSession(
     /**
      * Closes the session and deletes the session directory.
      * Waits for active operations to complete (with timeout).
+     *
+     * This method is idempotent - calling it multiple times is safe.
      */
     fun close() {
-        if (!isClosed.compareAndSet(false, true)) {
-            // Already closed
+        if (!closed.compareAndSet(false, true)) {
+            // Already closed by another thread
             return
         }
 
@@ -63,7 +106,10 @@ data class CanvasSession(
 
         while (activeOperations.get() > 0) {
             if (System.currentTimeMillis() - startTime > timeoutMs) {
-                Logger.e("CanvasSession", "Timeout waiting for ${activeOperations.get()} operations to complete.  Force closing.")
+                Logger.e(
+                    "CanvasSession",
+                    "Timeout waiting for ${activeOperations.get()} operations to complete.  Force closing.",
+                )
                 break
             }
             try {
@@ -89,5 +135,14 @@ data class CanvasSession(
         }
     }
 
-    fun isClosed(): Boolean = isClosed.get()
+    /**
+     * Returns true if this session has been closed.
+     */
+    fun isClosed(): Boolean = closed.get()
+
+    /**
+     * Returns the number of active operations.
+     * Useful for debugging.
+     */
+    fun getActiveOperationCount(): Int = activeOperations.get()
 }

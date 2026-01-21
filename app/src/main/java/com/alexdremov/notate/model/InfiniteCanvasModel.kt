@@ -482,7 +482,7 @@ class InfiniteCanvasModel {
             toolbarItems = data.toolbarItems
             tagIds = data.tagIds
             tagDefinitions = data.tagDefinitions
-            // No content loading
+            nextOrder = data.nextStrokeOrder
         }
     }
 

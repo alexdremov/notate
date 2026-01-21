@@ -15,7 +15,6 @@ import kotlinx.serialization.protobuf.ProtoBuf
 import java.io.BufferedInputStream
 import java.io.File
 import java.io.InputStream
-import java.io.OutputStream
 import java.security.MessageDigest
 
 /**
@@ -25,11 +24,6 @@ import java.security.MessageDigest
 class CanvasRepository(
     private val context: Context,
 ) {
-    data class LoadResult(
-        val canvasState: CanvasSerializer.LoadedCanvasState,
-        val session: CanvasSession,
-    )
-
     data class SaveResult(
         val savedPath: String,
         val newLastModified: Long,
@@ -56,7 +50,13 @@ class CanvasRepository(
                     storage.init()
                     val regionManager = RegionManager(storage, CanvasConfig.DEFAULT_REGION_SIZE)
                     val metadata = CanvasData(version = 3, regionSize = CanvasConfig.DEFAULT_REGION_SIZE)
-                    return@withContext CanvasSession(sessionDir, metadata, regionManager, 0L, 0L)
+                    return@withContext CanvasSession(
+                        sessionDir = sessionDir,
+                        regionManager = regionManager,
+                        originLastModified = 0L,
+                        originSize = 0L,
+                        metadata = metadata,
+                    )
                 }
 
                 val isZip = isZipFile(inputStream)
@@ -106,7 +106,13 @@ class CanvasRepository(
                         0L to 0L
                     }
 
-                CanvasSession(sessionDir, metadata, regionManager, ts, size)
+                CanvasSession(
+                    sessionDir = sessionDir,
+                    regionManager = regionManager,
+                    originLastModified = ts,
+                    originSize = size,
+                    metadata = metadata,
+                )
             } catch (e: Exception) {
                 Logger.e("CanvasRepository", "Failed to open session", e, showToUser = true)
                 null
@@ -138,7 +144,7 @@ class CanvasRepository(
                     if (targetFile.lastModified() != session.originLastModified ||
                         targetFile.length() != session.originSize
                     ) {
-                        Logger.w("CanvasRepository", "Conflict detected!  File changed on disk. Saving as conflict copy.")
+                        Logger.w("CanvasRepository", "Conflict detected!  File changed on disk.  Saving as conflict copy.")
                         val parent = targetFile.parentFile
                         val name = targetFile.nameWithoutExtension
                         val ext = targetFile.extension
@@ -259,19 +265,19 @@ class CanvasRepository(
         sourceFile: File,
     ) {
         if (targetPath.startsWith("content://")) {
-            // SAF:  Stream copy
+            // SAF: Stream copy
             context.contentResolver.openOutputStream(Uri.parse(targetPath), "wt")?.use { os ->
                 sourceFile.inputStream().use { input ->
                     input.copyTo(os)
                 }
             } ?: throw java.io.IOException("Failed to open SAF output stream")
         } else {
-            // Local File:  Atomic Rename with backup
+            // Local File: Atomic Rename with backup
             val targetFile = File(targetPath)
-            val backupFile = File(targetFile.parent, "${targetFile.name}. bak")
+            val backupFile = File(targetFile.parent, "${targetFile.name}.bak")
 
             // Ensure parent directory exists
-            targetFile.parentFile?.mkdirs()
+            targetFile.parentFile?. mkdirs()
 
             if (targetFile.exists()) {
                 if (backupFile.exists()) backupFile.delete()
@@ -291,7 +297,7 @@ class CanvasRepository(
                     }
                     // Verify copy
                     if (targetFile.length() != sourceFile.length()) {
-                        throw java.io.IOException("Copy verification failed:  size mismatch")
+                        throw java.io.IOException("Copy verification failed: size mismatch")
                     }
                 } catch (e: Exception) {
                     // Restore backup on failure
