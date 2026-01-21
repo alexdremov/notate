@@ -5,6 +5,10 @@ import android.util.LruCache
 import com.alexdremov.notate.model.CanvasItem
 import com.alexdremov.notate.util.Logger
 import com.alexdremov.notate.util.Quadtree
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import java.util.concurrent.locks.ReentrantReadWriteLock
 import kotlin.concurrent.read
 import kotlin.concurrent.write
@@ -28,6 +32,9 @@ class RegionManager(
     // Skeleton Index for fast spatial queries
     private var skeletonQuadtree = Quadtree(0, RectF(-regionSize, -regionSize, regionSize, regionSize))
     private val regionProxies = HashMap<RegionId, RegionProxy>()
+    
+    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    var onRegionLoaded: ((RegionData) -> Unit)? = null
 
     private class RegionProxy(
         val id: RegionId,
@@ -172,6 +179,42 @@ class RegionManager(
         }
 
         return region
+    }
+    
+    fun getAvailableRegionsAndMissingIds(rect: RectF): Pair<List<RegionData>, List<RegionId>> {
+        val foundProxies = ArrayList<CanvasItem>()
+        val ids = ArrayList<RegionId>()
+
+        lock.read {
+            skeletonQuadtree.retrieve(foundProxies, rect)
+        }
+        ids.addAll(foundProxies.map { (it as RegionProxy).id }.distinct())
+
+        val available = ArrayList<RegionData>()
+        val missing = ArrayList<RegionId>()
+
+        ids.forEach { id ->
+            val region = regionCache.get(id)
+            if (region != null) {
+                available.add(region)
+            } else {
+                missing.add(id)
+            }
+        }
+        return Pair(available, missing)
+    }
+
+    fun loadRegionsAsync(ids: List<RegionId>) {
+        if (ids.isEmpty()) return
+        scope.launch {
+            ids.forEach { id ->
+                // Check if already loaded by another thread or cache hit
+                if (regionCache.get(id) == null) {
+                    val region = getRegion(id) // This handles load + cache put
+                    onRegionLoaded?.invoke(region)
+                }
+            }
+        }
     }
 
     fun getRegionReadOnly(id: RegionId): RegionData? {

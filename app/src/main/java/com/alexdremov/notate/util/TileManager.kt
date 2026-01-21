@@ -136,6 +136,10 @@ class TileManager(
                             notifyTileReady()
                         }
 
+                        is InfiniteCanvasModel.ModelEvent.RegionLoaded -> {
+                            refreshTiles(event.bounds)
+                        }
+
                         else -> {}
                     }
                 }
@@ -224,7 +228,15 @@ class TileManager(
             if (CanvasConfig.DEBUG_SHOW_TILES) drawDebugOverlay(canvas, dstRect, key, bitmap, scale)
         } else {
             queueTileGeneration(col, row, level, worldSize, isVisible, version)
-            if (isVisible) drawFallbackParent(canvas, col, row, level, worldSize)
+            if (isVisible) {
+                // Bidirectional Fallback: Prefer Parent (Blurry) -> Children (Sharp fragments)
+                // When zooming IN, we want Parent.
+                // When zooming OUT, we want Children.
+                // Since we don't track direction, we try Parent first (cheaper, one draw).
+                if (!drawFallbackParent(canvas, col, row, level, worldSize)) {
+                    drawFallbackChildren(canvas, col, row, level, worldSize)
+                }
+            }
         }
     }
 
@@ -234,7 +246,7 @@ class TileManager(
         row: Int,
         level: Int,
         worldSize: Float,
-    ) {
+    ): Boolean {
         // Search up the LOD pyramid for a lower-res cached parent
         for (offset in 1..5) {
             val pLevel = level + offset
@@ -248,10 +260,66 @@ class TileManager(
             if (pBitmap != null && pBitmap != tileCache.errorBitmap) {
                 val pWorldSize = worldSize * (1 shl offset).toFloat()
                 val pDstRect = getTileWorldRect(pCol, pRow, pWorldSize)
+                
+                // We must clip the parent to strictly the target tile area
+                // otherwise we draw over neighbors
+                canvas.save()
+                val targetRect = getTileWorldRect(col, row, worldSize)
+                canvas.clipRect(targetRect)
                 canvas.drawBitmap(pBitmap, null, pDstRect, null)
-                break
+                canvas.restore()
+                return true
             }
         }
+        return false
+    }
+
+    private fun drawFallbackChildren(
+        canvas: Canvas,
+        col: Int,
+        row: Int,
+        level: Int,
+        worldSize: Float
+    ) {
+        // Search down the LOD pyramid (higher resolution children)
+        // We limit depth to avoid excessive iteration
+        val maxDepth = 2
+        
+        // Recursive helper
+        fun drawRecursive(c: Int, r: Int, l: Int, depth: Int) {
+            if (depth > maxDepth || l < CanvasConfig.MIN_ZOOM_LEVEL) return
+
+            val key = TileCache.TileKey(c, r, l)
+            val bitmap = tileCache.get(key)
+            
+            if (bitmap != null && bitmap != tileCache.errorBitmap) {
+                val size = calculateWorldTileSize(l)
+                val rect = getTileWorldRect(c, r, size)
+                canvas.drawBitmap(bitmap, null, rect, null)
+                return
+            }
+
+            // Not found, try children
+            val nextL = l - 1
+            val nextC = c shl 1
+            val nextR = r shl 1
+            
+            // 4 Children
+            drawRecursive(nextC, nextR, nextL, depth + 1)
+            drawRecursive(nextC + 1, nextR, nextL, depth + 1)
+            drawRecursive(nextC, nextR + 1, nextL, depth + 1)
+            drawRecursive(nextC + 1, nextR + 1, nextL, depth + 1)
+        }
+
+        // Start recursion from immediate children
+        val startL = level - 1
+        val startC = col shl 1
+        val startR = row shl 1
+        
+        drawRecursive(startC, startR, startL, 1)
+        drawRecursive(startC + 1, startR, startL, 1)
+        drawRecursive(startC, startR + 1, startL, 1)
+        drawRecursive(startC + 1, startR + 1, startL, 1)
     }
 
     private fun queueTileGeneration(

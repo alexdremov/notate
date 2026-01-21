@@ -58,6 +58,10 @@ class InfiniteCanvasModel {
             val items: List<CanvasItem>,
         ) : ModelEvent()
 
+        data class RegionLoaded(
+            val bounds: RectF,
+        ) : ModelEvent()
+
         object ContentCleared : ModelEvent()
     }
 
@@ -87,6 +91,15 @@ class InfiniteCanvasModel {
             // Recalculate bounds from loaded session
             val bounds = manager.getContentBounds()
             contentBounds.set(bounds)
+
+            manager.onRegionLoaded = { region ->
+                // Calculate bounds for refresh
+                val size = manager.regionSize
+                val rLeft = region.id.x * size
+                val rTop = region.id.y * size
+                val regionBounds = RectF(rLeft, rTop, rLeft + size, rTop + size)
+                _events.tryEmit(ModelEvent.RegionLoaded(regionBounds))
+            }
         }
     }
 

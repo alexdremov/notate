@@ -172,8 +172,11 @@ class CanvasActivity : AppCompatActivity() {
 
         // Intercept Back Press for non-blocking save
         onBackPressedDispatcher.addCallback(this) {
-            saveCanvas()
-            finish()
+            lifecycleScope.launch {
+                saveCanvas()
+                currentSession?.close()
+                finish()
+            }
         }
 
         // Initialize State Holder
@@ -451,13 +454,18 @@ class CanvasActivity : AppCompatActivity() {
     private fun loadCanvas() {
         val path = currentCanvasPath ?: return
         lifecycleScope.launch(Dispatchers.IO) {
-            // Close previous session if any, ensuring we don't leak disk space on reload
-            // Note: If saving is in progress, this might be risky, but loadCanvas implies new state.
-            // Ideally we'd wait for save. But for now, we rely on unique dirs.
-            // currentSession?.close() // Disabled to prevent race with background save of previous session.
+            // Safe close of previous session
+            val oldSession = currentSession
+            if (oldSession != null) {
+                // Ensure we don't delete while saving
+                withContext(NonCancellable) {
+                    saveMutex.withLock {
+                        oldSession.close()
+                    }
+                }
+            }
 
             val session = canvasRepository.openCanvasSession(path)
-// ...
 
             if (session != null) {
                 currentSession = session
@@ -502,6 +510,17 @@ class CanvasActivity : AppCompatActivity() {
                 } catch (e: Exception) {
                     Logger.e("CanvasActivity", "Background sync failed", e)
                 }
+            }
+        }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        val session = currentSession
+        // Final cleanup on Process Scope to ensure it happens after last save
+        ProcessLifecycleOwner.get().lifecycleScope.launch(Dispatchers.IO) {
+            saveMutex.withLock {
+                session?.close()
             }
         }
     }

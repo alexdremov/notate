@@ -52,8 +52,15 @@ class NotateApplication : Application() {
         try {
             val sessionsDir = java.io.File(cacheDir, "sessions")
             if (sessionsDir.exists()) {
-                sessionsDir.deleteRecursively()
-                Logger.i(TAG, "Cleaned up old sessions directory.")
+                val currentTime = System.currentTimeMillis()
+                val oneHourAgo = currentTime - (1000 * 60 * 60)
+                
+                sessionsDir.listFiles()?.forEach { file ->
+                    if (file.isDirectory && file.lastModified() < oneHourAgo) {
+                        file.deleteRecursively()
+                        Logger.i(TAG, "Cleaned up old session: ${file.name}")
+                    }
+                }
             }
         } catch (e: Exception) {
             Logger.e(TAG, "Failed to cleanup sessions", e)

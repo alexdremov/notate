@@ -11,6 +11,8 @@ import android.os.Looper
 import com.alexdremov.notate.config.CanvasConfig
 import com.alexdremov.notate.data.CanvasType
 import com.alexdremov.notate.model.InfiniteCanvasModel
+import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.launch
 import kotlin.math.min
 
 class MinimapDrawer(
@@ -60,6 +62,8 @@ class MinimapDrawer(
         minimapHandler.removeCallbacks(hideMinimapRunnable)
         minimapHandler.postDelayed(hideMinimapRunnable, CanvasConfig.MINIMAP_HIDE_DELAY_MS)
     }
+
+    private var isRegenerating = false
 
     fun draw(
         canvas: Canvas,
@@ -137,29 +141,10 @@ class MinimapDrawer(
 
         // 4. Update Content Thumbnail if Dirty or Context Changed
         val contextChanged = !contentRect.contains(contextRect) && model.canvasType == CanvasType.FIXED_PAGES
-        val shouldRegenerate = minimapDirty || contentThumbnail == null || contextChanged
+        val shouldRegenerate = (minimapDirty || contentThumbnail == null || contextChanged) && !isRegenerating
 
         if (shouldRegenerate) {
-            val maxDim = 512f
-            val thumbScale = min(maxDim / contextW, maxDim / contextH)
-            val thumbW = (contextW * thumbScale).toInt().coerceAtLeast(1)
-            val thumbH = (contextH * thumbScale).toInt().coerceAtLeast(1)
-
-            if (contentThumbnail?.width != thumbW || contentThumbnail?.height != thumbH) {
-                contentThumbnail?.recycle()
-                contentThumbnail = Bitmap.createBitmap(thumbW, thumbH, Bitmap.Config.ARGB_8888)
-            }
-
-            contentThumbnail?.eraseColor(Color.TRANSPARENT)
-            val thumbCanvas = Canvas(contentThumbnail!!)
-            val thumbMatrix = Matrix()
-            thumbMatrix.postTranslate(-contextRect.left, -contextRect.top)
-            thumbMatrix.postScale(thumbScale, thumbScale)
-
-            renderer.renderDirectVectors(thumbCanvas, thumbMatrix, contextRect, RenderQuality.SIMPLE)
-
-            minimapDirty = false
-            contentRect.set(contextRect)
+            regenerateThumbnail(contextRect)
         }
 
         // 5. Draw Content Thumbnail
@@ -185,5 +170,44 @@ class MinimapDrawer(
         // Draw Scale Text
         val scaleText = "${(currentScale * 100).toInt()}%"
         canvas.drawText(scaleText, width - padding, mapTop + targetH + 40f, textPaint)
+    }
+
+    private fun regenerateThumbnail(contextRect: RectF) {
+        isRegenerating = true
+        val contextW = contextRect.width().coerceAtLeast(1f)
+        val contextH = contextRect.height().coerceAtLeast(1f)
+
+        // Capture context for background task
+        val capturedContextRect = RectF(contextRect)
+
+        @OptIn(kotlinx.coroutines.DelicateCoroutinesApi::class)
+        kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            try {
+                val maxDim = 512f
+                val thumbScale = min(maxDim / contextW, maxDim / contextH)
+                val thumbW = (contextW * thumbScale).toInt().coerceAtLeast(1)
+                val thumbH = (contextH * thumbScale).toInt().coerceAtLeast(1)
+
+                val bitmap = Bitmap.createBitmap(thumbW, thumbH, Bitmap.Config.ARGB_8888)
+                val thumbCanvas = Canvas(bitmap)
+                val thumbMatrix = Matrix()
+                thumbMatrix.postTranslate(-capturedContextRect.left, -capturedContextRect.top)
+                thumbMatrix.postScale(thumbScale, thumbScale)
+
+                renderer.renderDirectVectors(thumbCanvas, thumbMatrix, capturedContextRect, RenderQuality.SIMPLE)
+
+                minimapHandler.post {
+                    contentThumbnail?.recycle()
+                    contentThumbnail = bitmap
+                    contentRect.set(capturedContextRect)
+                    minimapDirty = false
+                    isRegenerating = false
+                    onRefresh()
+                }
+            } catch (e: Exception) {
+                com.alexdremov.notate.util.Logger.e("MinimapDrawer", "Failed to regenerate thumbnail", e)
+                isRegenerating = false
+            }
+        }
     }
 }
