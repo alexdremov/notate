@@ -178,10 +178,11 @@ class CanvasRenderer(
         quality: RenderQuality,
         viewScale: Float = 1.0f,
     ) {
-        // We need thread-safe access to items from Model
-        model.performRead { allItems ->
-            renderItems(canvas, allItems, visibleRect, quality, viewScale, context)
-        }
+        // Query visible items or all items if unbound
+        val queryRect = visibleRect ?: model.getContentBounds()
+        val items = model.queryItems(queryRect)
+
+        renderItems(canvas, items, visibleRect, quality, viewScale, context)
     }
 
     companion object {

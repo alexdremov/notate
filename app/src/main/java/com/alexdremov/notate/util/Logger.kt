@@ -7,7 +7,7 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 
 object Logger {
-    private const val TAG_PREFIX = "BooxVibes"
+    private const val TAG_PREFIX = "Notate"
     private const val DEFAULT_TAG = "App"
 
     private val _userEvents =

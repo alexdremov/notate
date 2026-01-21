@@ -1,6 +1,8 @@
 package com.alexdremov.notate.data
 
 import android.content.Context
+import com.alexdremov.notate.data.region.RegionManager
+import com.alexdremov.notate.data.region.RegionStorage
 import com.alexdremov.notate.model.BackgroundStyle
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.*
@@ -30,10 +32,10 @@ class CanvasRepositoryTest {
     }
 
     @Test
-    fun `test atomic write success`() =
+    fun `test session save and load success`() =
         runBlocking {
             val path = File(testDir, "test.notate").absolutePath
-            val data =
+            val metadata =
                 CanvasData(
                     canvasType = CanvasType.INFINITE,
                     pageWidth = 1000f,
@@ -41,40 +43,31 @@ class CanvasRepositoryTest {
                     backgroundStyle = BackgroundStyle.Blank(),
                 )
 
-            repository.saveCanvas(path, data)
+            val sessionDir = File(context.cacheDir, "temp_session_save")
+            sessionDir.mkdirs()
+            val storage = RegionStorage(sessionDir)
+            storage.init()
+            val regionManager = RegionManager(storage, metadata.regionSize)
+
+            val session = CanvasSession(sessionDir, metadata, regionManager)
+
+            val saveResult = repository.saveCanvasSession(path, session)
+            assertEquals(path, saveResult.savedPath)
 
             val targetFile = File(path)
             assertTrue("Target file should exist", targetFile.exists())
-            assertFalse("Temp file should not exist", File(testDir, "test.notate.tmp").exists())
 
-            val loaded = repository.loadCanvas(path)
-            assertNotNull(loaded)
-            assertEquals(CanvasType.INFINITE, loaded!!.canvasState.canvasType)
+            val result = repository.loadCanvas(path)
+            assertNotNull(result)
+            assertEquals(CanvasType.INFINITE, result!!.canvasState.canvasType)
+            assertNotNull(result.session)
         }
 
     @Test
-    fun `test cleanup on write failure`() =
-        runBlocking {
-            val path = File(testDir, "test.notate").absolutePath
-            val tmpFile = File(testDir, "test.notate.tmp")
-
-            val data =
-                CanvasData(
-                    canvasType = CanvasType.INFINITE,
-                    pageWidth = 1000f,
-                    pageHeight = 1000f,
-                    backgroundStyle = BackgroundStyle.Blank(),
-                )
-
-            repository.saveCanvas(path, data)
-            assertFalse("Temp file should be gone", tmpFile.exists())
-        }
-
-    @Test
-    fun `test load fails with combined exception`() =
+    fun `test load fails with corrupted zip`() =
         runBlocking {
             val path = File(testDir, "corrupted.notate").absolutePath
-            File(path).writeBytes(byteArrayOf(0x01, 0x02, 0x03)) // Random garbage
+            File(path).writeBytes(byteArrayOf(0x01, 0x02, 0x03)) // Random garbage (not a zip)
 
             val result = repository.loadCanvas(path)
             assertNull("Should return null for corrupted file", result)

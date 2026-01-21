@@ -11,6 +11,8 @@ import android.view.ViewGroup
 import android.widget.ImageButton
 import android.widget.LinearLayout
 import android.widget.Space
+import android.widget.Toast
+import androidx.activity.addCallback
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.appcompat.app.AppCompatActivity
@@ -74,6 +76,7 @@ class CanvasActivity : AppCompatActivity() {
     private val saveMutex = Mutex()
 
     private var currentCanvasPath: String? = null
+    private var currentSession: com.alexdremov.notate.data.CanvasSession? = null
 
     private val exportLauncher =
         registerForActivityResult(ActivityResultContracts.CreateDocument("application/pdf")) { uri ->
@@ -167,6 +170,12 @@ class CanvasActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        // Intercept Back Press for non-blocking save
+        onBackPressedDispatcher.addCallback(this) {
+            saveCanvas()
+            finish()
+        }
+
         // Initialize State Holder
         isFixedPageState = mutableStateOf(false)
         canvasRepository =
@@ -253,12 +262,13 @@ class CanvasActivity : AppCompatActivity() {
         // Wire up Auto-Collapse
         toolbarCoordinator.onRequestCollapse = {
             // Take a consistent snapshot of relevant state before deciding to collapse
-            val shouldCollapse = with(viewModel) {
-                !isToolbarCollapsed.value &&
-                    !isToolbarDragging.value &&
-                    !isEditMode.value &&
-                    !isPenPopupOpen.value
-            }
+            val shouldCollapse =
+                with(viewModel) {
+                    !isToolbarCollapsed.value &&
+                        !isToolbarDragging.value &&
+                        !isEditMode.value &&
+                        !isPenPopupOpen.value
+                }
             if (shouldCollapse && !sidebarCoordinator.isOpen) {
                 viewModel.setToolbarCollapsed(true)
             }
@@ -407,7 +417,7 @@ class CanvasActivity : AppCompatActivity() {
                 }
                 launch {
                     viewModel.isEditMode.collect { isEdit ->
-                        Logger.d("BooxVibesDebug", "CanvasActivity: isEditMode=$isEdit, setting isDragEnabled=${!isEdit}")
+                        Logger.d("NotateDebug", "CanvasActivity: isEditMode=$isEdit, setting isDragEnabled=${!isEdit}")
                         binding.toolbarContainer.isDragEnabled = !isEdit
                     }
                 }
@@ -438,44 +448,42 @@ class CanvasActivity : AppCompatActivity() {
             }
     }
 
-    @androidx.annotation.OptIn(kotlinx.serialization.ExperimentalSerializationApi::class)
     private fun loadCanvas() {
         val path = currentCanvasPath ?: return
         lifecycleScope.launch(Dispatchers.IO) {
-            val result = canvasRepository.loadCanvas(path)
+            val session = canvasRepository.openCanvasSession(path)
 
-            if (result != null) {
+            if (session != null) {
+                currentSession = session
                 withContext(Dispatchers.Main) {
                     val tUiStart = System.currentTimeMillis()
-                    binding.canvasView.loadCanvasState(result.canvasState)
-                    val isFixed = result.canvasState.canvasType == com.alexdremov.notate.data.CanvasType.FIXED_PAGES
+
+                    binding.canvasView.getModel().initializeSession(session.regionManager)
+                    binding.canvasView.loadMetadata(session.metadata)
+
+                    val isFixed = session.metadata.canvasType == com.alexdremov.notate.data.CanvasType.FIXED_PAGES
                     isFixedPageState?.value = isFixed
                     viewModel.setFixedPageMode(isFixed)
 
-                    // Restore Toolbar Configuration
-                    if (result.canvasState.toolbarItems.isNotEmpty()) {
-                        viewModel.setToolbarItems(result.canvasState.toolbarItems)
+                    if (session.metadata.toolbarItems.isNotEmpty()) {
+                        viewModel.setToolbarItems(session.metadata.toolbarItems)
                     }
 
                     val tUiEnd = System.currentTimeMillis()
                     Logger.d("CanvasActivity", "  UI Load: ${tUiEnd - tUiStart}ms")
-
-                    if (result.migrationPerformed && result.newPath != null) {
-                        currentCanvasPath = result.newPath
-                        Logger.d("CanvasActivity", "Migration completed, new path: $currentCanvasPath")
-                    }
                 }
+            } else {
+                Logger.e("CanvasActivity", "Failed to load session for $path", showToUser = true)
             }
         }
     }
 
     override fun onPause() {
         super.onPause()
+        // We still save on pause to handle Home/Recents, but mutex ensures serialization
         saveCanvas()
-        // Trigger background sync if project is configured
         currentCanvasPath?.let { path ->
             Logger.d("CanvasActivity", "onPause: Attempting to sync for file $path")
-            // Use ProcessLifecycleOwner to ensure sync continues after Activity pause/destroy
             androidx.lifecycle.ProcessLifecycleOwner.get().lifecycleScope.launch(Dispatchers.IO) {
                 try {
                     val projectId = syncManager.findProjectForFile(path)
@@ -492,25 +500,55 @@ class CanvasActivity : AppCompatActivity() {
         }
     }
 
-    @androidx.annotation.OptIn(kotlinx.serialization.ExperimentalSerializationApi::class)
     private fun saveCanvas() {
-        val path = currentCanvasPath ?: return
-        Logger.d("CanvasActivity", "Saving canvas to $path")
-        val rawData =
-            binding.canvasView.getCanvasData().copy(
-                toolbarItems = viewModel.toolbarItems.value,
-            )
+        // Use Process scope so save survives activity finish
+        ProcessLifecycleOwner.get().lifecycleScope.launch(Dispatchers.Default) {
+            saveCanvasSuspend()
+        }
+    }
 
-        lifecycleScope.launch(Dispatchers.Default) {
+    private suspend fun saveCanvasSuspend() {
+        val path = currentCanvasPath ?: return
+        val session = currentSession ?: return
+
+        com.alexdremov.notate.data.SaveStatusManager
+            .startSaving(path)
+
+        try {
+            // Update session metadata from UI
+            val updatedMetadata =
+                withContext(Dispatchers.Main) {
+                    binding.canvasView.getCanvasData().copy(
+                        toolbarItems = viewModel.toolbarItems.value,
+                    )
+                }
+
+            val updatedSession = session.copy(metadata = updatedMetadata)
+            currentSession = updatedSession
+
+            Logger.d("CanvasActivity", "Saving canvas session to $path")
+
             withContext(NonCancellable) {
                 saveMutex.withLock {
                     try {
-                        canvasRepository.saveCanvas(path, rawData)
+                        val result = canvasRepository.saveCanvasSession(path, updatedSession)
+
+                        // Update session origin to prevent false conflicts on subsequent saves
+                        if (currentSession == updatedSession) {
+                            currentSession =
+                                updatedSession.copy(
+                                    originLastModified = result.newLastModified,
+                                    originSize = result.newSize,
+                                )
+                        }
                     } catch (e: Exception) {
                         Logger.e("CanvasActivity", "Failed to save canvas", e, showToUser = true)
                     }
                 }
             }
+        } finally {
+            com.alexdremov.notate.data.SaveStatusManager
+                .finishSaving(path)
         }
     }
 
@@ -545,7 +583,7 @@ class CanvasActivity : AppCompatActivity() {
         targetRect: android.graphics.Rect,
     ) {
         Logger.d(
-            "BooxVibesDebug",
+            "NotateDebug",
             "CanvasActivity: handleToolClick ID=$toolId, Rect=$targetRect, ActiveID=${viewModel.activeToolId.value}",
         )
         binding.canvasView.getController().clearSelection()
@@ -598,7 +636,7 @@ class CanvasActivity : AppCompatActivity() {
             com.alexdremov.notate.util.EpdFastModeController
                 .enterFastMode()
 
-            Logger.d("BooxVibesDebug", "CanvasActivity: Showing Popup!")
+            Logger.d("NotateDebug", "CanvasActivity: Showing Popup!")
             activePenPopup?.show(binding.root, targetRect)
         } else {
             viewModel.selectTool(toolId)

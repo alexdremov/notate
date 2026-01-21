@@ -67,11 +67,32 @@ class HomeViewModel(
     private val _sortOption = MutableStateFlow(SortOption.DATE_NEWEST)
     val sortOption: StateFlow<SortOption> = _sortOption.asStateFlow()
 
+    // --- State: Saving Background Processes ---
+    private val _savingPaths = MutableStateFlow<Set<String>>(emptySet())
+    val savingPaths: StateFlow<Set<String>> = _savingPaths.asStateFlow()
+
     init {
         loadProjects()
         loadTags()
         loadSortOption()
         startIndexing()
+        observeSaveStatus()
+    }
+
+    private fun observeSaveStatus() {
+        viewModelScope.launch {
+            SaveStatusManager.savingFiles.collect { files ->
+                val previous = _savingPaths.value
+                _savingPaths.value = files
+
+                // If a file was in 'previous' but not in 'files', it finished saving
+                val finished = previous - files
+                if (finished.isNotEmpty()) {
+                    Logger.d("HomeViewModel", "Detected background save completion for $finished. Refreshing UI.")
+                    refresh()
+                }
+            }
+        }
     }
 
     private fun getRepository(project: ProjectConfig): ProjectRepository =

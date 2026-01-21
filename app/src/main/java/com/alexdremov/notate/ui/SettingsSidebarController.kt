@@ -239,6 +239,8 @@ class SettingsSidebarController(
             isChecked = CanvasConfig.DEBUG_USE_SIMPLE_RENDERER
             setOnCheckedChangeListener { _, isChecked ->
                 CanvasConfig.DEBUG_USE_SIMPLE_RENDERER = isChecked
+                com.alexdremov.notate.data.PreferencesManager
+                    .setDebugSimpleRendererEnabled(context, isChecked)
             }
         }
 
@@ -246,6 +248,8 @@ class SettingsSidebarController(
             isChecked = CanvasConfig.DEBUG_SHOW_RAM_USAGE
             setOnCheckedChangeListener { _, isChecked ->
                 CanvasConfig.DEBUG_SHOW_RAM_USAGE = isChecked
+                com.alexdremov.notate.data.PreferencesManager
+                    .setDebugRamUsageEnabled(context, isChecked)
             }
         }
 
@@ -253,6 +257,17 @@ class SettingsSidebarController(
             isChecked = CanvasConfig.DEBUG_SHOW_TILES
             setOnCheckedChangeListener { _, isChecked ->
                 CanvasConfig.DEBUG_SHOW_TILES = isChecked
+                com.alexdremov.notate.data.PreferencesManager
+                    .setDebugShowTilesEnabled(context, isChecked)
+            }
+        }
+
+        debugView.findViewById<Switch>(R.id.switch_debug_show_regions).apply {
+            isChecked = CanvasConfig.DEBUG_SHOW_REGIONS
+            setOnCheckedChangeListener { _, isChecked ->
+                CanvasConfig.DEBUG_SHOW_REGIONS = isChecked
+                com.alexdremov.notate.data.PreferencesManager
+                    .setDebugShowRegionsEnabled(context, isChecked)
             }
         }
 
@@ -260,6 +275,8 @@ class SettingsSidebarController(
             isChecked = CanvasConfig.DEBUG_SHOW_BOUNDING_BOX
             setOnCheckedChangeListener { _, isChecked ->
                 CanvasConfig.DEBUG_SHOW_BOUNDING_BOX = isChecked
+                com.alexdremov.notate.data.PreferencesManager
+                    .setDebugBoundingBoxEnabled(context, isChecked)
             }
         }
 
@@ -267,6 +284,8 @@ class SettingsSidebarController(
             isChecked = CanvasConfig.DEBUG_ENABLE_PROFILING
             setOnCheckedChangeListener { _, isChecked ->
                 CanvasConfig.DEBUG_ENABLE_PROFILING = isChecked
+                com.alexdremov.notate.data.PreferencesManager
+                    .setDebugProfilingEnabled(context, isChecked)
             }
         }
 

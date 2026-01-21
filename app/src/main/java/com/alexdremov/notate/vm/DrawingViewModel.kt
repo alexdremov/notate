@@ -241,7 +241,7 @@ class DrawingViewModel(
     }
 
     fun removeToolbarItem(item: ToolbarItem) {
-        Logger.d("BooxVibesDebug", "ViewModel: removeToolbarItem ID=${item.id}")
+        Logger.d("NotateDebug", "ViewModel: removeToolbarItem ID=${item.id}")
         val currentList = _toolbarItems.value.toMutableList()
         currentList.remove(item)
         _toolbarItems.value = currentList

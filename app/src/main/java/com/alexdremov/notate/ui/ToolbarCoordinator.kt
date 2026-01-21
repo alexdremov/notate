@@ -121,6 +121,7 @@ class ToolbarCoordinator(
     fun destroy() {
         cancelCollapseTimer()
     }
+
     fun savePosition() {
         val lp = toolbarContainer.layoutParams as? ViewGroup.MarginLayoutParams ?: return
         savedPosition = Pair(lp.leftMargin, lp.topMargin)

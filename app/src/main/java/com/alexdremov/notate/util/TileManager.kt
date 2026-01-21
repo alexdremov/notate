@@ -10,6 +10,7 @@ import android.graphics.RectF
 import android.util.Log
 import android.util.LruCache
 import com.alexdremov.notate.config.CanvasConfig
+import com.alexdremov.notate.data.region.RegionId
 import com.alexdremov.notate.model.InfiniteCanvasModel
 import com.alexdremov.notate.model.Stroke
 import com.alexdremov.notate.ui.render.CanvasRenderer
@@ -195,6 +196,10 @@ class TileManager(
             if (!isInteracting) {
                 queueNeighbors(startCol, endCol, startRow, endRow, level, worldTileSize, currentVersion)
             }
+
+            if (CanvasConfig.DEBUG_SHOW_REGIONS) {
+                drawRegionDebugOverlay(canvas, scale)
+            }
         }
     }
 
@@ -283,7 +288,7 @@ class TileManager(
                     return@launch
                 }
 
-                val bitmap = generateTileBitmap(col, row, worldSize)
+                val bitmap = generateTileBitmap(col, row, worldSize, level)
 
                 // Final check before committing to cache - ensure we are still on the same version
                 if (version == renderVersion.get()) {
@@ -308,6 +313,7 @@ class TileManager(
         col: Int,
         row: Int,
         worldSize: Float,
+        level: Int, // Added level for logging
     ): Bitmap =
         com.alexdremov.notate.util.PerformanceProfiler.trace("TileManager.generateTileBitmap") {
             val bitmap = tileCache.obtainBitmap()
@@ -317,11 +323,15 @@ class TileManager(
             val worldRect = getTileWorldRect(col, row, worldSize)
             val scale = tileSize.toFloat() / worldSize
 
+            Logger.d("TileManager", "Generating tile [$col,$row] L$level. Rect: $worldRect")
+
             tileCanvas.save()
             tileCanvas.scale(scale, scale)
             tileCanvas.translate(-worldRect.left, -worldRect.top)
 
             val items = canvasModel.queryItems(worldRect)
+            Logger.d("TileManager", "  Found ${items.size} items")
+
             items.sortWith(compareBy<com.alexdremov.notate.model.CanvasItem> { it.zIndex }.thenBy { it.order })
 
             for (item in items) {
@@ -610,5 +620,27 @@ class TileManager(
         debugTextPaint.textSize = 20f / scale
         val label = "L${key.level} [${key.col},${key.row}]"
         canvas.drawText(label, rect.left + 5 / scale, rect.top + 25 / scale, debugTextPaint)
+    }
+
+    private fun drawRegionDebugOverlay(
+        canvas: Canvas,
+        scale: Float,
+    ) {
+        val rm = canvasModel.getRegionManager() ?: return
+        val activeIds = rm.getActiveRegionIds()
+
+        debugPaint.color = Color.BLUE
+        debugPaint.style = Paint.Style.STROKE
+        debugPaint.strokeWidth = 4f / scale
+        debugPaint.alpha = 255
+
+        debugTextPaint.color = Color.BLUE
+        debugTextPaint.textSize = 30f / scale
+
+        activeIds.forEach { id ->
+            val bounds = id.getBounds(rm.regionSize)
+            canvas.drawRect(bounds, debugPaint)
+            canvas.drawText("R(${id.x},${id.y})", bounds.left + 10 / scale, bounds.top + 40 / scale, debugTextPaint)
+        }
     }
 }

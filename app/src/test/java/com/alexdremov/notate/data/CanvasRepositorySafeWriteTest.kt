@@ -1,6 +1,8 @@
 package com.alexdremov.notate.data
 
 import android.content.Context
+import com.alexdremov.notate.data.region.RegionManager
+import com.alexdremov.notate.data.region.RegionStorage
 import com.alexdremov.notate.model.BackgroundStyle
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.*
@@ -33,7 +35,7 @@ class CanvasRepositorySafeWriteTest {
     fun `test safe atomic write success`() =
         runBlocking {
             val path = File(testDir, "test.notate").absolutePath
-            val data =
+            val metadata =
                 CanvasData(
                     canvasType = CanvasType.INFINITE,
                     pageWidth = 1000f,
@@ -41,21 +43,32 @@ class CanvasRepositorySafeWriteTest {
                     backgroundStyle = BackgroundStyle.Blank(),
                 )
 
+            val sessionDir = File(context.cacheDir, "temp_session_safe")
+            sessionDir.mkdirs()
+            val storage = RegionStorage(sessionDir)
+            storage.init()
+            val regionManager = RegionManager(storage, metadata.regionSize)
+
+            val session = CanvasSession(sessionDir, metadata, regionManager)
+
             // Initial write
-            repository.saveCanvas(path, data)
+            val result1 = repository.saveCanvasSession(path, session)
+            assertEquals(path, result1.savedPath)
             val targetFile = File(path)
             assertTrue("Target file should exist", targetFile.exists())
 
             // Modify data
-            val newData = data.copy(pageWidth = 2000f)
-            repository.saveCanvas(path, newData)
+            val newMetadata = metadata.copy(pageWidth = 2000f)
+            val newSession = session.copy(metadata = newMetadata)
+            val result2 = repository.saveCanvasSession(path, newSession)
+            assertEquals(path, result2.savedPath)
 
             assertTrue("Target file should still exist", targetFile.exists())
-            assertFalse("Backup file should be deleted on success", File(path.replace(".notate", ".notate.bak")).exists())
-            assertFalse("Temp file should be deleted", File(path.replace(".notate", ".notate.tmp")).exists())
+            assertFalse("Backup file should be deleted on success", File(path + ".bak").exists())
+            assertFalse("Temp file should be deleted", File(path + ".tmp").exists())
 
-            val loaded = repository.loadCanvas(path)
-            assertNotNull(loaded)
-            assertEquals(2000f, loaded!!.canvasState.pageWidth, 0.1f)
+            val result = repository.loadCanvas(path)
+            assertNotNull(result)
+            assertEquals(2000f, result!!.canvasState.pageWidth, 0.1f)
         }
 }

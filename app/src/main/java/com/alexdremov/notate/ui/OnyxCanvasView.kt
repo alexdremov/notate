@@ -16,6 +16,7 @@ import com.alexdremov.notate.data.CanvasData
 import com.alexdremov.notate.data.CanvasType
 import com.alexdremov.notate.model.InfiniteCanvasModel
 import com.alexdremov.notate.model.PenTool
+import com.alexdremov.notate.model.Stroke
 import com.alexdremov.notate.ui.input.PenInputHandler
 import com.alexdremov.notate.ui.interaction.ViewportInteractor
 import com.alexdremov.notate.ui.render.CanvasRenderer
@@ -44,7 +45,7 @@ class OnyxCanvasView
         private var touchHelper: TouchHelper? = null
         private val canvasModel = InfiniteCanvasModel()
         private val canvasRenderer = CanvasRenderer(canvasModel, context.applicationContext, viewScope) { invalidateCanvas() }
-        private val canvasController = CanvasControllerImpl(canvasModel, canvasRenderer)
+        private val canvasController = CanvasControllerImpl(context.applicationContext, canvasModel, canvasRenderer)
 
         // --- Drawers ---
         private val selectionOverlayDrawer = SelectionOverlayDrawer(canvasController.getSelectionManager(), canvasRenderer)
@@ -435,20 +436,7 @@ class OnyxCanvasView
             return canvasModel.toCanvasData()
         }
 
-        fun loadCanvasState(state: com.alexdremov.notate.data.CanvasSerializer.LoadedCanvasState) {
-            canvasModel.setLoadedState(state)
-            matrix.reset()
-            matrix.postScale(state.viewportScale, state.viewportScale)
-            matrix.postTranslate(state.viewportOffsetX, state.viewportOffsetY)
-            viewportInteractor.setScale(state.viewportScale)
-
-            canvasRenderer.updateLayoutStrategy()
-            canvasRenderer.clearTiles()
-
-            drawContent()
-        }
-
-        fun loadCanvasData(data: CanvasData) {
+        fun loadMetadata(data: CanvasData) {
             canvasModel.loadFromCanvasData(data)
             matrix.reset()
             matrix.postScale(data.zoomLevel, data.zoomLevel)

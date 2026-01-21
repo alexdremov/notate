@@ -6,7 +6,7 @@ import android.graphics.RectF
  * Common interface for all entities renderable on the Infinite Canvas.
  * Adheres to SOLID principles by allowing polymorphic handling of Strokes, Images, etc.
  */
-sealed interface CanvasItem {
+interface CanvasItem {
     val bounds: RectF
     val zIndex: Float
     val order: Long

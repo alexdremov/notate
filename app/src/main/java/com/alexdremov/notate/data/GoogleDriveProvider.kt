@@ -27,7 +27,7 @@ class GoogleDriveProvider(
                 NetHttpTransport(),
                 GsonFactory(),
                 credential,
-            ).setApplicationName("BooxVibes")
+            ).setApplicationName("Notate")
             .build()
     }
 

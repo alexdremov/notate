@@ -106,10 +106,7 @@ class PdfExporterTest {
             val model = mockk<InfiniteCanvasModel>()
             val stroke = createTestStroke(100f, 100f)
 
-            every { model.performRead(any()) } answers {
-                val block = arg<(List<com.alexdremov.notate.model.CanvasItem>) -> Unit>(0)
-                block(listOf(stroke))
-            }
+            every { model.queryItems(any()) } returns arrayListOf(stroke)
             every { model.getContentBounds() } returns RectF(100f, 100f, 200f, 200f)
             every { model.canvasType } returns CanvasType.INFINITE
             every { model.pageWidth } returns CanvasConfig.PAGE_A4_WIDTH
@@ -140,10 +137,7 @@ class PdfExporterTest {
             val model = mockk<InfiniteCanvasModel>()
             val stroke = createTestStroke(100f, 100f)
 
-            every { model.performRead(any()) } answers {
-                val block = arg<(List<com.alexdremov.notate.model.CanvasItem>) -> Unit>(0)
-                block(listOf(stroke))
-            }
+            every { model.queryItems(any()) } returns arrayListOf(stroke)
             every { model.getContentBounds() } returns RectF(100f, 100f, 200f, 200f)
             every { model.canvasType } returns CanvasType.INFINITE
             every { model.pageWidth } returns CanvasConfig.PAGE_A4_WIDTH
@@ -177,10 +171,7 @@ class PdfExporterTest {
             // Large bounds to trigger multiple tiles ( > 2048x2048 )
             val largeBounds = RectF(0f, 0f, 5000f, 5000f)
 
-            every { model.performRead(any()) } answers {
-                val block = arg<(List<com.alexdremov.notate.model.CanvasItem>) -> Unit>(0)
-                block(listOf(stroke))
-            }
+            every { model.queryItems(any()) } returns arrayListOf(stroke)
             every { model.getContentBounds() } returns largeBounds
             every { model.canvasType } returns CanvasType.INFINITE
             every { model.pageWidth } returns CanvasConfig.PAGE_A4_WIDTH
@@ -219,10 +210,7 @@ class PdfExporterTest {
 
             val largeBounds = RectF(0f, 0f, 5000f, 5000f)
 
-            every { model.performRead(any()) } answers {
-                val block = arg<(List<com.alexdremov.notate.model.CanvasItem>) -> Unit>(0)
-                block(listOf(stroke1, stroke2))
-            }
+            every { model.queryItems(any()) } returns arrayListOf(stroke1, stroke2)
             every { model.getContentBounds() } returns largeBounds
             every { model.canvasType } returns CanvasType.INFINITE
             every { model.pageWidth } returns CanvasConfig.PAGE_A4_WIDTH
@@ -262,10 +250,7 @@ class PdfExporterTest {
             val stroke = createTestStroke(100f, 100f)
             val callback = mockk<PdfExporter.ProgressCallback>(relaxed = true)
 
-            every { model.performRead(any()) } answers {
-                val block = arg<(List<com.alexdremov.notate.model.CanvasItem>) -> Unit>(0)
-                block(listOf(stroke))
-            }
+            every { model.queryItems(any()) } returns arrayListOf(stroke)
             every { model.getContentBounds() } returns RectF(100f, 100f, 200f, 200f)
             every { model.canvasType } returns CanvasType.INFINITE
             every { model.pageWidth } returns CanvasConfig.PAGE_A4_WIDTH
@@ -294,10 +279,7 @@ class PdfExporterTest {
             val stroke1 = createTestStroke(100f, 100f)
             val stroke2 = createTestStroke(100f, 2000f) // Should be on second page
 
-            every { model.performRead(any()) } answers {
-                val block = arg<(List<com.alexdremov.notate.model.CanvasItem>) -> Unit>(0)
-                block(listOf(stroke1, stroke2))
-            }
+            every { model.queryItems(any()) } returns arrayListOf(stroke1, stroke2)
             every { model.getContentBounds() } returns RectF(100f, 100f, 200f, 2100f)
             every { model.canvasType } returns CanvasType.FIXED_PAGES
             every { model.pageWidth } returns CanvasConfig.PAGE_A4_WIDTH
@@ -329,10 +311,7 @@ class PdfExporterTest {
             val model = mockk<InfiniteCanvasModel>()
             val stroke1 = createTestStroke(100f, 100f)
 
-            every { model.performRead(any()) } answers {
-                val block = arg<(List<com.alexdremov.notate.model.CanvasItem>) -> Unit>(0)
-                block(listOf(stroke1))
-            }
+            every { model.queryItems(any()) } returns arrayListOf(stroke1)
             every { model.getContentBounds() } returns RectF(100f, 100f, 200f, 200f)
             every { model.canvasType } returns CanvasType.FIXED_PAGES
             every { model.pageWidth } returns CanvasConfig.PAGE_A4_WIDTH

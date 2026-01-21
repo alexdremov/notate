@@ -1,5 +1,7 @@
 package com.alexdremov.notate.controller
 
+import android.content.Context
+import android.net.Uri
 import android.os.Handler
 import android.os.Looper
 import com.alexdremov.notate.model.EraserType
@@ -10,6 +12,7 @@ import java.util.ArrayList
 import java.util.stream.Collectors
 
 class CanvasControllerImpl(
+    private val context: Context,
     private val model: InfiniteCanvasModel,
     private val renderer: CanvasRenderer,
 ) : CanvasController {
@@ -226,6 +229,10 @@ class CanvasControllerImpl(
                             matrix.mapRect(newBounds)
                             item.copy(bounds = newBounds, order = 0)
                         }
+
+                        else -> {
+                            throw IllegalArgumentException("Unsupported CanvasItem type: ${item::class.java.name}")
+                        }
                     }
 
                 val added = model.addItem(newItem)
@@ -252,10 +259,13 @@ class CanvasControllerImpl(
         width: Float,
         height: Float,
     ) {
+        // Import image to session storage first
+        val importedPath = model.importImage(Uri.parse(uri), context) ?: uri
+
         val bounds = android.graphics.RectF(x - width / 2, y - height / 2, x + width / 2, y + height / 2)
         val image =
             com.alexdremov.notate.model.CanvasImage(
-                uri = uri,
+                uri = importedPath,
                 bounds = bounds,
                 zIndex = 0f,
                 order = 0,
@@ -345,6 +355,10 @@ class CanvasControllerImpl(
                         // Ideally we should update item.rotation too.
                         // For now, let's just update bounds.
                         item.copy(bounds = newBounds, rotation = item.rotation + Math.toDegrees(rotation.toDouble()).toFloat())
+                    }
+
+                    else -> {
+                        throw IllegalArgumentException("Unsupported CanvasItem type: ${item::class.java.name}")
                     }
                 }
 

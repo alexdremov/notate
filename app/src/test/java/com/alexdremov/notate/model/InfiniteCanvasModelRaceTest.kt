@@ -81,8 +81,7 @@ class InfiniteCanvasModelRaceTest {
             executor.awaitTermination(2, TimeUnit.SECONDS)
 
             // 3. Verify State
-            var remainingItems: List<CanvasItem> = emptyList()
-            model.performRead { remainingItems = ArrayList(it) }
+            val remainingItems = model.queryItems(model.getContentBounds())
 
             // Expected: Target is gone.
             // If race happened: Target is gone, BUT split parts (new strokes) are present.

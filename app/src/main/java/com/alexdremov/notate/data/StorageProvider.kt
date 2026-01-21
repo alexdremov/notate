@@ -80,107 +80,132 @@ internal object StorageUtils {
         fileSize: Long = 0,
     ): CanvasDataPreview? {
         if (fileSize > LARGE_FILE_THRESHOLD) {
-            Logger.w("Storage", "Reading metadata from large file: $fileName (${fileSize / 1024 / 1024}MB)")
+            Logger.d("Storage", "Reading metadata from large file: $fileName (${fileSize / 1024 / 1024}MB)")
         }
 
-        var isJson = false
-        try {
-            streamProvider()?.use { stream ->
-                val firstByte = stream.read()
-                if (firstByte == 0x7B) {
-                    isJson = true
+        return try {
+            streamProvider()?.use { rawStream ->
+                val stream = if (rawStream.markSupported()) rawStream else java.io.BufferedInputStream(rawStream)
+                stream.mark(4)
+                val signature = ByteArray(4)
+                val read = stream.read(signature)
+                stream.reset()
+
+                if (read >= 4 && signature[0] == 0x50.toByte() && signature[1] == 0x4B.toByte()) {
+                    // ZIP format
+                    extractMetadataZip(stream)
+                } else if (read > 0 && signature[0] == 0x7B.toByte()) {
+                    // JSON format
+                    extractMetadataJson(stream)
+                } else {
+                    // Legacy Protobuf
+                    parseProtobufMetadata(stream)
                 }
             }
         } catch (e: Exception) {
-            isJson = fileName?.endsWith(".json") == true
+            Logger.e("Metadata", "Failed to identify/read file format: $fileName", e)
+            null
         }
-
-        return if (isJson) extractMetadataJson(streamProvider) else extractMetadataProtobuf(streamProvider)
     }
 
-    private fun extractMetadataJson(streamProvider: () -> InputStream?): CanvasDataPreview? {
+    private fun extractMetadataZip(stream: InputStream): CanvasDataPreview? {
         return try {
-            streamProvider()?.use { stream ->
-                val buffer = ByteArray(500 * 1024) // 500KB
-                val read = stream.read(buffer)
-                if (read <= 0) return null
-                val header = String(buffer, 0, read, Charsets.UTF_8)
-                val match = Regex("""thumbnail"\s*:\s*"([^"]+)""").find(header)
-                val thumbnail = match?.groupValues?.get(1)
-                CanvasDataPreview(thumbnail = thumbnail)
+            val zipStream = java.util.zip.ZipInputStream(stream)
+            var entry = zipStream.nextEntry
+            while (entry != null) {
+                if (entry.name == "manifest.bin") {
+                    // Found manifest, parse it as protobuf
+                    // ZipInputStream reads until end of entry, which is what we want
+                    return parseProtobufMetadata(zipStream)
+                }
+                entry = zipStream.nextEntry
             }
+            null
+        } catch (e: Exception) {
+            Logger.e("Metadata", "Failed to extract metadata from ZIP", e)
+            null
+        }
+    }
+
+    private fun extractMetadataJson(stream: InputStream): CanvasDataPreview? {
+        return try {
+            val buffer = ByteArray(500 * 1024) // 500KB limit for header
+            val read = stream.read(buffer)
+            if (read <= 0) return null
+            val header = String(buffer, 0, read, Charsets.UTF_8)
+            val match = Regex("""thumbnail"\s*:\s*"([^"]+)""").find(header)
+            val thumbnail = match?.groupValues?.get(1)
+            CanvasDataPreview(thumbnail = thumbnail)
         } catch (e: Exception) {
             Logger.e("Metadata", "Failed to extract metadata from JSON", e)
             null
         }
     }
 
-    private fun extractMetadataProtobuf(streamProvider: () -> InputStream?): CanvasDataPreview? =
+    private fun parseProtobufMetadata(stream: InputStream): CanvasDataPreview? =
         try {
-            streamProvider()?.use { stream ->
-                var thumbnail: String? = null
-                val tagIds = mutableListOf<String>()
-                val tagDefinitions = mutableListOf<Tag>()
+            var thumbnail: String? = null
+            val tagIds = mutableListOf<String>()
+            val tagDefinitions = mutableListOf<Tag>()
 
-                while (true) {
-                    val tag = readVarint(stream)
-                    if (tag == -1L) break
+            while (true) {
+                val tag = readVarint(stream)
+                if (tag == -1L) break
 
-                    val fieldNumber = (tag ushr 3).toInt()
-                    val wireType = (tag and 0x07).toInt()
+                val fieldNumber = (tag ushr 3).toInt()
+                val wireType = (tag and 0x07).toInt()
 
-                    when (fieldNumber) {
-                        1 -> { // thumbnail
-                            if (wireType != 2) {
-                                skipField(stream, wireType)
-                            } else {
-                                val length = readVarint(stream)
-                                if (length > 0) {
-                                    val bytes = ByteArray(length.toInt())
-                                    readFully(stream, bytes)
-                                    thumbnail = String(bytes, Charsets.UTF_8)
-                                }
-                            }
-                        }
-
-                        13 -> { // tagIds
-                            if (wireType != 2) {
-                                skipField(stream, wireType)
-                            } else {
-                                val length = readVarint(stream)
-                                if (length > 0) {
-                                    val bytes = ByteArray(length.toInt())
-                                    readFully(stream, bytes)
-                                    tagIds.add(String(bytes, Charsets.UTF_8))
-                                }
-                            }
-                        }
-
-                        14 -> { // tagDefinitions
-                            if (wireType != 2) {
-                                skipField(stream, wireType)
-                            } else {
-                                val length = readVarint(stream)
-                                if (length > 0) {
-                                    val bytes = ByteArray(length.toInt())
-                                    readFully(stream, bytes)
-                                    try {
-                                        val tagVal = ProtoBuf.decodeFromByteArray(Tag.serializer(), bytes)
-                                        tagDefinitions.add(tagVal)
-                                    } catch (e: Exception) {
-                                        // Ignore malformed tag
-                                    }
-                                }
-                            }
-                        }
-
-                        else -> {
+                when (fieldNumber) {
+                    1 -> { // thumbnail
+                        if (wireType != 2) {
                             skipField(stream, wireType)
+                        } else {
+                            val length = readVarint(stream)
+                            if (length > 0) {
+                                val bytes = ByteArray(length.toInt())
+                                readFully(stream, bytes)
+                                thumbnail = String(bytes, Charsets.UTF_8)
+                            }
                         }
                     }
+
+                    13 -> { // tagIds
+                        if (wireType != 2) {
+                            skipField(stream, wireType)
+                        } else {
+                            val length = readVarint(stream)
+                            if (length > 0) {
+                                val bytes = ByteArray(length.toInt())
+                                readFully(stream, bytes)
+                                tagIds.add(String(bytes, Charsets.UTF_8))
+                            }
+                        }
+                    }
+
+                    14 -> { // tagDefinitions
+                        if (wireType != 2) {
+                            skipField(stream, wireType)
+                        } else {
+                            val length = readVarint(stream)
+                            if (length > 0) {
+                                val bytes = ByteArray(length.toInt())
+                                readFully(stream, bytes)
+                                try {
+                                    val tagVal = ProtoBuf.decodeFromByteArray(Tag.serializer(), bytes)
+                                    tagDefinitions.add(tagVal)
+                                } catch (e: Exception) {
+                                    // Ignore malformed tag
+                                }
+                            }
+                        }
+                    }
+
+                    else -> {
+                        skipField(stream, wireType)
+                    }
                 }
-                CanvasDataPreview(thumbnail, tagIds, tagDefinitions)
             }
+            CanvasDataPreview(thumbnail, tagIds, tagDefinitions)
         } catch (e: Exception) {
             Logger.e(
                 "Metadata",

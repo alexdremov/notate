@@ -594,7 +594,7 @@ fun ToolbarItemWrapper(
                             absLeft + size.width,
                             absTop + size.height,
                         )
-                    Logger.d("BooxVibesDebug", "ToolbarView: Item Positioned: $itemBounds")
+                    Logger.d("NotateDebug", "ToolbarView: Item Positioned: $itemBounds")
                 },
         contentAlignment = Alignment.Center,
     ) {
@@ -627,7 +627,7 @@ fun ToolbarItemWrapper(
                                 Modifier
                             },
                         ).clickable(enabled = !isEditMode) {
-                            Logger.d("BooxVibesDebug", "ToolbarView: Item Clicked! ID=${item.id}, Bounds=$itemBounds")
+                            Logger.d("NotateDebug", "ToolbarView: Item Clicked! ID=${item.id}, Bounds=$itemBounds")
                             itemBounds?.let { onClick(it) }
                         },
                 contentAlignment = Alignment.Center,
@@ -657,7 +657,7 @@ fun ToolbarItemWrapper(
                         .size(32.dp) // Touch area
                         .zIndex(10f)
                         .clickable {
-                            Logger.d("BooxVibesDebug", "ToolbarView: Remove CLICKED for item $index")
+                            Logger.d("NotateDebug", "ToolbarView: Remove CLICKED for item $index")
                             onRemove()
                         },
                 contentAlignment = Alignment.Center,
