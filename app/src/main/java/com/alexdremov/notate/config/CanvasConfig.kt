@@ -4,7 +4,7 @@ import android.graphics.Color
 
 object CanvasConfig {
     // Canvas & World
-    const val MIN_SCALE = 0.1f
+    const val MIN_SCALE = 0.01f
     const val MAX_SCALE = 100.0f
     const val WORLD_BOUNDS_SIZE = 50000f // +/- from origin
     const val DEFAULT_REGION_SIZE = 4096f
