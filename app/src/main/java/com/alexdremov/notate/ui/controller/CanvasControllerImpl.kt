@@ -110,7 +110,24 @@ class CanvasControllerImpl(
 
     override fun getItemsInRect(rect: android.graphics.RectF): List<com.alexdremov.notate.model.CanvasItem> {
         val items = model.queryItems(rect)
-        return items.filter { android.graphics.RectF.intersects(rect, it.bounds) }
+
+        // Optimized Precise Rect Selection
+        return items
+            .parallelStream()
+            .filter { item ->
+                // 1. Fast Accept: If item is fully contained, select it.
+                if (rect.contains(item.bounds)) return@filter true
+
+                // 2. Precise Intersection Check
+                if (item is Stroke) {
+                    com.alexdremov.notate.util.StrokeGeometry
+                        .strokeIntersectsRect(item, rect)
+                } else {
+                    // For Images (and other non-stroke items), bounds intersection is sufficient
+                    // (since model.queryItems already filters by bounds, this is technically redundant but safe)
+                    android.graphics.RectF.intersects(rect, item.bounds)
+                }
+            }.collect(Collectors.toList())
     }
 
     override fun getItemsInPath(path: android.graphics.Path): List<com.alexdremov.notate.model.CanvasItem> {
@@ -120,15 +137,30 @@ class CanvasControllerImpl(
 
         // Strict Lasso Logic: Convert path to polygon points
         // Use a coarser step (15f) for faster polygon construction without losing much precision for selection
-        val pathPoints =
+        var pathPoints =
             com.alexdremov.notate.util.StrokeGeometry
                 .flattenPath(path, 15f)
+
+        // OPTIMIZATION: Simplify polygon to reduce vertex count (Ramer-Douglas-Peucker)
+        // Epsilon of 5.0f removes jitter but keeps shape.
+        pathPoints =
+            com.alexdremov.notate.util.StrokeGeometry
+                .simplifyPoints(pathPoints, 5.0f)
 
         // Parallel processing for heavy geometric checks
         return items
             .parallelStream()
             .filter { item ->
                 if (!bounds.contains(item.bounds)) return@filter false
+
+                // OPTIMIZATION: Fast Geometric Check
+                // If the item's bounding box is strictly inside the polygon (and no edges cross), it's selected.
+                // This avoids checking every single point of the stroke against every single edge of the polygon.
+                if (com.alexdremov.notate.util.StrokeGeometry
+                        .isRectFullyInPolygon(item.bounds, pathPoints)
+                ) {
+                    return@filter true
+                }
 
                 if (item is Stroke) {
                     item.points.all { p ->
@@ -243,7 +275,7 @@ class CanvasControllerImpl(
             endBatchSession()
 
             runOnUi {
-                pastedItems.forEach { renderer.updateTilesWithItem(it) }
+                renderer.updateTilesWithItems(pastedItems)
                 selectionManager.clearSelection()
                 selectionManager.selectAll(pastedItems)
                 renderer.invalidate()

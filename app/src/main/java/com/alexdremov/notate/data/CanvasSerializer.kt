@@ -2,6 +2,7 @@ package com.alexdremov.notate.data
 
 import android.graphics.RectF
 import com.alexdremov.notate.config.CanvasConfig
+import com.alexdremov.notate.model.BackgroundStyle
 import com.alexdremov.notate.model.Stroke
 import com.alexdremov.notate.model.Tag
 import com.alexdremov.notate.util.Logger
@@ -60,10 +61,10 @@ object CanvasSerializer {
         canvasType: CanvasType,
         pageWidth: Float,
         pageHeight: Float,
-        backgroundStyle: com.alexdremov.notate.model.BackgroundStyle,
-        zoomLevel: Float,
-        offsetX: Float,
-        offsetY: Float,
+        backgroundStyle: BackgroundStyle,
+        viewportScale: Float,
+        viewportOffsetX: Float,
+        viewportOffsetY: Float,
         toolbarItems: List<com.alexdremov.notate.model.ToolbarItem> = emptyList(),
         tagIds: List<String> = emptyList(),
         tagDefinitions: List<Tag> = emptyList(),
@@ -76,9 +77,9 @@ object CanvasSerializer {
             pageWidth = pageWidth,
             pageHeight = pageHeight,
             backgroundStyle = backgroundStyle,
-            zoomLevel = zoomLevel,
-            offsetX = offsetX,
-            offsetY = offsetY,
+            zoomLevel = viewportScale,
+            offsetX = viewportOffsetX,
+            offsetY = viewportOffsetY,
             toolbarItems = toolbarItems,
             tagIds = tagIds,
             tagDefinitions = tagDefinitions,

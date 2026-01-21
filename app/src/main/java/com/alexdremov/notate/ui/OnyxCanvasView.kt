@@ -196,14 +196,13 @@ class OnyxCanvasView
                                 performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
                             } else {
                                 // Show Contextual Menu (Paste / Insert Image)
-                                if (pastePopup == null) {
-                                    pastePopup =
-                                        com.alexdremov.notate.ui.dialog.PasteActionPopup(
-                                            context,
-                                            onPaste = { canvasController.paste(worldX, worldY) },
-                                            onPasteImage = { onRequestInsertImage?.invoke() },
-                                        )
-                                }
+                                // ALWAYS recreate popup to capture fresh worldX/worldY in the closure
+                                pastePopup =
+                                    com.alexdremov.notate.ui.dialog.PasteActionPopup(
+                                        context,
+                                        onPaste = { canvasController.paste(worldX, worldY) },
+                                        onPasteImage = { onRequestInsertImage?.invoke() },
+                                    )
                                 pastePopup?.show(this@OnyxCanvasView, e.x, e.y)
                                 performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
                             }

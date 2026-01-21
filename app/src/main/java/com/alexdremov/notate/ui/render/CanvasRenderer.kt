@@ -89,6 +89,14 @@ class CanvasRenderer(
     }
 
     /**
+     * Updates cached tiles with a list of items.
+     * Batch optimized version of updateTilesWithItem.
+     */
+    fun updateTilesWithItems(items: List<com.alexdremov.notate.model.CanvasItem>) {
+        tileManager.updateTilesWithItems(items)
+    }
+
+    /**
      * Updates cached tiles with a new stroke.
      * Backwards compatibility.
      */

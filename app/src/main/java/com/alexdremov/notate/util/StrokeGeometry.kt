@@ -194,6 +194,156 @@ object StrokeGeometry {
     }
 
     /**
+     * Checks if a Rectangle is STRICTLY and FULLY contained within a Polygon.
+     * Logic:
+     * 1. All 4 corners of the Rect must be inside the Polygon.
+     * 2. No edge of the Polygon must intersect the Rect (this handles "donut" or C-shape cases where corners are in but a hole is present).
+     *
+     * Note: This is an optimization. If it returns true, it's definitely inside.
+     * If it returns false, it MIGHT still be inside (if logic is conservative), but for "Strict" selection of strokes,
+     * if the bounding box is inside, the stroke is inside.
+     */
+    fun isRectFullyInPolygon(
+        rect: RectF,
+        polygon: List<TouchPoint>,
+    ): Boolean {
+        // 1. Check 4 Corners
+        if (!isPointInPolygon(rect.left, rect.top, polygon)) return false
+        if (!isPointInPolygon(rect.right, rect.top, polygon)) return false
+        if (!isPointInPolygon(rect.right, rect.bottom, polygon)) return false
+        if (!isPointInPolygon(rect.left, rect.bottom, polygon)) return false
+
+        // 2. Check Edge Intersections
+        // If any polygon edge crosses the rect, then the rect is not "fully, cleanly" inside
+        // (or at least, we fallback to point check).
+        // Actually, if corners are inside, an intersection implies the polygon goes *into* the rect
+        // and potentially *out* (but corners are inside).
+        // E.g. a C-shape wrapping around the center of the rect.
+        for (i in 0 until polygon.size - 1) {
+            if (doesSegmentIntersectRect(polygon[i], polygon[i + 1], rect)) return false
+        }
+        // Check closing segment
+        if (polygon.isNotEmpty() && doesSegmentIntersectRect(polygon.last(), polygon.first(), rect)) return false
+
+        return true
+    }
+
+    /**
+     * Checks if a Stroke intersects a Rectangle precisely (Segment-Rect intersection).
+     * 1. Fast Containment Check (Bounds)
+     * 2. Point Inclusion Check
+     * 3. Segment Intersection Check
+     */
+    fun strokeIntersectsRect(
+        stroke: Stroke,
+        rect: RectF,
+    ): Boolean {
+        // 1. Fast Bounds Check (Pre-condition, usually already done but safe to repeat)
+        if (!RectF.intersects(stroke.bounds, rect)) return false
+
+        // 2. Fast Containment Check
+        // If selection rect contains the stroke bounds, it's a hit.
+        if (rect.contains(stroke.bounds)) return true
+
+        // 3. Point Inclusion Check
+        // If any point of the stroke is inside, it's a hit.
+        for (p in stroke.points) {
+            if (rect.contains(p.x, p.y)) return true
+        }
+
+        // 4. Segment Intersection Check
+        // If no points are inside, the stroke might "slice" through the rect.
+        if (stroke.points.size < 2) return false
+
+        for (i in 0 until stroke.points.size - 1) {
+            if (doesSegmentIntersectRect(stroke.points[i], stroke.points[i + 1], rect)) return true
+        }
+
+        return false
+    }
+
+    private fun doesSegmentIntersectRect(
+        p1: TouchPoint,
+        p2: TouchPoint,
+        rect: RectF,
+    ): Boolean {
+        // Cohen-Sutherland-like trivial reject/accept logic
+        val minX = minOf(p1.x, p2.x)
+        val maxX = maxOf(p1.x, p2.x)
+        val minY = minOf(p1.y, p2.y)
+        val maxY = maxOf(p1.y, p2.y)
+
+        // Segment is completely outside
+        if (maxX < rect.left || minX > rect.right || maxY < rect.top || minY > rect.bottom) return false
+
+        // Check intersection with each of the 4 borders
+        // Top
+        if (linesIntersect(p1.x, p1.y, p2.x, p2.y, rect.left, rect.top, rect.right, rect.top)) return true
+        // Bottom
+        if (linesIntersect(p1.x, p1.y, p2.x, p2.y, rect.left, rect.bottom, rect.right, rect.bottom)) return true
+        // Left
+        if (linesIntersect(p1.x, p1.y, p2.x, p2.y, rect.left, rect.top, rect.left, rect.bottom)) return true
+        // Right
+        if (linesIntersect(p1.x, p1.y, p2.x, p2.y, rect.right, rect.top, rect.right, rect.bottom)) return true
+
+        return false
+    }
+
+    private fun linesIntersect(
+        x1: Float,
+        y1: Float,
+        x2: Float,
+        y2: Float,
+        x3: Float,
+        y3: Float,
+        x4: Float,
+        y4: Float,
+    ): Boolean {
+        // Standard line-line intersection
+        val d = (y4 - y3) * (x2 - x1) - (x4 - x3) * (y2 - y1)
+        if (d == 0f) return false // Parallel
+
+        val ua = ((x4 - x3) * (y1 - y3) - (y4 - y3) * (x1 - x3)) / d
+        val ub = ((x2 - x1) * (y1 - y3) - (y2 - y1) * (x1 - x3)) / d
+
+        return (ua >= 0 && ua <= 1 && ub >= 0 && ub <= 1)
+    }
+
+    /**
+     * Ramer-Douglas-Peucker simplification
+     */
+    fun simplifyPoints(
+        points: List<TouchPoint>,
+        epsilon: Float,
+    ): List<TouchPoint> {
+        if (points.size < 3) return points
+
+        var dmax = 0f
+        var index = 0
+        val end = points.size - 1
+
+        for (i in 1 until end) {
+            val d = distPointToSegment(points[i].x, points[i].y, points[0].x, points[0].y, points[end].x, points[end].y)
+            if (d > dmax) {
+                dmax = d
+                index = i
+            }
+        }
+
+        if (dmax > epsilon) {
+            val recResults1 = simplifyPoints(points.subList(0, index + 1), epsilon)
+            val recResults2 = simplifyPoints(points.subList(index, end + 1), epsilon)
+
+            val result = ArrayList<TouchPoint>(recResults1.size + recResults2.size - 1)
+            result.addAll(recResults1.subList(0, recResults1.size - 1))
+            result.addAll(recResults2)
+            return result
+        } else {
+            return listOf(points[0], points[end])
+        }
+    }
+
+    /**
      * Flattens a Path into a list of TouchPoints approximating the curve.
      * Useful for polygon containment checks.
      */

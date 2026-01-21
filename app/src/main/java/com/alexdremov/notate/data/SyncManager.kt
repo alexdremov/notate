@@ -332,13 +332,18 @@ class SyncManager(
         remoteDir: String,
         provider: RemoteStorageProvider,
     ) {
+        var session: CanvasSession? = null
         try {
-            val loadResult = canvasRepository.loadCanvas(localFile.path) ?: return
+            // Open a session for reading the canvas
+            session = canvasRepository.openCanvasSession(localFile.path) ?: return
+
+            // Create a model and initialize it with the session's region manager
             val model = InfiniteCanvasModel()
-            model.setLoadedState(loadResult.canvasState)
+            model.initializeSession(session.regionManager)
+            model.loadFromCanvasData(session.metadata)
 
             val cleanRelativePath = localFile.relativePath.replace("\\", "/")
-            val pdfRelativePath = cleanRelativePath.substringBeforeLast(".") + ".pdf"
+            val pdfRelativePath = cleanRelativePath.substringBeforeLast(". ") + ".pdf"
             val remotePdfPath = "${remoteDir.trimEnd('/')}/$pdfRelativePath"
 
             val out = ByteArrayOutputStream()
@@ -348,6 +353,9 @@ class SyncManager(
             provider.uploadFile(remotePdfPath, pdfInput)
         } catch (e: Exception) {
             Logger.e("SyncManager", "Failed to sync PDF for ${localFile.name}", e)
+        } finally {
+            // Always close the session to clean up the temporary directory
+            session?.close()
         }
     }
 

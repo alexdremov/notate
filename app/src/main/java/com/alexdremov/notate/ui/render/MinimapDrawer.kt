@@ -205,7 +205,8 @@ class MinimapDrawer(
                     onRefresh()
                 }
             } catch (e: Exception) {
-                com.alexdremov.notate.util.Logger.e("MinimapDrawer", "Failed to regenerate thumbnail", e)
+                com.alexdremov.notate.util.Logger
+                    .e("MinimapDrawer", "Failed to regenerate thumbnail", e)
                 isRegenerating = false
             }
         }

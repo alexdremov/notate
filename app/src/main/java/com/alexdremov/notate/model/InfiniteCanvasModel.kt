@@ -427,8 +427,9 @@ class InfiniteCanvasModel {
 
     fun toCanvasData(): CanvasData =
         rwLock.read {
-            val size = regionManager!!.regionSize
-            // Returns metadata only, NO strokes
+            val rm = regionManager
+            val size = rm?.regionSize ?: CanvasConfig.DEFAULT_REGION_SIZE
+
             CanvasSerializer.toData(
                 canvasType,
                 pageWidth,
@@ -441,6 +442,7 @@ class InfiniteCanvasModel {
                 tagIds,
                 tagDefinitions,
                 regionSize = size,
+                nextStrokeOrder = nextOrder,
             )
         }
 

@@ -260,7 +260,7 @@ class TileManager(
             if (pBitmap != null && pBitmap != tileCache.errorBitmap) {
                 val pWorldSize = worldSize * (1 shl offset).toFloat()
                 val pDstRect = getTileWorldRect(pCol, pRow, pWorldSize)
-                
+
                 // We must clip the parent to strictly the target tile area
                 // otherwise we draw over neighbors
                 canvas.save()
@@ -279,19 +279,24 @@ class TileManager(
         col: Int,
         row: Int,
         level: Int,
-        worldSize: Float
+        worldSize: Float,
     ) {
         // Search down the LOD pyramid (higher resolution children)
         // We limit depth to avoid excessive iteration
         val maxDepth = 2
-        
+
         // Recursive helper
-        fun drawRecursive(c: Int, r: Int, l: Int, depth: Int) {
+        fun drawRecursive(
+            c: Int,
+            r: Int,
+            l: Int,
+            depth: Int,
+        ) {
             if (depth > maxDepth || l < CanvasConfig.MIN_ZOOM_LEVEL) return
 
             val key = TileCache.TileKey(c, r, l)
             val bitmap = tileCache.get(key)
-            
+
             if (bitmap != null && bitmap != tileCache.errorBitmap) {
                 val size = calculateWorldTileSize(l)
                 val rect = getTileWorldRect(c, r, size)
@@ -303,7 +308,7 @@ class TileManager(
             val nextL = l - 1
             val nextC = c shl 1
             val nextR = r shl 1
-            
+
             // 4 Children
             drawRecursive(nextC, nextR, nextL, depth + 1)
             drawRecursive(nextC + 1, nextR, nextL, depth + 1)
@@ -315,7 +320,7 @@ class TileManager(
         val startL = level - 1
         val startC = col shl 1
         val startR = row shl 1
-        
+
         drawRecursive(startC, startR, startL, 1)
         drawRecursive(startC + 1, startR, startL, 1)
         drawRecursive(startC, startR + 1, startL, 1)
@@ -468,6 +473,94 @@ class TileManager(
 
             if (RectF.intersects(bounds, tileRect)) {
                 // Re-queue generation if it's potentially visible
+                val isVisible = visibleRect == null || (key.level == currentLevel && RectF.intersects(visibleRect, tileRect))
+                if (isVisible) {
+                    queueTileGeneration(key.col, key.row, key.level, worldSize, true, version, forceRefresh = true)
+                }
+            }
+        }
+
+        notifyTileReady()
+    }
+
+    fun updateTilesWithItems(items: List<com.alexdremov.notate.model.CanvasItem>) {
+        if (items.isEmpty()) return
+
+        // Separate highlighters (require full refresh due to blending) vs standard items
+        val (highlighters, standardItems) =
+            items.partition {
+                it is Stroke && it.style == com.alexdremov.notate.model.StrokeType.HIGHLIGHTER
+            }
+
+        // 1. Handle Highlighters (Force Refresh)
+        if (highlighters.isNotEmpty()) {
+            val unionBounds = RectF(highlighters[0].bounds)
+            for (i in 1 until highlighters.size) unionBounds.union(highlighters[i].bounds)
+            refreshTiles(unionBounds)
+        }
+
+        if (standardItems.isEmpty()) return
+
+        // 2. Handle Standard Items (Batch Draw)
+        val unionBounds = RectF(standardItems[0].bounds)
+        for (i in 1 until standardItems.size) unionBounds.union(standardItems[i].bounds)
+
+        val snapshot = tileCache.snapshot()
+        val version = renderVersion.get()
+        val visibleRect = lastVisibleRect
+        val currentLevel = if (visibleRect != null) calculateLOD(lastScale) else -1
+
+        val handledKeys = HashSet<TileCache.TileKey>()
+
+        // Update Cached Tiles
+        for ((key, bitmap) in snapshot) {
+            if (bitmap == null || bitmap.isRecycled || bitmap == tileCache.errorBitmap) continue
+
+            val worldSize = calculateWorldTileSize(key.level)
+            val tileRect = getTileWorldRect(key.col, key.row, worldSize)
+
+            // Fast Check: Does tile intersect the collective bounds?
+            if (RectF.intersects(unionBounds, tileRect)) {
+                val isVisible = visibleRect != null && key.level == currentLevel && RectF.intersects(visibleRect, tileRect)
+
+                if (isVisible) {
+                    // Prepare Canvas once per tile
+                    val tileCanvas = Canvas(bitmap)
+                    val scale = tileSize.toFloat() / worldSize
+                    tileCanvas.save()
+                    tileCanvas.scale(scale, scale)
+                    tileCanvas.translate(-tileRect.left, -tileRect.top)
+
+                    // Batch Draw Intersecting Items
+                    // Optimization: Filter items intersecting this specific tile
+                    for (item in standardItems) {
+                        if (RectF.intersects(item.bounds, tileRect)) {
+                            renderer.drawItemToCanvas(tileCanvas, item, scale = scale)
+                        }
+                    }
+                    tileCanvas.restore()
+
+                    // Re-queue logic
+                    val isBeingGenerated = synchronized(generatingKeys) { generatingKeys.contains(key) }
+                    if (isBeingGenerated) {
+                        queueTileGeneration(key.col, key.row, key.level, worldSize, true, version, forceRefresh = true)
+                    }
+                } else {
+                    tileCache.remove(key)
+                }
+                handledKeys.add(key)
+            }
+        }
+
+        // Handle Generating Tiles
+        val currentGenerating = synchronized(generatingKeys) { HashSet(generatingKeys) }
+        for (key in currentGenerating) {
+            if (handledKeys.contains(key)) continue
+
+            val worldSize = calculateWorldTileSize(key.level)
+            val tileRect = getTileWorldRect(key.col, key.row, worldSize)
+
+            if (RectF.intersects(unionBounds, tileRect)) {
                 val isVisible = visibleRect == null || (key.level == currentLevel && RectF.intersects(visibleRect, tileRect))
                 if (isVisible) {
                     queueTileGeneration(key.col, key.row, key.level, worldSize, true, version, forceRefresh = true)

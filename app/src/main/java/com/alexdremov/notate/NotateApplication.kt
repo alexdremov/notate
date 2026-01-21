@@ -54,7 +54,7 @@ class NotateApplication : Application() {
             if (sessionsDir.exists()) {
                 val currentTime = System.currentTimeMillis()
                 val oneHourAgo = currentTime - (1000 * 60 * 60)
-                
+
                 sessionsDir.listFiles()?.forEach { file ->
                     if (file.isDirectory && file.lastModified() < oneHourAgo) {
                         file.deleteRecursively()

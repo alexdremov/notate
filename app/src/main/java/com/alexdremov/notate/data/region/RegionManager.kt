@@ -32,7 +32,7 @@ class RegionManager(
     // Skeleton Index for fast spatial queries
     private var skeletonQuadtree = Quadtree(0, RectF(-regionSize, -regionSize, regionSize, regionSize))
     private val regionProxies = HashMap<RegionId, RegionProxy>()
-    
+
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     var onRegionLoaded: ((RegionData) -> Unit)? = null
 
@@ -180,7 +180,7 @@ class RegionManager(
 
         return region
     }
-    
+
     fun getAvailableRegionsAndMissingIds(rect: RectF): Pair<List<RegionData>, List<RegionId>> {
         val foundProxies = ArrayList<CanvasItem>()
         val ids = ArrayList<RegionId>()
