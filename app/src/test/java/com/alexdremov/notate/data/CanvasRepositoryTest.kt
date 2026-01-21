@@ -49,7 +49,13 @@ class CanvasRepositoryTest {
             storage.init()
             val regionManager = RegionManager(storage, metadata.regionSize)
 
-            val session = CanvasSession(sessionDir, metadata, regionManager)
+            val session = CanvasSession(
+                sessionDir = sessionDir,
+                regionManager = regionManager,
+                originLastModified = 0L,
+                originSize = 0L,
+                metadata = metadata
+            )
 
             val saveResult = repository.saveCanvasSession(path, session)
             assertEquals(path, saveResult.savedPath)
@@ -57,10 +63,12 @@ class CanvasRepositoryTest {
             val targetFile = File(path)
             assertTrue("Target file should exist", targetFile.exists())
 
-            val result = repository.loadCanvas(path)
-            assertNotNull(result)
-            assertEquals(CanvasType.INFINITE, result!!.canvasState.canvasType)
-            assertNotNull(result.session)
+            // Close the session before reopening
+            session.close()
+
+            val loadedSession = repository.openCanvasSession(path)
+            assertNotNull(loadedSession)
+            assertEquals(CanvasType.INFINITE, loadedSession!!.metadata.canvasType)
         }
 
     @Test
@@ -69,7 +77,7 @@ class CanvasRepositoryTest {
             val path = File(testDir, "corrupted.notate").absolutePath
             File(path).writeBytes(byteArrayOf(0x01, 0x02, 0x03)) // Random garbage (not a zip)
 
-            val result = repository.loadCanvas(path)
+            val result = repository.openCanvasSession(path)
             assertNull("Should return null for corrupted file", result)
         }
 }

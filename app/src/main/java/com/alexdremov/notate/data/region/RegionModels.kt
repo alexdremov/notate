@@ -32,7 +32,7 @@ data class RegionId(
 data class RegionData(
     val id: RegionId,
     val items: MutableList<CanvasItem> = ArrayList(),
-    var isDirty: Boolean = false,
+    @Volatile var isDirty: Boolean = false,
 ) {
     @Transient
     var quadtree: Quadtree? = null
