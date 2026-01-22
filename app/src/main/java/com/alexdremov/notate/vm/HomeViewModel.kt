@@ -522,6 +522,10 @@ class HomeViewModel(
         val currentProject = _currentProject.value
         val currentProjectId = currentProject?.id
         val projectUri = currentProject?.uri
+        val currentPathVal = _currentPath.value
+
+        // Optimistic UI update
+        _browserItems.value = _browserItems.value.filter { it.path != item.path }
 
         viewModelScope.launch {
             val success =
@@ -529,24 +533,49 @@ class HomeViewModel(
                     repo.deleteItem(item.path)
                 }
             if (success) {
-                // Try to delete from remote if applicable
-                if (currentProjectId != null && projectUri != null && !projectUri.startsWith("content://")) {
-                    try {
-                        withContext(Dispatchers.IO) {
-                            val relativePath = File(item.path).relativeTo(File(projectUri)).path
-                            syncManager.deleteFromRemote(currentProjectId, relativePath)
-                        }
-                    } catch (e: Exception) {
-                        Logger.w("HomeViewModel", "Failed to delete remote file: ${item.path}", e)
-                    }
-                }
-
+                // Refresh local UI immediately from the repository to confirm local deletion
                 val tag = _selectedTag.value
                 if (tag != null) {
                     loadTaggedItems(tag.id)
                 } else {
-                    loadBrowserItems(_currentPath.value)
+                    loadBrowserItems(currentPathVal)
                 }
+
+                // Try to delete from remote in background
+                if (currentProjectId != null && projectUri != null) {
+                    launch(Dispatchers.IO) {
+                        try {
+                            Logger.d("HomeViewModel", "Attempting to propagate deletion to remote for ${item.name}")
+                            val relativePath = if (projectUri.startsWith("content://")) {
+                                if (currentPathVal == repository?.getRootPath()) {
+                                    item.name
+                                } else {
+                                    item.name
+                                }
+                            } else {
+                                File(item.path).relativeTo(File(projectUri)).path
+                            }
+                            
+                            Logger.d("HomeViewModel", "Calculated relative path for deletion: $relativePath")
+
+                            // 1. Record pending deletion
+                            SyncPreferencesManager.addPendingDeletion(getApplication(), currentProjectId, relativePath)
+
+                            // 2. Try immediate deletion
+                            val result = syncManager.deleteFromRemote(currentProjectId, relativePath)
+                            if (result) {
+                                Logger.d("HomeViewModel", "Immediate remote deletion successful")
+                            } else {
+                                Logger.d("HomeViewModel", "Immediate remote deletion skipped or failed (will be retried on sync)")
+                            }
+                        } catch (e: Exception) {
+                            Logger.w("HomeViewModel", "Failed to delete remote file: ${item.path}", e)
+                        }
+                    }
+                }
+            } else {
+                // If local deletion failed, refresh to restore item in list
+                refresh()
             }
         }
     }

@@ -37,11 +37,13 @@ class TileManagerFallbackTest {
         mockModel = mockk(relaxed = true)
         mockRenderer = mockk(relaxed = true)
         every { mockModel.events } returns kotlinx.coroutines.flow.MutableSharedFlow()
+        every { mockModel.getRegionManager() } returns null
         // Mock queryItems to return empty list so generation produces blank tiles quickly
         every { mockModel.queryItems(any()) } returns ArrayList()
 
         tileManager =
             TileManager(
+                context = org.robolectric.RuntimeEnvironment.getApplication(),
                 canvasModel = mockModel,
                 renderer = mockRenderer,
                 tileSize = TILE_SIZE,

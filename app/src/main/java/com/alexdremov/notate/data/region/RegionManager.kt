@@ -9,6 +9,7 @@ import android.util.LruCache
 import com.alexdremov.notate.config.CanvasConfig
 import com.alexdremov.notate.model.CanvasItem
 import com.alexdremov.notate.util.Logger
+import com.alexdremov.notate.util.PerformanceProfiler
 import com.alexdremov.notate.util.Quadtree
 import com.alexdremov.notate.util.StrokeRenderer
 import kotlinx.coroutines.CoroutineScope
@@ -67,6 +68,15 @@ class RegionManager(
     private var skeletonQuadtree = Quadtree(0, RectF(-regionSize, -regionSize, regionSize, regionSize))
     private val regionProxies = HashMap<RegionId, RegionProxy>()
 
+    // Pinned Regions (Overflow protection for visible items)
+    private var pinnedIds: Set<RegionId> = emptySet()
+    // Using LinkedHashMap for access/insertion order (Insertion is default, which works for FIFO eviction of stale items)
+    private val overflowRegions = java.util.LinkedHashMap<RegionId, RegionData>()
+    // Hard limit for overflow: 50% of the main cache size.
+    // This prevents "Pinned" regions from consuming infinite memory if the user zooms out too much.
+    private val maxOverflowBytes = memoryLimitBytes / 2
+    private var currentOverflowBytes = 0L
+
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     var onRegionLoaded: ((RegionData) -> Unit)? = null
 
@@ -123,8 +133,52 @@ class RegionManager(
                     if (key == resizingId) return
 
                     if (evicted) {
-                        Logger.d("RegionManager", "Evicting region $key (Size: ${oldValue.getSizeCached() / 1024}KB)")
+                        // Check if pinned
+                        if (pinnedIds.contains(key)) {
+                            val size = oldValue.getSizeCached()
+                            
+                            // Check if adding this would exceed overflow limits
+                            if (currentOverflowBytes + size > maxOverflowBytes) {
+                                // Must make space or drop.
+                                // Strategy: Drop oldest from overflow.
+                                
+                                val it = overflowRegions.iterator()
+                                while (it.hasNext() && currentOverflowBytes + size > maxOverflowBytes) {
+                                    val (oldKey, oldRegion) = it.next()
+                                    // Don't drop the one we are trying to add (unless it's the only one and too big)
+                                    // Actually we haven't added 'key' yet.
+                                    
+                                    // Save if dirty before dropping
+                                    if (oldRegion.isDirty) {
+                                        try {
+                                            storage.saveRegion(oldRegion)
+                                            oldRegion.isDirty = false
+                                        } catch (e: Exception) {
+                                            Logger.e("RegionManager", "Failed to save overflow region $oldKey during forced eviction", e)
+                                        }
+                                    }
+                                    
+                                    currentOverflowBytes -= oldRegion.getSizeCached()
+                                    it.remove()
+                                    Logger.w("RegionManager", "Forced eviction of pinned region $oldKey from overflow (Limit exceeded)")
+                                }
+                            }
+                            
+                            // Double check if we have space now (or if the item itself is too huge)
+                            if (currentOverflowBytes + size <= maxOverflowBytes) {
+                                overflowRegions[key] = oldValue
+                                currentOverflowBytes += size
+                                Logger.d("RegionManager", "Moved pinned region $key to overflow (Size: ${size / 1024}KB)")
+                                return
+                            } else {
+                                Logger.e("RegionManager", "Dropping pinned region $key. Too large for overflow ($size > $maxOverflowBytes)")
+                                // Fallthrough to standard save/evict logic below
+                            }
+                        } else {
+                            Logger.d("RegionManager", "Evicting region $key (Size: ${oldValue.getSizeCached() / 1024}KB)")
+                        }
                     }
+                    
                     if (oldValue.isDirty) {
                         try {
                             if (!storage.saveRegion(oldValue)) {
@@ -138,6 +192,35 @@ class RegionManager(
                     }
                 }
             }
+
+        PerformanceProfiler.registerMemoryStats(
+            "RegionManager",
+            object : PerformanceProfiler.MemoryStatsProvider {
+                override fun getStats(): Map<String, String> {
+                    val rSize = regionCache.size() / 1024
+                    val rMax = regionCache.maxSize() / 1024
+                    val tSize = thumbnailCache.size() / 1024
+                    val tMax = thumbnailCache.maxSize() / 1024
+                    val oSize = currentOverflowBytes / (1024 * 1024)
+
+                    var pSizeBytes = 0L
+                    lock.read {
+                        pinnedIds.forEach { id ->
+                            val region = regionCache.get(id) ?: overflowRegions[id]
+                            pSizeBytes += region?.getSizeCached() ?: 0L
+                        }
+                    }
+
+                    return mapOf(
+                        "Region Cache (MB)" to "$rSize / $rMax",
+                        "Thumb Cache (MB)" to "$tSize / $tMax",
+                        "Overflow (MB)" to "$oSize (Count: ${overflowRegions.size})",
+                        "Pinned" to "${pinnedIds.size} (${pSizeBytes / (1024 * 1024)}MB)",
+                        "Index" to "${regionIndex.size}",
+                    )
+                }
+            },
+        )
     }
 
     private val lock = ReentrantReadWriteLock()
@@ -205,6 +288,17 @@ class RegionManager(
             // Re-check cache under lock (another thread may have won the race)
             region = regionCache.get(id)
             if (region != null) {
+                return region!!
+            }
+            
+            // Check Overflow
+            region = overflowRegions[id]
+            if (region != null) {
+                // Found in overflow (pinned).
+                // DO NOT promote back to Cache to avoid thrashing (Overflow -> Cache -> Evict -> Overflow).
+                // Just refresh its position in the overflow map (LRU behavior for overflow).
+                overflowRegions.remove(id)
+                overflowRegions[id] = region!!
                 return region!!
             }
 
@@ -513,9 +607,32 @@ class RegionManager(
         }
     }
 
+    fun setPinnedRegions(ids: Set<RegionId>) {
+        lock.write {
+            pinnedIds = ids
+            
+            // Re-integrate unpinned overflow items back to LRU
+            if (overflowRegions.isNotEmpty()) {
+                val iterator = overflowRegions.iterator()
+                while (iterator.hasNext()) {
+                    val (id, region) = iterator.next()
+                    if (!pinnedIds.contains(id)) {
+                        iterator.remove()
+                        currentOverflowBytes -= region.getSizeCached()
+                        // Put back to LRU. This might trigger eviction of other items,
+                        // effectively prioritizing the just-unpinned item over oldest LRU items.
+                        regionCache.put(id, region)
+                    }
+                }
+            }
+        }
+    }
+
     fun clear() {
         lock.write {
             regionCache.evictAll()
+            overflowRegions.clear()
+            currentOverflowBytes = 0
             thumbnailCache.evictAll()
             regionIndex.clear()
             skeletonQuadtree.clear()
@@ -526,6 +643,16 @@ class RegionManager(
     fun saveAll() {
         lock.write {
             val map = regionCache.snapshot()
+            
+            // Also save overflow regions
+            overflowRegions.forEach { (_, region) -> 
+                if (region.isDirty) {
+                     if (storage.saveRegion(region)) {
+                         region.isDirty = false
+                     }
+                }
+            }
+            
             map.forEach { (_, region) ->
                 if (region.isDirty) {
                     if (region.items.isEmpty()) {

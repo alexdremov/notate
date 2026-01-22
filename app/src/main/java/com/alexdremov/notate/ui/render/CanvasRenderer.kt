@@ -24,7 +24,7 @@ class CanvasRenderer(
     scope: CoroutineScope,
     private val onTileReady: () -> Unit,
 ) {
-    private val tileManager = TileManager(model, this, scope = scope)
+    private val tileManager = TileManager(context, model, this, scope = scope)
     private var layoutStrategy: CanvasLayout = InfiniteLayout()
 
     init {

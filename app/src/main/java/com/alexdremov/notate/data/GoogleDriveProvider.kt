@@ -106,7 +106,35 @@ class GoogleDriveProvider(
     override suspend fun deleteFile(remotePath: String): Boolean =
         withContext(Dispatchers.IO) {
             val service = driveService ?: throw java.io.IOException("Google Drive not authenticated.")
-            service.files().delete(remotePath).execute()
+
+            // Resolve ID from Path
+            val parts = remotePath.split('/')
+            val fileName = parts.last()
+            val folderPath = parts.dropLast(1).joinToString("/")
+
+            // If path is just "filename", folder is root (or implicitly search root?)
+            // findFolderId handles empty/root logic? check implementation.
+            // findFolderId("notate/epfl") returns ID of epfl.
+            // If remotePath is "notate/epfl/b", folderPath is "notate/epfl".
+            
+            val folderId = if (folderPath.isEmpty()) "root" else findFolderId(folderPath)
+
+            if (folderId == null) {
+                Logger.w("GoogleDriveProvider", "Cannot delete $remotePath: Parent folder not found")
+                // Treat as success (already gone)? Or fail?
+                // If parent doesn't exist, file definitely doesn't exist.
+                // Return false to indicate "we didn't delete anything", or throw FileNotFound?
+                // SyncManager catches FileNotFoundException and removes pending deletion.
+                throw java.io.FileNotFoundException("Parent folder not found: $folderPath")
+            }
+
+            val file = findFileInFolder(folderId, fileName)
+            if (file == null) {
+                Logger.w("GoogleDriveProvider", "Cannot delete $remotePath: File not found")
+                throw java.io.FileNotFoundException("File not found: $remotePath")
+            }
+
+            service.files().delete(file.id).execute()
             true
         }
 

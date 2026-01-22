@@ -421,8 +421,13 @@ class OnyxCanvasView
                     matrix.invert(inverseMatrix)
                     inverseMatrix.mapRect(visibleRect)
 
-                    canvasRenderer.render(cv, matrix, visibleRect, RenderQuality.HIGH, viewportInteractor.getCurrentScale())
-                    selectionOverlayDrawer.draw(cv, matrix, viewportInteractor.getCurrentScale())
+                    // Calculate scale directly from matrix to ensure consistency with visibleRect
+                    val values = FloatArray(9)
+                    matrix.getValues(values)
+                    val currentScale = values[Matrix.MSCALE_X]
+
+                    canvasRenderer.render(cv, matrix, visibleRect, RenderQuality.HIGH, currentScale)
+                    selectionOverlayDrawer.draw(cv, matrix, currentScale)
 
                     if (CanvasConfig.DEBUG_SHOW_RAM_USAGE) {
                         val runtime = Runtime.getRuntime()
@@ -472,6 +477,8 @@ class OnyxCanvasView
                             cv.drawPath(path, debugPaint)
                         }
                     }
+
+                    com.alexdremov.notate.util.Logger.d("OnyxCanvasView", "View Size: ${width}x${height}")
 
                     com.alexdremov.notate.util.PerformanceProfiler
                         .printReportIfNeeded()

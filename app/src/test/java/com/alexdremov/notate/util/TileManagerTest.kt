@@ -39,9 +39,11 @@ class TileManagerTest {
         mockRenderer = mockk(relaxed = true)
         // Ensure events flow is mocked
         every { mockModel.events } returns kotlinx.coroutines.flow.MutableSharedFlow()
+        every { mockModel.getRegionManager() } returns null
 
         tileManager =
             TileManager(
+                context = org.robolectric.RuntimeEnvironment.getApplication(),
                 canvasModel = mockModel,
                 renderer = mockRenderer,
                 tileSize = 256, // Smaller tile size for easier math if needed

@@ -1,6 +1,7 @@
 package com.alexdremov.notate.util
 
 import android.util.Log
+import com.alexdremov.notate.config.CanvasConfig
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -48,24 +49,20 @@ object Logger {
         _userEvents.tryEmit(UserEvent(message, Level.INFO))
     }
 
-    fun d(
-        tag: String?,
-        message: String,
-    ) {
-        Log.d(formatTag(tag), message)
-        if (minLogLevelToShow.priority <= Level.DEBUG.priority) {
-            _userEvents.tryEmit(UserEvent(message, Level.DEBUG))
+    fun d(tag: String, msg: String) {
+        if (CanvasConfig.DEBUG_SHOW_TILES || CanvasConfig.DEBUG_SHOW_REGIONS || CanvasConfig.DEBUG_ENABLE_PROFILING) {
+            Log.d(formatTag(tag), msg)
         }
     }
 
-    fun i(
-        tag: String?,
-        message: String,
-    ) {
-        Log.i(formatTag(tag), message)
-        if (minLogLevelToShow.priority <= Level.INFO.priority) {
-            _userEvents.tryEmit(UserEvent(message, Level.INFO))
+    fun v(tag: String, msg: String) {
+        if (CanvasConfig.DEBUG_SHOW_TILES) {
+            Log.v(formatTag(tag), msg)
         }
+    }
+
+    fun i(tag: String, msg: String) {
+        Log.i(formatTag(tag), msg)
     }
 
     fun w(
@@ -102,9 +99,9 @@ object Logger {
     }
 
     // Overloads for convenience without tag
-    fun d(message: String) = d(null, message)
+    fun d(message: String) = d(DEFAULT_TAG, message)
 
-    fun i(message: String) = i(null, message)
+    fun i(message: String) = i(DEFAULT_TAG, message)
 
     fun w(
         message: String,

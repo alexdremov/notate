@@ -18,6 +18,19 @@ object PerformanceProfiler {
     private val stats = ConcurrentHashMap<String, Stat>()
     private var lastReportTime = System.currentTimeMillis()
 
+    interface MemoryStatsProvider {
+        fun getStats(): Map<String, String>
+    }
+
+    private val memoryProviders = ConcurrentHashMap<String, MemoryStatsProvider>()
+
+    fun registerMemoryStats(
+        name: String,
+        provider: MemoryStatsProvider,
+    ) {
+        memoryProviders[name] = provider
+    }
+
     /**
      * Measures the execution time of the given block.
      * Safe to call from any thread.
@@ -104,6 +117,21 @@ object PerformanceProfiler {
             stat.totalNanos.set(0)
             stat.maxNanos.set(0)
         }
+
+        if (memoryProviders.isNotEmpty()) {
+            sb.append("\n=== Memory Stats ===\n")
+            memoryProviders.forEach { (name, provider) ->
+                sb.append("[$name]\n")
+                try {
+                    provider.getStats().forEach { (key, value) ->
+                        sb.append(String.format("  %-25s : %s\n", key, value))
+                    }
+                } catch (e: Exception) {
+                    sb.append("  Error getting stats: ${e.message}\n")
+                }
+            }
+        }
+
         sb.append("=====================================================================================\n")
         Logger.d(TAG, sb.toString())
     }

@@ -63,6 +63,7 @@ fun ProjectListScreen(
                 val item =
                     ProjectItem(
                         name = project.name,
+                        fileName = project.name,
                         path = project.uri,
                         lastModified = 0L, // Metadata not tracked for root projects
                         itemsCount = 0,

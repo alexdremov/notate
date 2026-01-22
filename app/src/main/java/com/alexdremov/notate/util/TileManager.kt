@@ -24,11 +24,17 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.receiveAsFlow
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.yield
 import java.util.Collections
 import java.util.HashSet
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
+import kotlin.coroutines.coroutineContext
 import kotlin.math.floor
 import kotlin.math.log2
 import kotlin.math.pow
@@ -62,6 +68,7 @@ import kotlin.math.pow
  */
 @OptIn(FlowPreview::class)
 class TileManager(
+    private val context: android.content.Context,
     private val canvasModel: InfiniteCanvasModel,
     private val renderer: CanvasRenderer,
     private val tileSize: Int = CanvasConfig.TILE_SIZE,
@@ -75,9 +82,13 @@ class TileManager(
 
     // State Tracking
     private val generatingKeys = Collections.synchronizedSet(HashSet<TileCache.TileKey>())
+    private val generationJobs = ConcurrentHashMap<TileCache.TileKey, Job>()
+    private val generationSemaphore = Semaphore(8) // Limit concurrent heavy rendering
+
     private val renderVersion = AtomicInteger(0)
     private var lastRenderLevel = -1
     private var lastVisibleRect: RectF? = null
+    private var lastPrefetchRect: RectF? = null
     private var lastScale: Float = 1.0f
     private var lastVisibleCount = 0
 
@@ -86,6 +97,7 @@ class TileManager(
 
     // Update Throttling
     private val updateChannel = Channel<Unit>(capacity = 1, onBufferOverflow = BufferOverflow.DROP_OLDEST)
+    private val regionLoadedChannel = Channel<RectF>(capacity = 32, onBufferOverflow = BufferOverflow.DROP_OLDEST)
 
     // Debugging
     private val errorMessages = LruCache<TileCache.TileKey, String>(CanvasConfig.ERROR_CACHE_SIZE)
@@ -137,12 +149,29 @@ class TileManager(
                         }
 
                         is InfiniteCanvasModel.ModelEvent.RegionLoaded -> {
-                            refreshTiles(event.bounds)
+                            regionLoadedChannel.trySend(event.bounds)
                         }
 
                         else -> {}
                     }
                 }
+            }
+
+        // Debounce RegionLoaded events to prevent version thrashing
+        initJobs +=
+            scope.launch {
+                regionLoadedChannel
+                    .receiveAsFlow()
+                    .debounce(100L)
+                    .collect { bounds ->
+                        // Collect all pending bounds into one refresh
+                        val unionBounds = RectF(bounds)
+                        while (true) {
+                            val next = regionLoadedChannel.tryReceive().getOrNull() ?: break
+                            unionBounds.union(next)
+                        }
+                        refreshTiles(unionBounds)
+                    }
             }
 
         // Throttle UI updates: debounce based on TILE_MANAGER_TARGET_FPS (caps update rate)
@@ -157,7 +186,43 @@ class TileManager(
                         }
                     }
             }
+
+        PerformanceProfiler.registerMemoryStats(
+            "TileManager",
+            object : PerformanceProfiler.MemoryStatsProvider {
+                override fun getStats(): Map<String, String> {
+                    val stats = tileCache.getStats().toMutableMap()
+                    stats["Generating"] = synchronized(generatingKeys) { generatingKeys.size }.toString()
+                    stats["Active Jobs"] = generationJobs.size.toString()
+                    stats["Semaphore Permits"] = generationSemaphore.availablePermits.toString()
+
+                    val jobs = generationJobs.keys.toList()
+                    if (jobs.isNotEmpty()) {
+                        val levels = jobs.map { it.level }.distinct().sorted()
+                        stats["Job Levels"] = levels.joinToString()
+
+                        // Analyze dominant level
+                        val dominantLevel =
+                            jobs
+                                .groupBy { it.level }
+                                .maxByOrNull { it.value.size }
+                                ?.key ?: levels.first()
+
+                        val levelJobs = jobs.filter { it.level == dominantLevel }
+                        val minCol = levelJobs.minOf { it.col }
+                        val maxCol = levelJobs.maxOf { it.col }
+                        val minRow = levelJobs.minOf { it.row }
+                        val maxRow = levelJobs.maxOf { it.row }
+                        stats["L$dominantLevel Bounds"] = "[$minCol,$minRow] to [$maxCol,$maxRow] (${levelJobs.size} tiles)"
+                    }
+
+                    return stats
+                }
+            },
+        )
     }
+
+    private var lastLogRect: RectF? = null
 
     /**
      * Main entry point for drawing tiled content.
@@ -172,7 +237,6 @@ class TileManager(
             this.lastScale = scale
 
             val level = calculateLOD(scale)
-            val currentVersion = checkLevelChanged(level)
 
             val worldTileSize = calculateWorldTileSize(level)
 
@@ -182,27 +246,67 @@ class TileManager(
             val startRow = floor(visibleRect.top / worldTileSize).toInt()
             val endRow = floor(visibleRect.bottom / worldTileSize).toInt()
 
+            if (lastLogRect == null || !lastLogRect!!.equals(visibleRect) || lastRenderLevel != level) {
+                Logger.d("TileManager", "Render: Rect=$visibleRect Scale=$scale Level=$level Cols=$startCol..$endCol Rows=$startRow..$endRow")
+                lastLogRect = RectF(visibleRect)
+            }
+
+            // Level Switch Strategy: Hard Reset
+            if (level != lastRenderLevel) {
+                Logger.i("TileManager", "LOD Switch: L$lastRenderLevel -> L$level. Cancelling all jobs.")
+                cancelStaleJobs(emptySet())
+                lastRenderLevel = level
+                renderVersion.incrementAndGet()
+            }
+            val currentVersion = renderVersion.get()
+
             // Cache Management
             val visibleCount = (endCol - startCol + 1) * (endRow - startRow + 1)
+
             if (visibleCount > lastVisibleCount) {
                 tileCache.checkBudgetAndResizeIfNeeded(visibleCount)
                 lastVisibleCount = visibleCount
             }
 
+            // 0. Prefetch Regions (Speculative Fetching)
+            prefetchRegions(visibleRect, worldTileSize)
+
+            val validKeys = HashSet<TileCache.TileKey>()
+
             // 1. Draw Visible Tiles
             for (col in startCol..endCol) {
                 for (row in startRow..endRow) {
+                    val key = TileCache.TileKey(col, row, level)
+                    validKeys.add(key)
                     drawOrQueueTile(canvas, col, row, level, worldTileSize, true, currentVersion, scale)
                 }
             }
 
             // 2. Pre-cache Neighbors if Idle
             if (!isInteracting) {
-                queueNeighbors(startCol, endCol, startRow, endRow, level, worldTileSize, currentVersion)
+                val buffer = CanvasConfig.NEIGHBOR_COUNT
+                for (col in (startCol - buffer)..(endCol + buffer)) {
+                    for (row in (startRow - buffer)..(endRow + buffer)) {
+                        if (col in startCol..endCol && row in startRow..endRow) continue
+                        val key = TileCache.TileKey(col, row, level)
+                        validKeys.add(key)
+                        queueTileGeneration(col, row, level, worldTileSize, false, currentVersion)
+                    }
+                }
             }
+
+            cancelStaleJobs(validKeys)
 
             if (CanvasConfig.DEBUG_SHOW_REGIONS) {
                 drawRegionDebugOverlay(canvas, scale)
+            }
+        }
+    }
+
+    private fun cancelStaleJobs(validKeys: Set<TileCache.TileKey>) {
+        generationJobs.forEach { (key, job) ->
+            if (!validKeys.contains(key)) {
+                job.cancel()
             }
         }
     }
@@ -229,10 +333,6 @@ class TileManager(
         } else {
             queueTileGeneration(col, row, level, worldSize, isVisible, version)
             if (isVisible) {
-                // Bidirectional Fallback: Prefer Parent (Blurry) -> Children (Sharp fragments)
-                // When zooming IN, we want Parent.
-                // When zooming OUT, we want Children.
-                // Since we don't track direction, we try Parent first (cheaper, one draw).
                 if (!drawFallbackParent(canvas, col, row, level, worldSize)) {
                     drawFallbackChildren(canvas, col, row, level, worldSize)
                 }
@@ -337,6 +437,7 @@ class TileManager(
         forceRefresh: Boolean = false,
     ) {
         val key = TileCache.TileKey(col, row, level)
+        val startTime = System.currentTimeMillis()
 
         // Use synchronized block for atomic check-and-add
         synchronized(generatingKeys) {
@@ -352,68 +453,169 @@ class TileManager(
             generatingKeys.add(key)
         }
 
-        scope.launch(dispatcher) {
-            try {
-                // Task Cancellation Checks
-                if (version != renderVersion.get() || (!isHighPriority && isInteracting)) {
-                    synchronized(generatingKeys) { generatingKeys.remove(key) }
-                    notifyTileReady()
-                    return@launch
-                }
+        // Cancel existing job for this key if it's still running
+        generationJobs.remove(key)?.cancel()
 
-                val bitmap = generateTileBitmap(col, row, worldSize, level)
-
-                // Final check before committing to cache - ensure we are still on the same version
-                if (version == renderVersion.get()) {
-                    if (forceRefresh || tileCache.get(key) == null) {
-                        tileCache.put(key, bitmap)
+        val job =
+            scope.launch(dispatcher) {
+                try {
+                    Logger.v("TileManager", "Job Start: $key")
+                    // Task Cancellation Checks
+                    if (!isActive || version != renderVersion.get() || (!isHighPriority && isInteracting)) {
+                        return@launch
                     }
+
+                    // Stale Check 1: Time-to-Live in Queue
+                    // If this job sat in the semaphore queue for > 200ms, it's likely stale (panned away).
+                    if (System.currentTimeMillis() - startTime > 200) {
+                         return@launch
+                    }
+
+                    // Stale Check 2: Visibility (Double Check)
+                    // If it was supposed to be visible (High Priority) but is now off-screen, drop it.
+                    val currentVisible = lastVisibleRect
+                    if (currentVisible != null && isHighPriority && !forceRefresh) {
+                         val tileRect = getTileWorldRect(col, row, worldSize)
+                         if (!RectF.intersects(tileRect, currentVisible)) {
+                             return@launch
+                         }
+                    }
+
+                    // Limit concurrent heavy rendering to prevent OOM
+                    val bitmap =
+                        generationSemaphore.withPermit {
+                            if (!isActive || version != renderVersion.get()) return@withPermit null
+                            generateTileBitmap(col, row, worldSize, level)
+                        }
+
+                    if (bitmap == null || !isActive) return@launch
+
+                    // Final check before committing to cache - ensure we are still on the same version
+                    if (version == renderVersion.get()) {
+                        if (forceRefresh || tileCache.get(key) == null) {
+                            tileCache.put(key, bitmap)
+                        }
+                    }
+                } catch (t: Throwable) {
+                    if (t !is kotlinx.coroutines.CancellationException) {
+                        errorMessages.put(key, "${t.javaClass.simpleName}: ${t.message}")
+                        tileCache.put(key, tileCache.errorBitmap)
+                    }
+                } finally {
+                    synchronized(generatingKeys) { generatingKeys.remove(key) }
+                    generationJobs.remove(key, coroutineContext[Job])
+                    notifyTileReady()
                 }
-            } catch (t: Throwable) {
-                if (t !is kotlinx.coroutines.CancellationException) {
-                    errorMessages.put(key, "${t.javaClass.simpleName}: ${t.message}")
-                    tileCache.put(key, tileCache.errorBitmap)
-                }
-            } finally {
-                synchronized(generatingKeys) { generatingKeys.remove(key) }
             }
 
-            notifyTileReady()
-        }
+        generationJobs[key] = job
     }
 
-    private fun generateTileBitmap(
+    private suspend fun generateTileBitmap(
         col: Int,
         row: Int,
         worldSize: Float,
         level: Int, // Added level for logging
-    ): Bitmap =
+    ): Bitmap? =
         com.alexdremov.notate.util.PerformanceProfiler.trace("TileManager.generateTileBitmap") {
-            val bitmap = tileCache.obtainBitmap()
-            bitmap.eraseColor(Color.TRANSPARENT) // Clear potential garbage from reuse
-            val tileCanvas = Canvas(bitmap)
+            Logger.v("TileManager", "Generating: $col,$row L$level")
 
             val worldRect = getTileWorldRect(col, row, worldSize)
             val scale = tileSize.toFloat() / worldSize
 
-            Logger.d("TileManager", "Generating tile [$col,$row] L$level. Rect: $worldRect")
+            val rm = canvasModel.getRegionManager()
+            // CRITICAL OPTIMIZATION:
+            // If the tile covers a large area (zoomed out), rendering raw strokes is OOM-prone and slow.
+            // Instead, we composite region thumbnails.
+            val useComposite = rm != null && worldSize > rm.regionSize * 1.5f
 
-            tileCanvas.save()
-            tileCanvas.scale(scale, scale)
-            tileCanvas.translate(-worldRect.left, -worldRect.top)
+            // 1. Fetch Data (Lightweight, IO-bound, No Bitmap Allocation)
+            val items: List<com.alexdremov.notate.model.CanvasItem>?
+            val regionIds: List<RegionId>?
 
-            val items = canvasModel.queryItems(worldRect)
-            Logger.d("TileManager", "  Found ${items.size} items")
-
-            items.sortWith(compareBy<com.alexdremov.notate.model.CanvasItem> { it.zIndex }.thenBy { it.order })
-
-            for (item in items) {
-                renderer.drawItemToCanvas(tileCanvas, item, scale = scale)
+            if (useComposite) {
+                // Just get IDs, don't load heavy region data
+                regionIds = rm!!.getRegionIdsInRect(worldRect)
+                items = null
+            } else {
+                // Query items (might trigger region load, but we don't hold a bitmap yet)
+                items = canvasModel.queryItems(worldRect)
+                regionIds = null
             }
-            tileCanvas.restore()
+
+            // 2. Check Cancellation
+            yield()
+            if (!coroutineContext.isActive) return@trace null
+
+            // 3. Allocate Bitmap (Late Allocation)
+            val bitmap = tileCache.obtainBitmap()
+            bitmap.eraseColor(Color.TRANSPARENT)
+            val tileCanvas = Canvas(bitmap)
+
+            // 4. Render
+            if (useComposite) {
+                renderCompositeThumbnails(tileCanvas, worldRect, rm!!, regionIds!!, scale)
+            } else {
+                renderItems(tileCanvas, items!!, worldRect, scale)
+            }
 
             bitmap
         }
+
+    private suspend fun renderItems(
+        canvas: Canvas,
+        items: List<com.alexdremov.notate.model.CanvasItem>,
+        worldRect: RectF,
+        scale: Float,
+    ) {
+        canvas.save()
+        canvas.scale(scale, scale)
+        canvas.translate(-worldRect.left, -worldRect.top)
+
+        Logger.v("TileManager", "  Found ${items.size} items")
+
+        // We can sort in place or copy. Query returns ArrayList so it's mutable?
+        // queryItems returns ArrayList, let's assume mutable or copy.
+        val sortedItems = items.sortedWith(compareBy<com.alexdremov.notate.model.CanvasItem> { it.zIndex }.thenBy { it.order })
+
+        for (item in sortedItems) {
+            yield() // Check cancellation
+            renderer.drawItemToCanvas(canvas, item, scale = scale)
+        }
+        canvas.restore()
+    }
+
+    private suspend fun renderCompositeThumbnails(
+        canvas: Canvas,
+        worldRect: RectF,
+        rm: com.alexdremov.notate.data.region.RegionManager,
+        regionIds: List<RegionId>,
+        tileScale: Float,
+    ) {
+        Logger.d("TileManager", "  Compositing ${regionIds.size} thumbnails")
+
+        regionIds.forEach { id ->
+            yield() // Check cancellation
+            // This might block slightly if generating, but at zoomed out levels,
+            // one tile covers MANY regions, so ideally we rely on cache.
+            val thumb = rm.getRegionThumbnail(id, context)
+
+            if (thumb != null) {
+                val rBounds = id.getBounds(rm.regionSize)
+
+                // Map world region bounds to tile canvas coordinates
+                val left = (rBounds.left - worldRect.left) * tileScale
+                val top = (rBounds.top - worldRect.top) * tileScale
+                val right = (rBounds.right - worldRect.left) * tileScale
+                val bottom = (rBounds.bottom - worldRect.top) * tileScale
+
+                val dest = RectF(left, top, right, bottom)
+
+                // Draw with bilinear filtering for smoothness
+                canvas.drawBitmap(thumb, null, dest, null)
+            }
+        }
+    }
 
     fun updateTilesWithItem(item: com.alexdremov.notate.model.CanvasItem) {
         if (item is Stroke && item.style == com.alexdremov.notate.model.StrokeType.HIGHLIGHTER) {
@@ -710,10 +912,15 @@ class TileManager(
 
     // --- Private Helpers ---
 
-    private fun calculateLOD(scale: Float): Int =
-        floor(log2(1.0f / scale) + CanvasConfig.LOD_BIAS)
-            .toInt()
-            .coerceIn(CanvasConfig.MIN_ZOOM_LEVEL, CanvasConfig.MAX_ZOOM_LEVEL)
+    private fun calculateLOD(scale: Float): Int {
+        val rawLOD = log2(1.0f / scale) + CanvasConfig.LOD_BIAS
+        val level = floor(rawLOD).toInt().coerceIn(CanvasConfig.MIN_ZOOM_LEVEL, CanvasConfig.MAX_ZOOM_LEVEL)
+        
+        if (scale < 0.8f && level == 0) {
+             Logger.e("TileManager", "LOD Mismatch Alert! Scale=$scale results in Level=0. RawLOD=$rawLOD.")
+        }
+        return level
+    }
 
     private fun calculateWorldTileSize(level: Int): Float = tileSize * 2.0.pow(level.toDouble()).toFloat()
 
@@ -727,29 +934,44 @@ class TileManager(
         return RectF(left, top, left + worldSize, top + worldSize)
     }
 
-    private fun checkLevelChanged(level: Int): Int {
-        if (level != lastRenderLevel) {
-            lastRenderLevel = level
-            renderVersion.incrementAndGet()
-        }
-        return renderVersion.get()
-    }
+    private fun prefetchRegions(visibleRect: RectF, worldTileSize: Float) {
+        val rm = canvasModel.getRegionManager() ?: return
 
-    private fun queueNeighbors(
-        startCol: Int,
-        endCol: Int,
-        startRow: Int,
-        endRow: Int,
-        level: Int,
-        worldSize: Float,
-        version: Int,
-    ) {
-        val buffer = CanvasConfig.NEIGHBOR_COUNT
-        for (col in (startCol - buffer)..(endCol + buffer)) {
-            for (row in (startRow - buffer)..(endRow + buffer)) {
-                if (col in startCol..endCol && row in startRow..endRow) continue
-                queueTileGeneration(col, row, level, worldSize, false, version)
-            }
+        // OPTIMIZATION: If zoomed out significantly (worldTileSize > regionSize),
+        // we switch to Composite Thumbnail rendering.
+        // Loading raw RegionData (Strokes) is wasteful and causes OOM.
+        // So we DISABLE data prefetching in this mode.
+        // Ideally we would prefetch thumbnails, but that is less critical than preventing OOM.
+        if (worldTileSize > rm.regionSize * 1.5f) {
+            return
+        }
+
+        // Throttle: Don't prefetch if moved less than 1/4 of a tile
+        val threshold = worldTileSize / 4f
+        val last = lastPrefetchRect
+        if (last != null &&
+            kotlin.math.abs(last.centerX() - visibleRect.centerX()) < threshold &&
+            kotlin.math.abs(last.centerY() - visibleRect.centerY()) < threshold &&
+            kotlin.math.abs(last.width() - visibleRect.width()) < threshold
+        ) {
+            return
+        }
+
+        lastPrefetchRect = RectF(visibleRect)
+
+        // Expand rect to cover neighbors (plus a bit more for momentum)
+        val expansion = worldTileSize * (CanvasConfig.NEIGHBOR_COUNT + 1)
+        val fetchRect = RectF(visibleRect)
+        fetchRect.inset(-expansion, -expansion)
+
+        // Get IDs on IO thread to avoid blocking render thread with lock contention
+        scope.launch(Dispatchers.IO) {
+            val ids = rm.getRegionIdsInRect(fetchRect)
+
+            // Pin these regions to prevent eviction while visible/near-visible
+            rm.setPinnedRegions(ids.toSet())
+
+            rm.loadRegionsAsync(ids)
         }
     }
 

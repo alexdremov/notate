@@ -55,9 +55,11 @@ class TileManagerConcurrencyTest {
         mockRenderer = mockk(relaxed = true)
         modelEvents = MutableSharedFlow()
         every { mockModel.events } returns modelEvents
+        every { mockModel.getRegionManager() } returns null
 
         tileManager =
             TileManager(
+                context = org.robolectric.RuntimeEnvironment.getApplication(),
                 canvasModel = mockModel,
                 renderer = mockRenderer,
                 tileSize = 256,
@@ -133,8 +135,10 @@ class TileManagerConcurrencyTest {
             val parallelScope = CoroutineScope(parallelDispatcher + Job())
 
             try {
+                every { mockModel.getRegionManager() } returns null
                 val parallelTileManager =
                     TileManager(
+                        context = org.robolectric.RuntimeEnvironment.getApplication(),
                         canvasModel = mockModel,
                         renderer = mockRenderer,
                         tileSize = 256,

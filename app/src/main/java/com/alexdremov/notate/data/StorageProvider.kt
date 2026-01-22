@@ -445,6 +445,7 @@ class LocalStorageProvider(
                         it.isDirectory -> {
                             ProjectItem(
                                 name = it.name,
+                                fileName = it.name,
                                 path = it.absolutePath,
                                 lastModified = it.lastModified(),
                                 itemsCount = it.list()?.size ?: 0,
@@ -455,6 +456,7 @@ class LocalStorageProvider(
                             val metadata = StorageUtils.extractMetadata(it.name, { it.inputStream() }, it.length())
                             CanvasItem(
                                 name = it.nameWithoutExtension,
+                                fileName = it.name,
                                 path = it.absolutePath,
                                 lastModified = it.lastModified(),
                                 thumbnail = metadata?.thumbnail,
@@ -655,6 +657,7 @@ class LocalStorageProvider(
                     if (metadata?.tagIds?.contains(tagId) == true) {
                         CanvasItem(
                             name = it.nameWithoutExtension,
+                            fileName = it.name,
                             path = it.absolutePath,
                             lastModified = it.lastModified(),
                             thumbnail = metadata.thumbnail,
@@ -708,6 +711,7 @@ class SafStorageProvider(
                         it.isDirectory -> {
                             ProjectItem(
                                 name = it.name ?: "Unknown",
+                                fileName = it.name ?: "Unknown",
                                 path = it.uri.toString(),
                                 lastModified = it.lastModified(),
                                 itemsCount = 0,
@@ -727,6 +731,7 @@ class SafStorageProvider(
                                 }, it.length())
                             CanvasItem(
                                 name = name.removeSuffix(if (isJsonExt) ".json" else ".notate"),
+                                fileName = name,
                                 path = it.uri.toString(),
                                 lastModified = it.lastModified(),
                                 thumbnail = metadata?.thumbnail,
@@ -940,6 +945,7 @@ class SafStorageProvider(
                         results.add(
                             CanvasItem(
                                 name = name.removeSuffix(if (isJsonExt) ".json" else ".notate"),
+                                fileName = name,
                                 path = file.uri.toString(),
                                 lastModified = file.lastModified(),
                                 thumbnail = metadata.thumbnail,

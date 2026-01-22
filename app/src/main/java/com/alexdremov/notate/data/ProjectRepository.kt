@@ -9,12 +9,14 @@ import java.io.OutputStreamWriter
 
 sealed interface FileSystemItem {
     val name: String
+    val fileName: String
     val path: String
     val lastModified: Long
 }
 
 data class ProjectItem(
     override val name: String,
+    override val fileName: String,
     override val path: String,
     override val lastModified: Long,
     val itemsCount: Int,
@@ -22,6 +24,7 @@ data class ProjectItem(
 
 data class CanvasItem(
     override val name: String,
+    override val fileName: String,
     override val path: String,
     override val lastModified: Long,
     val thumbnail: String? = null,
@@ -151,6 +154,7 @@ class ProjectRepository(
                 val metadata = provider.getFileMetadata(path)
                 CanvasItem(
                     name = meta.name,
+                    fileName = "${meta.name}.notate", // Best effort guess from index
                     path = path,
                     lastModified = meta.lastModified,
                     thumbnail = metadata?.thumbnail,
