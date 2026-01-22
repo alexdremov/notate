@@ -178,7 +178,10 @@ class RegionManager(
             regionCache.put(id, region!!)
 
             if (region!!.sizeBytes() > memoryLimitBytes) {
-                Logger.w("RegionManager", "Region $id size (${region!!.sizeBytes() / 1024 / 1024}MB) exceeds cache limit! Thrashing likely.")
+                Logger.w(
+                    "RegionManager",
+                    "Region $id size (${region!!.sizeBytes() / 1024 / 1024}MB) exceeds cache limit! Thrashing likely.",
+                )
             }
         }
 

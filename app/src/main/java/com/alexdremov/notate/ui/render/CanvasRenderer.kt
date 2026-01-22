@@ -188,9 +188,43 @@ class CanvasRenderer(
     ) {
         // Query visible items or all items if unbound
         val queryRect = visibleRect ?: model.getContentBounds()
-        val items = model.queryItems(queryRect)
 
-        renderItems(canvas, items, visibleRect, quality, viewScale, context)
+        // Use region-aware rendering to avoid OOM for large areas
+        if (queryRect.width() > 5000 || queryRect.height() > 5000) {
+            // For very large areas, use region-by-region rendering
+            renderDirectVectorsFromRegions(canvas, queryRect, quality, viewScale)
+        } else {
+            // For smaller areas, use the original approach
+            val items = model.queryItems(queryRect)
+            renderItems(canvas, items, visibleRect, quality, viewScale, context)
+        }
+    }
+
+    /**
+     * Region-aware direct vector rendering for large areas to avoid OOM.
+     */
+    private fun renderDirectVectorsFromRegions(
+        canvas: Canvas,
+        queryRect: RectF,
+        quality: RenderQuality,
+        viewScale: Float,
+    ) {
+        val regionManager = model.getRegionManager() ?: return
+
+        // Get regions that intersect with our query
+        val regions = regionManager.getRegionsInRect(queryRect)
+
+        // Process each region individually to avoid memory spikes
+        for (region in regions) {
+            val regionItems = ArrayList<com.alexdremov.notate.model.CanvasItem>()
+            region.quadtree?.retrieve(regionItems, queryRect)
+
+            // Render items from this region
+            renderItems(canvas, regionItems, queryRect, quality, viewScale, context)
+
+            // Clear the temporary list to free memory
+            regionItems.clear()
+        }
     }
 
     companion object {

@@ -220,12 +220,8 @@ object PdfExporter {
             }
 
         if (isVector) {
-            // Note: For Infinite Canvas Vector, we still have a potential OOM if we query full bounds.
-            // But usually infinite canvas content is not dense enough over huge areas?
-            // To be safe, we could tile here too, but Vector tiling requires drawn-set to avoid duplicates.
-            val items = model.queryItems(bounds)
-            items.sortWith(compareBy<CanvasItem> { it.zIndex }.thenBy { it.order })
-            renderVectorItems(canvas, items, paint, context)
+            // Use region-aware rendering for vector export to avoid OOM
+            renderVectorItemsFromRegions(canvas, model, bounds, paint, context)
         } else {
             renderTiledBitmap(canvas, model, bounds, context, callback)
         }
@@ -247,6 +243,45 @@ object PdfExporter {
             } else {
                 StrokeRenderer.drawItem(canvas, item, false, paint, context)
             }
+        }
+    }
+
+    /**
+     * Region-aware vector rendering for infinite canvas export to avoid OOM.
+     */
+    private fun renderVectorItemsFromRegions(
+        canvas: Canvas,
+        model: InfiniteCanvasModel,
+        bounds: RectF,
+        paint: Paint,
+        context: android.content.Context,
+    ) {
+        val regionManager = model.getRegionManager() ?: return
+
+        // Get regions that intersect with our export bounds
+        val regions = regionManager.getRegionsInRect(bounds)
+
+        // Process each region individually to avoid memory spikes
+        for (region in regions) {
+            val regionItems = ArrayList<CanvasItem>()
+            region.quadtree?.retrieve(regionItems, bounds)
+
+            // Sort items by zIndex and order within this region
+            regionItems.sortWith(compareBy<CanvasItem> { it.zIndex }.thenBy { it.order })
+
+            // Render items from this region
+            for (item in regionItems) {
+                if (item is Stroke) {
+                    paint.color = item.color
+                    paint.strokeWidth = item.width
+                    StrokeRenderer.drawStroke(canvas, paint, item, forceVector = true)
+                } else {
+                    StrokeRenderer.drawItem(canvas, item, false, paint, context)
+                }
+            }
+
+            // Clear the temporary list to free memory
+            regionItems.clear()
         }
     }
 

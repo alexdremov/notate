@@ -13,6 +13,7 @@ import com.alexdremov.notate.data.CanvasType
 import com.alexdremov.notate.data.StrokeData
 import com.alexdremov.notate.data.region.RegionManager
 import com.alexdremov.notate.model.CanvasImage
+import com.alexdremov.notate.model.CanvasItem
 import com.alexdremov.notate.model.Stroke
 import com.alexdremov.notate.model.StrokeType
 import java.io.ByteArrayOutputStream
@@ -81,24 +82,123 @@ object ThumbnailGenerator {
                 strokeJoin = Paint.Join.ROUND
             }
 
-        // Iterate Active Regions
-        val regionIds = regionManager.getActiveRegionIds()
-        regionIds.forEach { id ->
-            val region = regionManager.getRegionReadOnly(id) ?: return@forEach
-            // Draw Strokes
-            region.items.filterIsInstance<Stroke>().forEach { stroke ->
+        // Use region-aware rendering to avoid OOM
+        renderThumbnailFromRegions(canvas, regionManager, bounds, paint, scale, context)
+
+        canvas.restore()
+        return bitmap
+    }
+
+    /**
+     * Region-aware thumbnail rendering that processes regions incrementally
+     * to avoid loading all strokes into memory at once.
+     */
+    private fun renderThumbnailFromRegions(
+        canvas: Canvas,
+        regionManager: RegionManager,
+        bounds: RectF,
+        paint: Paint,
+        scale: Float,
+        context: android.content.Context,
+    ) {
+        // Get regions that intersect with our thumbnail bounds
+        val regions = regionManager.getRegionsInRect(bounds)
+
+        if (regions.isEmpty()) {
+            return
+        }
+
+        // Dynamic region limit based on available memory and region count
+        val availableMemoryMB = Runtime.getRuntime().maxMemory() / (1024 * 1024)
+        val memoryBasedLimit =
+            when {
+                availableMemoryMB > 512 -> 100
+
+                // High-end devices can handle more
+                availableMemoryMB > 256 -> 50
+
+                // Mid-range devices
+                else -> 30 // Low-memory devices
+            }
+
+        // Also consider the actual region count - don't process more than we have
+        val reasonableLimit = minOf(memoryBasedLimit, regions.size)
+
+        // Smart prioritization: process regions with most content first
+        val regionsToProcess =
+            if (regions.size <= reasonableLimit) {
+                regions
+            } else {
+                // Capture bounds center for use in lambda
+                val centerX = bounds.centerX()
+                val centerY = bounds.centerY()
+
+                // Get region size for bounds calculation
+                val regionSize = regionManager.regionSize
+
+                // Prioritize by content density (items per region) and visual importance (center regions)
+                regions
+                    .sortedWith(
+                        compareByDescending<com.alexdremov.notate.data.region.RegionData> {
+                            // Primary: regions with content come first
+                            if (it.items.isEmpty()) 0 else 1
+                        }.thenByDescending {
+                            // Secondary: more items = higher priority
+                            it.items.size
+                        }.thenBy { region ->
+                            // Tertiary: center regions first (more likely to be visible)
+                            val regionBounds = region.id.getBounds(regionSize)
+                            val regionCenterX = regionBounds.centerX()
+                            val regionCenterY = regionBounds.centerY()
+                            // Distance from center - closer regions have higher priority
+                            val distance =
+                                kotlin.math.sqrt(
+                                    (centerX - regionCenterX) * (centerX - regionCenterX) +
+                                        (centerY - regionCenterY) * (centerY - regionCenterY),
+                                )
+                            distance
+                        },
+                    ).take(reasonableLimit)
+            }
+
+        Logger.d(
+            "ThumbnailGenerator",
+            "Processing ${regionsToProcess.size} of ${regions.size} regions for thumbnail",
+        )
+
+        // Process each region individually to avoid memory spikes
+        for ((index, region) in regionsToProcess.withIndex()) {
+            val regionItems = ArrayList<CanvasItem>()
+            region.quadtree?.retrieve(regionItems, bounds)
+
+            // Draw Strokes from this region
+            regionItems.filterIsInstance<Stroke>().forEach { stroke ->
                 val sData = CanvasSerializer.toStrokeData(stroke)
                 drawStroke(canvas, sData, paint, scale)
             }
 
-            // Draw Images
-            region.items.filterIsInstance<CanvasImage>().forEach { img ->
+            // Draw Images from this region
+            regionItems.filterIsInstance<CanvasImage>().forEach { img ->
                 StrokeRenderer.drawItem(canvas, img, false, paint, context, scale)
+            }
+
+            // Clear the temporary list to free memory
+            regionItems.clear()
+
+            // Yield periodically to avoid blocking and allow GC
+            if (index % 5 == 0) {
+                Thread.yield()
+                System.gc() // Suggest GC to clean up temporary objects
             }
         }
 
-        canvas.restore()
-        return bitmap
+        // Log only if we actually had to skip a significant number of regions
+        if (regions.size > reasonableLimit && (regions.size - reasonableLimit) > 10) {
+            Logger.w(
+                "ThumbnailGenerator",
+                "Thumbnail generation processed ${regionsToProcess.size} regions (${regions.size} total) - consider optimizing canvas density",
+            )
+        }
     }
 
     private fun drawStroke(

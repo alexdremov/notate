@@ -49,13 +49,14 @@ class CanvasRepositoryTest {
             storage.init()
             val regionManager = RegionManager(storage, metadata.regionSize)
 
-            val session = CanvasSession(
-                sessionDir = sessionDir,
-                regionManager = regionManager,
-                originLastModified = 0L,
-                originSize = 0L,
-                metadata = metadata
-            )
+            val session =
+                CanvasSession(
+                    sessionDir = sessionDir,
+                    regionManager = regionManager,
+                    originLastModified = 0L,
+                    originSize = 0L,
+                    metadata = metadata,
+                )
 
             val saveResult = repository.saveCanvasSession(path, session)
             assertEquals(path, saveResult.savedPath)
