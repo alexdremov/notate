@@ -12,3 +12,4 @@ keystore.properties
 release.keystore
 temp_*
 local.properties
+.geminiignore

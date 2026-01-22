@@ -42,9 +42,6 @@ data class RegionData(
     val contentBounds = RectF()
 
     @Transient
-    var cachedThumbnail: android.graphics.Bitmap? = null
-
-    @Transient
     private var lastCalculatedSize: Long = -1L
 
     /**
@@ -84,28 +81,54 @@ data class RegionData(
     }
 
     fun sizeBytes(): Long {
-        // Approximate size calculation for LRU
+        // More precise size calculation for LRU
+        // Object Headers (~16 bytes) + References (4-8 bytes) are accounted for.
         var size = 0L
         for (item in items) {
             size +=
                 when (item) {
                     is Stroke -> {
-                        item.points.size * 28L
+                        // Base Stroke object (~64) + RectF (~32) + references
+                        var itemSize = 128L
+
+                        // Points: List<TouchPoint>
+                        // TouchPoint is an object.
+                        // Per point: Object Header(16) + Fields(x,y,pressure,size,timestamp ~32) + Ref(4) = ~52 bytes
+                        itemSize += item.points.size * 52L
+
+                        // RenderCache - transient but occupies RAM
+                        item.renderCache?.let { cache ->
+                            itemSize +=
+                                when (cache) {
+                                    is com.alexdremov.notate.model.BallpointCache -> {
+                                        // List overhead + per segment (Obj + Path wrapper)
+                                        32L + cache.segments.size * (48L + 64L)
+                                    }
+
+                                    is com.alexdremov.notate.model.CharcoalCache -> {
+                                        // Arrays (Header+Size) + Path wrapper
+                                        64L + (cache.verts.size * 4L) + (cache.colors.size * 4L) + 64L
+                                    }
+
+                                    is com.alexdremov.notate.model.FountainCache -> {
+                                        64L // Path wrapper approx
+                                    }
+                                }
+                        }
+                        itemSize
                     }
 
-                    // 7 values (x,y,p,s,tx,ty,ts) * 4 bytes
                     is com.alexdremov.notate.model.CanvasImage -> {
-                        // Object overhead (~64) + RectF (~32) + URI String (2 bytes/char + header)
-                        256L + (item.uri.length * 2L)
+                        // Object overhead (~64) + RectF (~32) + URI String (Header+Ref ~48) + char array
+                        144L + (item.uri.length * 2L)
                     }
 
                     else -> {
-                        100L
+                        128L
                     }
                 }
         }
 
-        val thumbSize = cachedThumbnail?.allocationByteCount?.toLong() ?: 0L
-        return size + 1024 + thumbSize // Base overhead + thumbnail
+        return size + 128L + 128L // Base RegionData overhead + ArrayList overhead
     }
 }

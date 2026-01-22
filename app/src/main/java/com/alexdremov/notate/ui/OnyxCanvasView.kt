@@ -4,6 +4,8 @@ import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Matrix
+import android.graphics.Paint
+import android.graphics.Path
 import android.graphics.Rect
 import android.graphics.RectF
 import android.util.AttributeSet
@@ -32,6 +34,10 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import java.util.LinkedList
 
 class OnyxCanvasView
     @JvmOverloads
@@ -43,6 +49,8 @@ class OnyxCanvasView
         SurfaceHolder.Callback {
         // --- Components ---
         private val viewScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
+        private val debugRamHistory = LinkedList<Float>()
+        private val MAX_RAM_HISTORY_POINTS = 60
         private var touchHelper: TouchHelper? = null
         private val canvasModel = InfiniteCanvasModel()
         private val canvasRenderer = CanvasRenderer(canvasModel, context.applicationContext, viewScope) { invalidateCanvas() }
@@ -122,6 +130,25 @@ class OnyxCanvasView
             holder.addCallback(this)
             setZOrderOnTop(false)
             holder.setFormat(android.graphics.PixelFormat.OPAQUE)
+
+            viewScope.launch {
+                while (isActive) {
+                    if (CanvasConfig.DEBUG_SHOW_RAM_USAGE) {
+                        val runtime = Runtime.getRuntime()
+                        val used = (runtime.totalMemory() - runtime.freeMemory()).toFloat()
+                        val max = runtime.maxMemory().toFloat()
+                        val percent = if (max > 0) used / max else 0f
+
+                        debugRamHistory.add(percent)
+                        if (debugRamHistory.size > MAX_RAM_HISTORY_POINTS) {
+                            debugRamHistory.removeFirst()
+                        }
+
+                        invalidateCanvas()
+                    }
+                    delay(500)
+                }
+            }
 
             // Setup Viewport Controller to bridge Controller -> Interactor
             canvasController.setViewportController(
@@ -329,6 +356,7 @@ class OnyxCanvasView
         override fun onDetachedFromWindow() {
             super.onDetachedFromWindow()
             viewScope.cancel()
+            minimapDrawer?.detach()
             canvasRenderer.destroy()
         }
 
@@ -398,13 +426,51 @@ class OnyxCanvasView
 
                     if (CanvasConfig.DEBUG_SHOW_RAM_USAGE) {
                         val runtime = Runtime.getRuntime()
-                        val text = "RAM: ${(runtime.totalMemory() - runtime.freeMemory()) / 1048576L}MB"
+                        val usedMem = (runtime.totalMemory() - runtime.freeMemory())
+                        val text = "RAM: ${usedMem / 1048576L}MB"
                         val debugPaint =
-                            android.graphics.Paint().apply {
+                            Paint().apply {
                                 color = Color.RED
                                 textSize = 40f
+                                style = Paint.Style.FILL
                             }
-                        cv.drawText(text, 20f, height - 20f, debugPaint)
+                        cv.drawText(text, 20f, height - 130f, debugPaint)
+
+                        // Draw Graph
+                        val graphWidth = 300f
+                        val graphHeight = 100f
+                        val graphX = 20f
+                        val graphY = height - 20f - graphHeight
+
+                        val bgPaint =
+                            Paint().apply {
+                                color = Color.parseColor("#ffffffc7")
+                                style = Paint.Style.FILL
+                            }
+                        cv.drawRect(graphX, graphY, graphX + graphWidth, graphY + graphHeight, bgPaint)
+
+                        if (debugRamHistory.isNotEmpty()) {
+                            val path = Path()
+                            val stepX = graphWidth / MAX_RAM_HISTORY_POINTS
+
+                            debugPaint.style = Paint.Style.STROKE
+                            debugPaint.strokeWidth = 3f
+
+                            var first = true
+                            // Create a copy to avoid concurrent modification exception
+                            val historySnapshot = ArrayList(debugRamHistory)
+                            historySnapshot.forEachIndexed { index, percent ->
+                                val x = graphX + index * stepX
+                                val y = graphY + graphHeight - (percent * graphHeight)
+                                if (first) {
+                                    path.moveTo(x, y)
+                                    first = false
+                                } else {
+                                    path.lineTo(x, y)
+                                }
+                            }
+                            cv.drawPath(path, debugPaint)
+                        }
                     }
 
                     com.alexdremov.notate.util.PerformanceProfiler

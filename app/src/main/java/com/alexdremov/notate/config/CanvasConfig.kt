@@ -16,14 +16,15 @@ object CanvasConfig {
     const val MIN_ZOOM_LEVEL = -10
     const val MAX_ZOOM_LEVEL = 10
     const val LOD_BIAS = 0.0f // Switch to lower resolution sooner
-    const val CACHE_MEMORY_PERCENT = 0.20 // of heap
+    const val CACHE_MEMORY_PERCENT = 0.30 // of heap
     const val IMAGE_CACHE_MEMORY_PERCENT = 0.10 // of heap
     const val REGIONS_CACHE_MEMORY_PERCENT = 0.50 // of heap
     const val IMAGE_METADATA_CACHE_SIZE = 200
     const val ERROR_CACHE_SIZE = 100
     const val NEIGHBOR_PRECACHE_THRESHOLD_PERCENT = 0.9
-    const val NEIGHBOR_COUNT = 1
+    const val NEIGHBOR_COUNT = 2
     val THREAD_POOL_SIZE = Runtime.getRuntime().availableProcessors()
+    const val THUMBNAIL_RESOLUTION = 2048f
 
     // Debugging
     var DEBUG_USE_SIMPLE_RENDERER = false

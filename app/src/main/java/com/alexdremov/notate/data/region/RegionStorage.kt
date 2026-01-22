@@ -15,6 +15,7 @@ import java.io.File
 
 class RegionStorage(
     private val baseDir: File,
+    private val zipSource: File? = null,
 ) {
     fun init() {
         if (!baseDir.exists()) {
@@ -99,6 +100,16 @@ class RegionStorage(
     @OptIn(ExperimentalSerializationApi::class)
     fun loadRegion(id: RegionId): RegionData? {
         val file = getRegionFile(id)
+        
+        // JIT Extraction Strategy
+        if (!file.exists() && zipSource != null && zipSource.exists()) {
+            // Attempt to extract from ZIP
+            val entryName = file.name // "r_X_Y.bin"
+            if (com.alexdremov.notate.util.ZipUtils.extractFile(zipSource, entryName, file)) {
+                Logger.d("RegionStorage", "JIT Extracted region $id from ZIP")
+            }
+        }
+
         if (!file.exists()) {
             // Normal case for new regions, verbose log only
             // Logger.v("RegionStorage", "Region file not found: $id")
@@ -237,6 +248,14 @@ class RegionStorage(
     @OptIn(ExperimentalSerializationApi::class)
     fun loadIndex(): Map<RegionId, RectF> {
         val file = File(baseDir, "index.bin")
+        
+        // JIT Extraction for Index
+        if (!file.exists() && zipSource != null && zipSource.exists()) {
+             if (com.alexdremov.notate.util.ZipUtils.extractFile(zipSource, "index.bin", file)) {
+                 Logger.i("RegionStorage", "JIT Extracted index.bin from ZIP")
+             }
+        }
+
         if (!file.exists()) {
             Logger.i("RegionStorage", "No index found (Fresh session)")
             return emptyMap()

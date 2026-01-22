@@ -47,6 +47,9 @@ class CanvasSession(
 
     // Mutex to synchronize save operations across shared sessions
     val saveMutex = Mutex()
+    
+    // Background Initialization Job (e.g. JIT Unzip remainder)
+    var initializationJob: kotlinx.coroutines.Job? = null
 
     /**
      * Updates the metadata for this session.
@@ -54,6 +57,13 @@ class CanvasSession(
      */
     fun updateMetadata(newMetadata: CanvasData) {
         metadata = newMetadata
+    }
+
+    /**
+     * Waits for any pending initialization (like background unzip) to complete.
+     */
+    suspend fun waitForInitialization() {
+        initializationJob?.join()
     }
 
     /**

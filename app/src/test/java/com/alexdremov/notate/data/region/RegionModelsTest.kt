@@ -47,17 +47,16 @@ class RegionModelsTest {
         val id = RegionId(0, 0)
         val region = RegionData(id)
 
-        // Base overhead
-        assertEquals(1024L, region.sizeBytes())
+        // Base overhead (128L)
+        assertEquals(128L, region.sizeBytes())
 
         // Add a stroke
-        val strokePoints = 10
-        val stroke = createTestStroke(strokePoints)
+        val strokePointsCount = 10
+        val stroke = createTestStroke(strokePointsCount)
         region.items.add(stroke)
 
-        // Expected size: Base + (10 points * 28 bytes)
-        // 28 bytes = 7 floats * 4 bytes
-        val expectedSize = 1024L + (strokePoints * 28L)
+        // Expected size: Base(128) + StrokeBase(128) + Points(10 * 52)
+        val expectedSize = 128L + 128L + (strokePointsCount * 52L)
         assertEquals(expectedSize, region.sizeBytes())
 
         // Add an image
@@ -68,8 +67,8 @@ class RegionModelsTest {
             )
         region.items.add(image)
 
-        // Expected size: Previous + (256L + length * 2)
-        val imageSize = 256L + (image.uri.length * 2L)
+        // Expected size: Previous + Image(144 + length * 2)
+        val imageSize = 144L + (image.uri.length * 2L)
         assertEquals(expectedSize + imageSize, region.sizeBytes())
     }
 

@@ -122,12 +122,15 @@ class MinimapDrawer(
             }
         }
 
-        // 3. Determine Scale to fit Context into MINIMAP_WIDTH
+        // 3. Determine Scale to fit Context into View
         val contextW = contextRect.width().coerceAtLeast(1f)
         val contextH = contextRect.height().coerceAtLeast(1f)
 
-        val scaleX = CanvasConfig.MINIMAP_WIDTH / contextW
-        val scaleY = CanvasConfig.MINIMAP_WIDTH / contextH
+        val availableWidth = width - 2 * padding
+        val availableHeight = height - 2 * padding
+
+        val scaleX = availableWidth / contextW
+        val scaleY = availableHeight / contextH
         val mapScale = min(scaleX, scaleY)
 
         val targetW = contextW * mapScale
@@ -147,7 +150,6 @@ class MinimapDrawer(
                 style = Paint.Style.FILL
             },
         )
-        canvas.drawRect(mapLeft, mapTop, mapLeft + targetW, mapTop + targetH, minimapPaint)
 
         // 4. Update Content Thumbnail if Dirty or Context Changed
         val contextChanged = !contentRect.contains(contextRect) && model.canvasType == CanvasType.FIXED_PAGES
@@ -176,20 +178,17 @@ class MinimapDrawer(
         contentThumbnail?.let {
             Logger.d("MinimapDrawer", "Drawing thumbnail: ${it.width}x${it.height}")
 
-            // DEBUG: Draw a red border around the thumbnail area
-            val debugPaint =
-                Paint().apply {
-                    color = android.graphics.Color.RED
-                    style = Paint.Style.STROKE
-                    strokeWidth = 5f
-                }
-            canvas.drawRect(RectF(destLeft, destTop, destLeft + destWidth, destTop + destHeight), debugPaint)
-
             // Draw the actual thumbnail
+            canvas.save()
+            canvas.clipRect(mapLeft, mapTop, mapLeft + targetW, mapTop + targetH)
             canvas.drawBitmap(it, null, RectF(destLeft, destTop, destLeft + destWidth, destTop + destHeight), null)
+            canvas.restore()
 
-            Logger.d("MinimapDrawer", "Thumbnail drawn successfully with debug border")
+            Logger.d("MinimapDrawer", "Thumbnail drawn successfully")
         }
+
+        // Draw Border (after thumbnail to prevent overdraw)
+        canvas.drawRect(mapLeft, mapTop, mapLeft + targetW, mapTop + targetH, minimapPaint)
 
         // 6. Draw Viewport (Red Stroke)
         val minimapMatrix = Matrix()
@@ -221,6 +220,13 @@ class MinimapDrawer(
     private val currentLoadingRegions = mutableSetOf<com.alexdremov.notate.data.region.RegionId>()
     private val regionLoadTimeoutMs = 5000L // 5 second timeout per region
 
+    private val drawerScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Main + kotlinx.coroutines.SupervisorJob())
+
+    fun detach() {
+        drawerScope.coroutineContext[kotlinx.coroutines.Job]?.cancel()
+        minimapHandler.removeCallbacksAndMessages(null)
+    }
+
     private fun regenerateThumbnail(contextRect: RectF) {
         Logger.d("MinimapDrawer", "=== Starting thumbnail regeneration ===")
         Logger.d("MinimapDrawer", "Context rect: $contextRect")
@@ -234,8 +240,7 @@ class MinimapDrawer(
         // Capture context for background task
         val capturedContextRect = RectF(contextRect)
 
-        @OptIn(kotlinx.coroutines.DelicateCoroutinesApi::class)
-        kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+        drawerScope.launch(kotlinx.coroutines.Dispatchers.IO) {
             try {
                 Logger.d("MinimapDrawer", "Background thread started for thumbnail generation")
 
@@ -298,6 +303,13 @@ class MinimapDrawer(
                     renderNextDirtyRegion(capturedContextRect, thumbScale)
                 } else {
                     Logger.w("MinimapDrawer", "No regions to process, will finalize with white thumbnail")
+
+                    // Attempt self-healing for Fixed Pages where we expect content
+                    if (model.canvasType == com.alexdremov.notate.data.CanvasType.FIXED_PAGES) {
+                        Logger.w("MinimapDrawer", "Triggering spatial index validation due to unexpected empty result")
+                        model.getRegionManager()?.validateSpatialIndex()
+                    }
+
                     finalizeRegeneration()
                 }
             } catch (e: Exception) {
@@ -315,8 +327,7 @@ class MinimapDrawer(
         contextRect: RectF,
         thumbScale: Float,
     ) {
-        @OptIn(kotlinx.coroutines.DelicateCoroutinesApi::class)
-        kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+        drawerScope.launch(kotlinx.coroutines.Dispatchers.IO) {
             var regionId: com.alexdremov.notate.data.region.RegionId? = null
             try {
                 // Get next dirty region in a thread-safe manner

@@ -161,54 +161,117 @@ class CanvasRepository(
                                     lockHandle = fileLock,
                                 )
                         } else {
-                            val isZip = isZipFile(inputStream)
+                            val format = checkFileFormat(inputStream)
                             inputStream.close()
 
-                            if (!isZip) {
-                                Logger.e("CanvasRepository", "Legacy file format not supported in V2: $path")
+                            if (format == FileFormat.EMPTY) {
+                                // Treat as new file
+                                Logger.i("CanvasRepository", "Empty file detected via stream. Creating new session for: $path")
+                                val storage = RegionStorage(sessionDir)
+                                storage.init()
+
+                                val metadata = CanvasData(version = 3, regionSize = CanvasConfig.DEFAULT_REGION_SIZE)
+                                val manifestFile = File(sessionDir, "manifest.bin")
+                                val metaBytes = ProtoBuf.encodeToByteArray(CanvasData.serializer(), metadata)
+                                manifestFile.writeBytes(metaBytes)
+
+                                val regionManager = RegionManager(storage, CanvasConfig.DEFAULT_REGION_SIZE)
+                                finalSession =
+                                    CanvasSession(
+                                        sessionDir = sessionDir,
+                                        regionManager = regionManager,
+                                        originLastModified = originLastModified,
+                                        originSize = originSize,
+                                        metadata = metadata,
+                                        lockHandle = fileLock,
+                                    )
+                            } else if (format != FileFormat.ZIP) {
+                                Logger.e("CanvasRepository", "Legacy/Unknown file format not supported in V2: $path")
                                 sessionDir.deleteRecursively()
                                 fileLock?.close()
                                 return@withContext null
-                            }
+                            } else {
+                                // Optimized Load (JIT Unzip) for Local Files
+                                // For local files, we skip full unpack and let RegionStorage extract on demand.
+                                var metadata: CanvasData? = null
+                                var storage: RegionStorage? = null
+                                var useOptimizedPath = false
 
-                            // Unpack
-                            val sourceStream =
-                                openInputStream(path) ?: run {
-                                    fileLock?.close()
-                                    return@withContext null
+                                if (!path.startsWith("content://")) {
+                                    val sourceFile = File(path)
+                                    // Try optimized load
+                                    val manifest = com.alexdremov.notate.util.ZipUtils.readManifest(sourceFile)
+                                    if (manifest != null) {
+                                        Logger.i("CanvasRepository", "Using Optimized JIT Load for: $path")
+                                        
+                                        // We need to extract manifest.bin to disk so RegionStorage sees it?
+                                        // Actually RegionManager loads metadata passed to constructor.
+                                        // But we should extract it for consistency if we save later.
+                                        com.alexdremov.notate.util.ZipUtils.extractFile(sourceFile, "manifest.bin", File(sessionDir, "manifest.bin"))
+                                        
+                                        metadata = manifest
+                                        storage = RegionStorage(sessionDir, zipSource = sourceFile)
+                                        storage.init()
+                                        useOptimizedPath = true
+                                    }
                                 }
 
-                            try {
-                                atomicStorage.unpack(sourceStream, sessionDir)
-                            } finally {
-                                sourceStream.close()
+                                if (!useOptimizedPath) {
+                                    // Fallback: Full Unpack
+                                    Logger.i("CanvasRepository", "Using Legacy Full Unpack for: $path")
+                                    val sourceStream =
+                                        openInputStream(path) ?: run {
+                                            fileLock?.close()
+                                            return@withContext null
+                                        }
+
+                                    try {
+                                        atomicStorage.unpack(sourceStream, sessionDir)
+                                    } finally {
+                                        sourceStream.close()
+                                    }
+
+                                    // Load Metadata
+                                    val manifestFile = File(sessionDir, "manifest.bin")
+                                    if (manifestFile.exists()) {
+                                        metadata = ProtoBuf.decodeFromByteArray(CanvasData.serializer(), manifestFile.readBytes())
+                                    } else {
+                                        Logger.e("CanvasRepository", "Manifest missing in ZIP")
+                                        sessionDir.deleteRecursively()
+                                        fileLock?.close()
+                                        return@withContext null
+                                    }
+
+                                    storage = RegionStorage(sessionDir) // No zipSource fallback needed
+                                    storage.init()
+                                }
+                                
+                                val regionManager = RegionManager(storage!!, metadata!!.regionSize)
+
+                                finalSession =
+                                    CanvasSession(
+                                        sessionDir = sessionDir,
+                                        regionManager = regionManager,
+                                        originLastModified = originLastModified,
+                                        originSize = originSize,
+                                        metadata = metadata,
+                                        lockHandle = fileLock,
+                                    )
+                                    
+                                if (useOptimizedPath && !path.startsWith("content://")) {
+                                    // Launch background unzip to ensure full session integrity for saving
+                                    val sourceFile = File(path)
+                                    finalSession.initializationJob = repositoryScope.launch {
+                                        try {
+                                            Logger.i("CanvasRepository", "Starting background unzip for remainder of session...")
+                                            com.alexdremov.notate.util.ZipUtils.unzipSkippingExisting(sourceFile, sessionDir)
+                                            Logger.i("CanvasRepository", "Background unzip complete.")
+                                        } catch (e: Exception) {
+                                            Logger.e("CanvasRepository", "Background unzip failed", e)
+                                        }
+                                    }
+                                }
                             }
-
-                            // Load Metadata
-                            val manifestFile = File(sessionDir, "manifest.bin")
-                            val metadata: CanvasData
-                            if (manifestFile.exists()) {
-                                metadata = ProtoBuf.decodeFromByteArray(CanvasData.serializer(), manifestFile.readBytes())
-                            } else {
-                                Logger.e("CanvasRepository", "Manifest missing in ZIP")
-                                sessionDir.deleteRecursively()
-                                fileLock?.close()
-                                return@withContext null
-                            }
-
-                            val storage = RegionStorage(sessionDir)
-                            storage.init()
-                            val regionManager = RegionManager(storage, metadata.regionSize)
-
-                            finalSession =
-                                CanvasSession(
-                                    sessionDir = sessionDir,
-                                    regionManager = regionManager,
-                                    originLastModified = originLastModified,
-                                    originSize = originSize,
-                                    metadata = metadata,
-                                    lockHandle = fileLock,
-                                )
                         }
                     } else {
                         // Resuming
@@ -301,6 +364,9 @@ class CanvasRepository(
             }
 
             try {
+                // Ensure background unzip is complete before saving to prevent data loss
+                session.waitForInitialization()
+
                 // Mutex ensures sequential saves for this session
                 session.saveMutex.withLock {
                     if (!session.sessionDir.exists()) {
@@ -374,14 +440,22 @@ class CanvasRepository(
             }
         }
 
-    private fun isZipFile(input: InputStream): Boolean {
+    private enum class FileFormat {
+        ZIP,
+        EMPTY,
+        UNKNOWN,
+    }
+
+    private fun checkFileFormat(input: InputStream): FileFormat {
         val buffered = if (input.markSupported()) input else BufferedInputStream(input)
         buffered.mark(4)
         val signature = ByteArray(4)
         val read = buffered.read(signature)
         buffered.reset()
-        if (read < 4) return false
-        return signature[0] == 0x50.toByte() && signature[1] == 0x4B.toByte()
+        if (read <= 0) return FileFormat.EMPTY
+        if (read < 4) return FileFormat.UNKNOWN
+        if (signature[0] == 0x50.toByte() && signature[1] == 0x4B.toByte()) return FileFormat.ZIP
+        return FileFormat.UNKNOWN
     }
 
     private fun hashPath(path: String): String {

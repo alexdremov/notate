@@ -7,6 +7,7 @@ import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.RectF
 import android.util.Base64
+import com.alexdremov.notate.config.CanvasConfig
 import com.alexdremov.notate.data.CanvasData
 import com.alexdremov.notate.data.CanvasSerializer
 import com.alexdremov.notate.data.CanvasType
@@ -20,8 +21,8 @@ import java.io.ByteArrayOutputStream
 import kotlin.math.min
 
 object ThumbnailGenerator {
-    private const val THUMB_WIDTH = 128
-    private const val THUMB_HEIGHT = 128
+    private val THUMB_WIDTH = CanvasConfig.THUMBNAIL_RESOLUTION.toInt()
+    private val THUMB_HEIGHT = CanvasConfig.THUMBNAIL_RESOLUTION.toInt()
     private const val PADDING = 4f
 
     fun generateBase64(
@@ -59,7 +60,22 @@ object ThumbnailGenerator {
                 }
 
                 CanvasType.INFINITE -> {
-                    regionManager.getContentBounds().takeIf { !it.isEmpty } ?: RectF(0f, 0f, 1000f, 1000f)
+                    // Optimization: For infinite canvas, capture only the latest viewport
+                    // to preserve detail and avoid rendering massive empty areas.
+                    val dm = context.resources.displayMetrics
+                    val vW = dm.widthPixels.toFloat()
+                    val vH = dm.heightPixels.toFloat()
+
+                    val mat = android.graphics.Matrix()
+                    mat.postScale(metadata.zoomLevel, metadata.zoomLevel)
+                    mat.postTranslate(metadata.offsetX, metadata.offsetY)
+
+                    val inv = android.graphics.Matrix()
+                    mat.invert(inv)
+
+                    val viewport = RectF(0f, 0f, vW, vH)
+                    inv.mapRect(viewport)
+                    viewport
                 }
             }
 

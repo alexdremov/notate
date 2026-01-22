@@ -287,6 +287,32 @@ internal object StorageUtils {
         }
     }
 
+    fun createV2CanvasZip(
+        outputStream: OutputStream,
+        data: CanvasData,
+    ) {
+        java.util.zip.ZipOutputStream(outputStream).use { zos ->
+            // 1. manifest.bin
+            val manifestEntry = java.util.zip.ZipEntry("manifest.bin")
+            zos.putNextEntry(manifestEntry)
+            val manifestBytes = ProtoBuf.encodeToByteArray(CanvasData.serializer(), data)
+            zos.write(manifestBytes)
+            zos.closeEntry()
+
+            // 2. index.bin (Empty region list)
+            val indexEntry = java.util.zip.ZipEntry("index.bin")
+            zos.putNextEntry(indexEntry)
+            // Empty list of RegionBoundsProto
+            val indexBytes =
+                ProtoBuf.encodeToByteArray(
+                    kotlinx.serialization.builtins.ListSerializer(RegionBoundsProto.serializer()),
+                    emptyList(),
+                )
+            zos.write(indexBytes)
+            zos.closeEntry()
+        }
+    }
+
     private fun readVarint(stream: InputStream): Long {
         var value = 0L
         var shift = 0
@@ -477,8 +503,9 @@ class LocalStorageProvider(
 
         return try {
             if (!file.exists()) {
-                val bytes = ProtoBuf.encodeToByteArray(data)
-                file.writeBytes(bytes)
+                file.outputStream().use { os ->
+                    StorageUtils.createV2CanvasZip(os, data)
+                }
                 file.absolutePath
             } else {
                 Logger.w("Storage", "File already exists: $fileName")
@@ -755,9 +782,8 @@ class SafStorageProvider(
         val newFile = parentDir.createFile("application/octet-stream", fileName) ?: return null
 
         return try {
-            val bytes = ProtoBuf.encodeToByteArray(data)
             context.contentResolver.openOutputStream(newFile.uri)?.use { os ->
-                os.write(bytes)
+                StorageUtils.createV2CanvasZip(os, data)
             }
             newFile.uri.toString()
         } catch (e: Exception) {

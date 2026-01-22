@@ -74,6 +74,20 @@ class AtomicContainerStorage(
                 throw IOException("Generated ZIP is invalid: Bad signature")
             }
         }
+
+        // Ensure at least one entry exists
+        var hasEntries = false
+        try {
+            java.util.zip.ZipFile(file).use { zip ->
+                hasEntries = zip.entries().hasMoreElements()
+            }
+        } catch (e: Exception) {
+            throw IOException("Generated ZIP is corrupted: ${e.message}", e)
+        }
+
+        if (!hasEntries) {
+            throw IOException("Generated ZIP is empty (no entries)")
+        }
     }
 
     private fun commit(

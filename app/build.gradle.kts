@@ -64,6 +64,15 @@ android {
         jvmToolchain(21)
     }
 
+    testOptions {
+        unitTests {
+            isIncludeAndroidResources = true
+            all {
+                it.maxHeapSize = "6g"
+            }
+        }
+    }
+
     packaging {
         jniLibs {
             pickFirsts.add("lib/**/libc++_shared.so")
@@ -117,6 +126,9 @@ dependencies {
     implementation("com.onyx.android.sdk:onyxsdk-pen:1.5.0.4")
     implementation("com.onyx.android.sdk:onyxsdk-base:1.8.3")
     implementation("org.lsposed.hiddenapibypass:hiddenapibypass:6.1")
+
+    // PDF Support
+    implementation("com.tom-roush:pdfbox-android:2.0.27.0")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")

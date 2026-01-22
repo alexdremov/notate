@@ -60,10 +60,37 @@ class SyncManager(
         val relativePath: String,
     )
 
+    companion object {
+        @Volatile
+        var isCanvasOpen: Boolean = false
+        private val activeSyncJobs = java.util.Collections.newSetFromMap(java.util.concurrent.ConcurrentHashMap<Job, Boolean>())
+
+        fun cancelAllSyncs() {
+            Logger.i("SyncManager", "Cancelling all active sync jobs due to canvas activity")
+            synchronized(activeSyncJobs) {
+                activeSyncJobs.forEach { it.cancel() }
+                activeSyncJobs.clear()
+            }
+        }
+    }
+
     suspend fun syncProject(
         projectId: String,
         progressCallback: ((Int, String) -> Unit)? = null,
     ) = withContext(Dispatchers.IO) {
+        if (isCanvasOpen) {
+            Logger.w("SyncManager", "Skipping sync because canvas is open")
+            return@withContext
+        }
+
+        val job = currentCoroutineContext()[Job]
+        if (job != null) {
+            activeSyncJobs.add(job)
+            job.invokeOnCompletion {
+                activeSyncJobs.remove(job)
+            }
+        }
+
         Logger.d("SyncManager", "Starting sync for project ID: $projectId")
         val config = SyncPreferencesManager.getProjectSyncConfig(context, projectId)
 
@@ -212,6 +239,9 @@ class SyncManager(
             SyncPreferencesManager.updateProjectSyncConfig(context, config.copy(lastSyncTimestamp = System.currentTimeMillis()))
             progressCallback?.invoke(100, "Sync complete")
             Logger.d("SyncManager", "Sync finished successfully")
+        } catch (e: CancellationException) {
+            Logger.d("SyncManager", "Sync cancelled")
+            progressCallback?.invoke(0, "Sync cancelled: ${e.message}")
         } catch (e: Exception) {
             Logger.e("SyncManager", "Sync failed", e, showToUser = true)
             progressCallback?.invoke(0, "Sync failed: ${e.message}")
@@ -355,8 +385,10 @@ class SyncManager(
         } catch (e: Exception) {
             Logger.e("SyncManager", "Failed to sync PDF for ${localFile.name}", e)
         } finally {
-            // Always close the session to clean up the temporary directory
-            session?.close()
+            // Always release the session properly
+            if (session != null) {
+                canvasRepository.releaseCanvasSession(session)
+            }
         }
     }
 

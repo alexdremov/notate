@@ -152,13 +152,28 @@ class CanvasActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        // Prevent sync while canvas is opening
+        com.alexdremov.notate.data.SyncManager
+            .cancelAllSyncs()
+        com.alexdremov.notate.data.SyncManager.isCanvasOpen = true
+
         // Intercept Back Press - Save in background and close immediately
         onBackPressedDispatcher.addCallback(this) {
-            val session = currentSessionRef.get()
+            val session = currentSessionRef.getAndSet(null)
             val path = currentCanvasPath
             if (session != null && path != null && !session.isClosed()) {
-                // Launch background save and close
-                lifecycleScope.launch {
+                // Update metadata from UI one last time to capture final viewport for thumbnail
+                try {
+                    val finalMetadata = binding.canvasView.getCanvasData().copy(
+                        toolbarItems = viewModel.toolbarItems.value
+                    )
+                    session.updateMetadata(finalMetadata)
+                } catch (e: Exception) {
+                    Logger.e("CanvasActivity", "Failed to capture final metadata on exit", e)
+                }
+
+                // Launch background save and close on Process Scope to survive Activity destruction
+                ProcessLifecycleOwner.get().lifecycleScope.launch {
                     canvasRepository.saveAndCloseSession(path, session)
                 }
             }
@@ -459,8 +474,19 @@ class CanvasActivity : AppCompatActivity() {
         }
     }
 
+    override fun onResume() {
+        super.onResume()
+        // Ensure no sync runs while canvas is active
+        com.alexdremov.notate.data.SyncManager
+            .cancelAllSyncs()
+        com.alexdremov.notate.data.SyncManager.isCanvasOpen = true
+    }
+
     override fun onPause() {
         super.onPause()
+        // Allow sync to proceed in background
+        com.alexdremov.notate.data.SyncManager.isCanvasOpen = false
+
         // Force commit on pause
         saveCanvas(commit = true)
 

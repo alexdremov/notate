@@ -6,6 +6,7 @@ import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.RectF
 import android.util.LruCache
+import com.alexdremov.notate.config.CanvasConfig
 import com.alexdremov.notate.model.CanvasItem
 import com.alexdremov.notate.util.Logger
 import com.alexdremov.notate.util.Quadtree
@@ -50,6 +51,15 @@ class RegionManager(
     // Cache size in KB
     private val regionCache: LruCache<RegionId, RegionData>
 
+    // Thumbnail Cache (Separate from Region Data) - 20MB limit
+    private val thumbnailCache =
+        object : LruCache<RegionId, Bitmap>(20 * 1024) {
+            override fun sizeOf(
+                key: RegionId,
+                value: Bitmap,
+            ): Int = (value.allocationByteCount / 1024).coerceAtLeast(1)
+        }
+
     // Global Index of active regions and their bounds
     private val regionIndex: MutableMap<RegionId, RectF>
 
@@ -89,12 +99,7 @@ class RegionManager(
         Logger.d("RegionManager", "Initialized with ${regionIndex.size} regions from index")
 
         // Build Skeleton Quadtree
-        regionIndex.forEach { (id, bounds) ->
-            val proxy = RegionProxy(id, bounds)
-            regionProxies[id] = proxy
-            skeletonQuadtree = skeletonQuadtree.insert(proxy)
-        }
-        Logger.d("RegionManager", "Skeleton Quadtree built. Root bounds: ${skeletonQuadtree.getBounds()}")
+        rebuildSkeletonQuadtree()
 
         val maxKb = (memoryLimitBytes / 1024).toInt()
         regionCache =
@@ -237,37 +242,47 @@ class RegionManager(
         context: android.content.Context,
     ): Bitmap? {
         // 1. Fast Cache Check
-        var region = regionCache.get(id)
-        if (region?.cachedThumbnail != null) return region!!.cachedThumbnail
+        var bitmap = thumbnailCache.get(id)
+        if (bitmap != null) return bitmap
 
         // 2. Disk Check (IO, no lock)
-        var bitmap = storage.loadThumbnail(id)
+        bitmap = storage.loadThumbnail(id)
         if (bitmap != null) {
-            // Hit! Update memory cache if loaded
-            lock.write {
-                region = regionCache.get(id)
-                if (region != null) {
-                    // Atomic Resize Dance
-                    resizingId = id
-                    regionCache.remove(id)
-                    resizingId = null
-
-                    region!!.cachedThumbnail = bitmap
-                    region!!.invalidateSize()
-
-                    regionCache.put(id, region!!)
-                }
-            }
+            thumbnailCache.put(id, bitmap)
             return bitmap
         }
 
         // 3. Generation Needed
-        // Load region (handles its own locking optimization)
-        val loadedRegion = getRegion(id)
+        // Ensure the primary region is loaded
+        getRegion(id)
+
+        // 3a. Smart Stitching: Identify all regions that overlap this tile.
+        // This includes the region itself and any neighbors with strokes extending into this tile.
+        val regionBounds =
+            RectF(
+                id.x * regionSize,
+                id.y * regionSize,
+                (id.x + 1) * regionSize,
+                (id.y + 1) * regionSize,
+            )
+        val overlappingIds = getRegionIdsInRect(regionBounds)
+
+        // 3b. Ensure all overlapping regions are loaded (IO outside lock)
+        overlappingIds.forEach { getRegion(it) }
 
         // 4. Snapshot items under Read Lock
-        // This avoids holding the lock during the heavy draw call below.
-        val itemsSnapshot = lock.read { ArrayList(loadedRegion.items) }
+        // We collect items from ALL overlapping regions that actually intersect our tile.
+        val itemsSnapshot = ArrayList<CanvasItem>()
+        lock.read {
+            overlappingIds.forEach { overlapId ->
+                val r = regionCache.get(overlapId)
+                r?.items?.forEach { item ->
+                    if (RectF.intersects(item.bounds, regionBounds)) {
+                        itemsSnapshot.add(item)
+                    }
+                }
+            }
+        }
 
         // 5. Generate Bitmap (Heavy CPU, No Lock)
         val newBitmap = generateThumbnailFromItems(id, itemsSnapshot, context) ?: return null
@@ -275,20 +290,8 @@ class RegionManager(
         // 6. Save to disk (IO, No Lock)
         storage.saveThumbnail(id, newBitmap)
 
-        // 7. Update memory cache (Fast, Write Lock)
-        lock.write {
-            region = regionCache.get(id)
-            if (region != null) {
-                resizingId = id
-                regionCache.remove(id)
-                resizingId = null
-
-                region!!.cachedThumbnail = newBitmap
-                region!!.invalidateSize()
-
-                regionCache.put(id, region!!)
-            }
-        }
+        // 7. Update memory cache
+        thumbnailCache.put(id, newBitmap)
 
         return newBitmap
     }
@@ -298,9 +301,9 @@ class RegionManager(
         items: List<CanvasItem>,
         context: android.content.Context,
     ): Bitmap? {
-        val targetSize = 128f
+        val targetSize = CanvasConfig.THUMBNAIL_RESOLUTION
         val scale = targetSize / regionSize
-        val size = (regionSize * scale).toInt()
+        val size = kotlin.math.ceil(regionSize * scale).toInt()
         if (size <= 0) return null
 
         try {
@@ -332,23 +335,7 @@ class RegionManager(
         id: RegionId,
         regionHint: RegionData? = null,
     ) {
-        // Called while holding lock.write
-        val region = regionHint ?: regionCache.get(id)
-        if (region != null) {
-            val inCache = regionCache.get(id) != null
-            if (inCache) {
-                resizingId = id
-                regionCache.remove(id)
-                resizingId = null
-            }
-
-            region.cachedThumbnail = null
-            region.invalidateSize()
-
-            if (inCache) {
-                regionCache.put(id, region)
-            }
-        }
+        thumbnailCache.remove(id)
         storage.deleteThumbnail(id)
     }
 
@@ -529,6 +516,7 @@ class RegionManager(
     fun clear() {
         lock.write {
             regionCache.evictAll()
+            thumbnailCache.evictAll()
             regionIndex.clear()
             skeletonQuadtree.clear()
             regionProxies.clear()
@@ -592,5 +580,66 @@ class RegionManager(
         val x = floor(cx / size).toInt()
         val y = floor(cy / size).toInt()
         return RegionId(x, y)
+    }
+
+    private fun rebuildSkeletonQuadtree() {
+        skeletonQuadtree = Quadtree(0, RectF(-regionSize, -regionSize, regionSize, regionSize))
+        regionProxies.clear()
+
+        regionIndex.forEach { (id, bounds) ->
+            val proxy = RegionProxy(id, bounds)
+            regionProxies[id] = proxy
+            skeletonQuadtree = skeletonQuadtree.insert(proxy)
+        }
+        Logger.i(
+            "RegionManager",
+            "Skeleton Quadtree rebuilt from ${regionIndex.size} regions. Root bounds: ${skeletonQuadtree.getBounds()}",
+        )
+    }
+
+    /**
+     * Checks if the spatial index (Quadtree) is consistent with the flat index.
+     * If corruption is detected (e.g. tree bounds don't cover content), it rebuilds the tree.
+     */
+    fun validateSpatialIndex() {
+        lock.write {
+            if (regionIndex.isEmpty()) return
+
+            val treeBounds = skeletonQuadtree.getBounds()
+            // Check if any region is outside the tree bounds (which implies Quadtree failed to grow or was reset)
+            val contentBounds = getContentBoundsInternal() // Use internal version to avoid deadlock if we were using read lock (but we are in write lock now)
+
+            if (!treeBounds.contains(contentBounds)) {
+                Logger.w(
+                    "RegionManager",
+                    "Spatial Index Corruption Detected! Tree bounds $treeBounds do not cover content $contentBounds. Rebuilding...",
+                )
+                rebuildSkeletonQuadtree()
+                return
+            }
+
+            // Heuristic: If we have many regions but tree is small/empty?
+            // This catches the "No regions to process" case where tree might be disjoint.
+            if (regionIndex.size > 0 && regionProxies.size != regionIndex.size) {
+                Logger.w(
+                    "RegionManager",
+                    "Spatial Index Sync Mismatch! Proxies: ${regionProxies.size}, Index: ${regionIndex.size}. Rebuilding...",
+                )
+                rebuildSkeletonQuadtree()
+            }
+        }
+    }
+
+    // Internal version of getContentBounds that assumes lock is already held
+    private fun getContentBoundsInternal(): RectF {
+        val r = RectF()
+        if (regionIndex.isNotEmpty()) {
+            val it = regionIndex.values.iterator()
+            if (it.hasNext()) r.set(it.next())
+            while (it.hasNext()) {
+                r.union(it.next())
+            }
+        }
+        return r
     }
 }

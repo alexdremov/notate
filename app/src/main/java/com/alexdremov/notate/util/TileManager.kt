@@ -440,24 +440,22 @@ class TileManager(
             if (RectF.intersects(bounds, tileRect)) {
                 val isVisible = visibleRect != null && key.level == currentLevel && RectF.intersects(visibleRect, tileRect)
 
-                if (isVisible) {
-                    // Update visible bitmap instantly on UI thread
-                    val tileCanvas = Canvas(bitmap)
-                    val scale = tileSize.toFloat() / worldSize
-                    tileCanvas.save()
-                    tileCanvas.scale(scale, scale)
-                    tileCanvas.translate(-tileRect.left, -tileRect.top)
-                    renderer.drawItemToCanvas(tileCanvas, item, scale = scale)
-                    tileCanvas.restore()
+                // Update ANY intersected cached bitmap, regardless of visibility (level),
+                // to preserve fallback tiles (parents/children) for smooth zooming.
+                val tileCanvas = Canvas(bitmap)
+                val scale = tileSize.toFloat() / worldSize
+                tileCanvas.save()
+                tileCanvas.scale(scale, scale)
+                tileCanvas.translate(-tileRect.left, -tileRect.top)
+                renderer.drawItemToCanvas(tileCanvas, item, scale = scale)
+                tileCanvas.restore()
 
+                if (isVisible) {
                     // Re-queue to ensure final consistency if background tasks were active or to prevent stale background data
                     val isBeingGenerated = synchronized(generatingKeys) { generatingKeys.contains(key) }
                     if (isBeingGenerated) {
                         queueTileGeneration(key.col, key.row, key.level, worldSize, true, version, forceRefresh = true)
                     }
-                } else {
-                    // Outside viewport: just drop it to save memory and ensure fresh regeneration when needed
-                    tileCache.remove(key)
                 }
                 handledKeys.add(key)
             }
@@ -523,30 +521,29 @@ class TileManager(
             if (RectF.intersects(unionBounds, tileRect)) {
                 val isVisible = visibleRect != null && key.level == currentLevel && RectF.intersects(visibleRect, tileRect)
 
-                if (isVisible) {
-                    // Prepare Canvas once per tile
-                    val tileCanvas = Canvas(bitmap)
-                    val scale = tileSize.toFloat() / worldSize
-                    tileCanvas.save()
-                    tileCanvas.scale(scale, scale)
-                    tileCanvas.translate(-tileRect.left, -tileRect.top)
+                // Update ANY intersected cached bitmap, regardless of visibility (level),
+                // to preserve fallback tiles (parents/children) for smooth zooming.
+                val tileCanvas = Canvas(bitmap)
+                val scale = tileSize.toFloat() / worldSize
+                tileCanvas.save()
+                tileCanvas.scale(scale, scale)
+                tileCanvas.translate(-tileRect.left, -tileRect.top)
 
-                    // Batch Draw Intersecting Items
-                    // Optimization: Filter items intersecting this specific tile
-                    for (item in standardItems) {
-                        if (RectF.intersects(item.bounds, tileRect)) {
-                            renderer.drawItemToCanvas(tileCanvas, item, scale = scale)
-                        }
+                // Batch Draw Intersecting Items
+                // Optimization: Filter items intersecting this specific tile
+                for (item in standardItems) {
+                    if (RectF.intersects(item.bounds, tileRect)) {
+                        renderer.drawItemToCanvas(tileCanvas, item, scale = scale)
                     }
-                    tileCanvas.restore()
+                }
+                tileCanvas.restore()
 
+                if (isVisible) {
                     // Re-queue logic
                     val isBeingGenerated = synchronized(generatingKeys) { generatingKeys.contains(key) }
                     if (isBeingGenerated) {
                         queueTileGeneration(key.col, key.row, key.level, worldSize, true, version, forceRefresh = true)
                     }
-                } else {
-                    tileCache.remove(key)
                 }
                 handledKeys.add(key)
             }
