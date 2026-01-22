@@ -48,12 +48,7 @@ object PageThumbnailGenerator {
         // 1. Get Page Bounds from Model
         val pageRect = model.getPageBounds(pageIndex)
 
-        // 2. Query all items (Strokes + Images)
-        val items = model.queryItems(pageRect)
-        // Sort items by Z-Index/Order for correct layering
-        items.sortWith(compareBy<com.alexdremov.notate.model.CanvasItem> { it.zIndex }.thenBy { it.order })
-
-        // 3. Setup Matrix to fit pageRect into width/height
+        // 2. Setup Matrix to fit pageRect into width/height
         val scaleX = width.toFloat() / pageRect.width()
         val scaleY = height.toFloat() / pageRect.height()
         val scale = min(scaleX, scaleY)
@@ -62,16 +57,29 @@ object PageThumbnailGenerator {
         canvas.scale(scale, scale)
         canvas.translate(-pageRect.left, -pageRect.top)
 
-        // 4. Delegate Rendering to Shared Logic
-        // We use RenderQuality.SIMPLE for fast vector drawing of strokes
-        CanvasRenderer.renderItems(
-            canvas = canvas,
-            items = items,
-            visibleRect = pageRect, // Optimization: clip to page
-            quality = RenderQuality.SIMPLE,
-            viewScale = scale,
-            context = context,
-        )
+        // 3. Render using Cached Region Thumbnails
+        val regionManager = model.getRegionManager()
+        if (regionManager != null) {
+            val regionIds = regionManager.getRegionIdsInRect(pageRect)
+            val regionSize = regionManager.regionSize
+
+            for (id in regionIds) {
+                // Fetch cached thumbnail (this handles generation if needed)
+                val regionThumb = regionManager.getRegionThumbnail(id, context) ?: continue
+
+                // Calculate destination rect in World Coordinates
+                val dstRect =
+                    RectF(
+                        id.x * regionSize,
+                        id.y * regionSize,
+                        (id.x + 1) * regionSize,
+                        (id.y + 1) * regionSize,
+                    )
+
+                // Draw the cached bitmap
+                canvas.drawBitmap(regionThumb, null, dstRect, null)
+            }
+        }
 
         canvas.restore()
         return bitmap

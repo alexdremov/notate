@@ -3,6 +3,7 @@ package com.alexdremov.notate.ui.render
 import android.graphics.RectF
 import com.alexdremov.notate.data.CanvasType
 import com.alexdremov.notate.data.region.RegionData
+import com.alexdremov.notate.data.region.RegionId
 import com.alexdremov.notate.data.region.RegionManager
 import com.alexdremov.notate.model.InfiniteCanvasModel
 import io.mockk.every
@@ -12,6 +13,7 @@ import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.RuntimeEnvironment
 
 @RunWith(RobolectricTestRunner::class)
 class MinimapMemoryTest {
@@ -29,6 +31,8 @@ class MinimapMemoryTest {
 
         every { mockModel.getRegionManager() } returns mockRegionManager
         every { mockModel.canvasType } returns CanvasType.INFINITE
+        every { mockRegionManager.regionSize } returns 1000f
+        every { mockView.context } returns RuntimeEnvironment.getApplication()
     }
 
     @Test
@@ -40,8 +44,8 @@ class MinimapMemoryTest {
         val largeContext = RectF(0f, 0f, 10000f, 10000f)
 
         // Mock the region manager to return some regions
-        val mockRegion = mockk<com.alexdremov.notate.data.region.RegionData>()
-        every { mockRegionManager.getRegionsInRect(largeContext) } returns listOf(mockRegion)
+        every { mockRegionManager.getRegionIdsInRect(any()) } returns listOf(RegionId(0, 0))
+        every { mockRegionManager.getRegionThumbnail(any(), any()) } returns mockk(relaxed = true)
 
         // Create minimap drawer
         val minimapDrawer = MinimapDrawer(mockView, mockModel, mockRenderer) {}
@@ -54,6 +58,10 @@ class MinimapMemoryTest {
     fun testSmallContextUsesOriginalPath() {
         // For small contexts, the original approach should still work
         val smallContext = RectF(0f, 0f, 100f, 100f)
+
+        // Mock the region manager
+        every { mockRegionManager.getRegionIdsInRect(any()) } returns listOf(RegionId(0, 0))
+        every { mockRegionManager.getRegionThumbnail(any(), any()) } returns mockk(relaxed = true)
 
         // Create minimap drawer
         val minimapDrawer = MinimapDrawer(mockView, mockModel, mockRenderer) {}

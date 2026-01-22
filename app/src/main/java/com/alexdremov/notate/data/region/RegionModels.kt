@@ -5,7 +5,7 @@ import com.alexdremov.notate.model.CanvasItem
 import com.alexdremov.notate.model.Stroke
 import com.alexdremov.notate.util.Quadtree
 import kotlinx.serialization.Serializable
-import kotlin.jvm.Transient
+import kotlinx.serialization.Transient
 
 @Serializable
 data class RegionId(
@@ -29,6 +29,7 @@ data class RegionId(
     }
 }
 
+@Serializable
 data class RegionData(
     val id: RegionId,
     val items: MutableList<CanvasItem> = ArrayList(),
@@ -39,6 +40,31 @@ data class RegionData(
 
     @Transient
     val contentBounds = RectF()
+
+    @Transient
+    var cachedThumbnail: android.graphics.Bitmap? = null
+
+    @Transient
+    private var lastCalculatedSize: Long = -1L
+
+    /**
+     * Returns the size in bytes, using a cached value if available.
+     * This is critical for LruCache consistency.
+     */
+    fun getSizeCached(): Long {
+        if (lastCalculatedSize == -1L) {
+            lastCalculatedSize = sizeBytes()
+        }
+        return lastCalculatedSize
+    }
+
+    /**
+     * Invalidates the cached size. Call this before putting the region back into LruCache
+     * after modification.
+     */
+    fun invalidateSize() {
+        lastCalculatedSize = -1L
+    }
 
     fun rebuildQuadtree(regionSize: Float) {
         val rBounds = id.getBounds(regionSize)
@@ -78,6 +104,8 @@ data class RegionData(
                     }
                 }
         }
-        return size + 1024 // Base overhead
+
+        val thumbSize = cachedThumbnail?.allocationByteCount?.toLong() ?: 0L
+        return size + 1024 + thumbSize // Base overhead + thumbnail
     }
 }

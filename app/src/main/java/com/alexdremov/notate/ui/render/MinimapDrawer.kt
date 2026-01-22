@@ -77,13 +77,6 @@ class MinimapDrawer(
         canvasWidth: Int,
         canvasHeight: Int,
     ) {
-        Logger.d("MinimapDrawer", "=== DRAW called ===")
-        Logger.d("MinimapDrawer", "isMinimapVisible: $isMinimapVisible")
-        Logger.d("MinimapDrawer", "isRegenerating: $isRegenerating")
-        Logger.d("MinimapDrawer", "minimapDirty: $minimapDirty")
-        Logger.d("MinimapDrawer", "contentThumbnail: ${contentThumbnail != null}")
-        Logger.d("MinimapDrawer", "contentRect: $contentRect")
-
         if (!isMinimapVisible) {
             Logger.d("MinimapDrawer", "Skipping draw - minimap not visible")
             return
@@ -257,7 +250,7 @@ class MinimapDrawer(
                 val bitmap = Bitmap.createBitmap(thumbW, thumbH, Bitmap.Config.ARGB_8888)
                 val thumbCanvas = Canvas(bitmap)
 
-                // Fill with white background first (this is what we're seeing!)
+                // Fill with white background first
                 thumbCanvas.drawColor(android.graphics.Color.WHITE)
                 Logger.d("MinimapDrawer", "Filled canvas with white background")
 
@@ -267,32 +260,32 @@ class MinimapDrawer(
                     currentThumbnailCanvas = thumbCanvas
                     regionsProcessed = 0
 
-                    // CRITICAL FIX: Store the context rect for later use in finalizeRegeneration
+                    // Store the context rect for later use
                     regenerationContextRect.set(capturedContextRect)
                     Logger.d("MinimapDrawer", "Stored regeneration context: $regenerationContextRect")
 
-                    // Mark all regions in context as dirty
+                    // Get IDs directly to avoid blocking load of all regions at once
                     val regionManager = model.getRegionManager()
-                    Logger.d("MinimapDrawer", "Getting region manager...")
                     if (regionManager != null) {
-                        Logger.d("MinimapDrawer", "Region manager obtained, getting regions for context: $capturedContextRect")
-                        val regions = regionManager.getRegionsInRect(capturedContextRect)
-                        Logger.d("MinimapDrawer", "Found ${regions.size} regions in context")
-
-                        if (regions.isEmpty()) {
-                            Logger.w("MinimapDrawer", "WARNING: No regions found in context! This could cause white thumbnail.")
-                        }
-
-                        // Log details about the regions
-                        regions.forEach { region ->
-                            Logger.d("MinimapDrawer", "Region ${region.id}: ${region.items.size} items, bounds: ${region.contentBounds}")
-                        }
+                        val regionIds = regionManager.getRegionIdsInRect(capturedContextRect)
+                        Logger.d("MinimapDrawer", "Found ${regionIds.size} regions in context")
 
                         dirtyRegionIds.clear()
-                        dirtyRegionIds.addAll(regions.map { it.id })
-                        totalRegionsToProcess = regions.size
 
-                        Logger.d("MinimapDrawer", "Marked ${dirtyRegionIds.size} regions as dirty for processing")
+                        // Prioritize regions already in memory for instant feedback
+                        val inMemory = regionIds.filter { regionManager.getRegionReadOnly(it) != null }
+                        val others = regionIds - inMemory.toSet()
+
+                        // Add in order: Memory first, then others
+                        dirtyRegionIds.addAll(inMemory)
+                        dirtyRegionIds.addAll(others)
+
+                        totalRegionsToProcess = dirtyRegionIds.size
+
+                        Logger.d(
+                            "MinimapDrawer",
+                            "Marked ${dirtyRegionIds.size} regions as dirty (Memory: ${inMemory.size}, Others: ${others.size})",
+                        )
                     } else {
                         Logger.e("MinimapDrawer", "ERROR: Region manager is null! Cannot process any regions.")
                         totalRegionsToProcess = 0
@@ -335,45 +328,21 @@ class MinimapDrawer(
                 }
 
                 if (regionId != null) {
-                    val regionManager = model.getRegionManager()
-                    if (regionManager != null) {
-                        // Load only this specific region with timeout
-                        val region =
-                            withTimeoutOrNull(regionLoadTimeoutMs) {
-                                regionManager.getRegionReadOnly(regionId)
-                            }
+                    // Render this single region using cached thumbnail
+                    renderSingleRegionToThumbnail(regionId!!, contextRect, thumbScale)
 
-                        if (region != null) {
-                            // Render this single region
-                            renderSingleRegionToThumbnail(region, contextRect, thumbScale)
-
-                            // Mark as clean and update progress
-                            synchronized(this@MinimapDrawer) {
-                                dirtyRegionIds.remove(regionId)
-                                currentLoadingRegions.remove(regionId)
-                                regionsProcessed++
-                            }
-
-                            // Post incremental update to UI
-                            postThumbnailUpdate()
-
-                            // Continue with next region
-                            renderNextDirtyRegion(contextRect, thumbScale)
-                        } else {
-                            // Region load failed or timed out
-                            synchronized(this@MinimapDrawer) {
-                                currentLoadingRegions.remove(regionId)
-                            }
-
-                            com.alexdremov.notate.util.Logger.w(
-                                "MinimapDrawer",
-                                "Region $regionId load failed or timed out",
-                            )
-
-                            // Continue with next region
-                            renderNextDirtyRegion(contextRect, thumbScale)
-                        }
+                    // Mark as clean and update progress
+                    synchronized(this@MinimapDrawer) {
+                        dirtyRegionIds.remove(regionId)
+                        currentLoadingRegions.remove(regionId)
+                        regionsProcessed++
                     }
+
+                    // Post incremental update to UI
+                    postThumbnailUpdate()
+
+                    // Continue with next region
+                    renderNextDirtyRegion(contextRect, thumbScale)
                 } else {
                     // All regions processed or max concurrent loads reached
                     finalizeRegeneration()
@@ -396,10 +365,10 @@ class MinimapDrawer(
     }
 
     /**
-     * Render a single region to the thumbnail
+     * Render a single region to the thumbnail using cached bitmap
      */
     private fun renderSingleRegionToThumbnail(
-        region: com.alexdremov.notate.data.region.RegionData,
+        regionId: com.alexdremov.notate.data.region.RegionId,
         contextRect: RectF,
         thumbScale: Float,
     ) {
@@ -407,76 +376,39 @@ class MinimapDrawer(
         val canvas = currentThumbnailCanvas
 
         if (bitmap == null || canvas == null) {
-            Logger.e("MinimapDrawer", "ERROR: Bitmap or canvas is null, cannot render region ${region.id}")
+            Logger.e("MinimapDrawer", "ERROR: Bitmap or canvas is null, cannot render region $regionId")
             return
         }
 
-        Logger.d("MinimapDrawer", "Region ${region.id} has ${region.items.size} items, quadtree: ${region.quadtree != null}")
+        // Fetch cached thumbnail (this handles generation if needed)
+        val regionManager = model.getRegionManager() ?: return
+        val regionThumb = regionManager.getRegionThumbnail(regionId, view.context) ?: return
+
+        // Logger.d("MinimapDrawer", "Rendering cached thumbnail for region $regionId")
+
         // Save current canvas state
         canvas.save()
 
         // Apply transformation: translate and scale to map world coordinates to thumbnail coordinates
-        // 1. Translate so contextRect.left/top becomes (0,0) in thumbnail space
-        // 2. Scale by thumbScale to fit context into thumbnail
-        // Note: Canvas transformations are pre-concatenated. scale() then translate() results in M * S * T.
-        // Applied to point P: S * T * P. T is applied first.
         canvas.scale(thumbScale, thumbScale)
         canvas.translate(-contextRect.left, -contextRect.top)
 
-        // Set up painting for this region only
-        val paint =
-            Paint().apply {
-                isAntiAlias = true
-                isDither = true
-                style = Paint.Style.STROKE
-                strokeJoin = Paint.Join.ROUND
-                strokeCap = Paint.Cap.ROUND
-                strokeMiter = 4.0f
-            }
+        // Calculate destination rect in World Coordinates
+        val regionSize = regionManager.regionSize
+        val dstRect =
+            RectF(
+                regionId.x * regionSize,
+                regionId.y * regionSize,
+                (regionId.x + 1) * regionSize,
+                (regionId.y + 1) * regionSize,
+            )
 
-        // Process only items from this single region
-        val regionItems = ArrayList<com.alexdremov.notate.model.CanvasItem>()
-        region.quadtree?.retrieve(regionItems, contextRect)
-
-        Logger.d("MinimapDrawer", "Retrieved ${regionItems.size} items from quadtree for region ${region.id}")
-
-        for (item in regionItems) {
-            if (item is com.alexdremov.notate.model.Stroke) {
-                // Logger.d("MinimapDrawer", "Rendering stroke: points=${item.points.size}, color=${item.color}, width=${item.width}")
-                // Logger.d("MinimapDrawer", "Stroke bounds: ${item.bounds}")
-
-                // CRITICAL FIX: Recreate path from raw points
-                // Don't use the pre-transformed item.path
-                val path = Path()
-
-                if (item.points.isNotEmpty()) {
-                    val first = item.points[0]
-                    path.moveTo(first.x, first.y)
-                    for (i in 1 until item.points.size) {
-                        val point = item.points[i]
-                        path.lineTo(point.x, point.y)
-                    }
-                }
-
-                paint.color = item.color
-
-                // Ensure visibility on minimap (large canvases)
-                val minPixels = 1.0f
-                val minWidth = minPixels / thumbScale
-                var targetWidth = kotlin.math.max(item.width * 0.5f, minWidth)
-
-                paint.strokeWidth = targetWidth
-
-                // Draw the path - it will be automatically transformed by the canvas matrix
-                canvas.drawPath(path, paint)
-            }
-        }
+        // Draw the cached bitmap
+        // null paint is fine for bitmap drawing
+        canvas.drawBitmap(regionThumb, null, dstRect, null)
 
         // Restore canvas state
         canvas.restore()
-
-        // Clear immediately to free memory
-        regionItems.clear()
     }
 
     /**

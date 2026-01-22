@@ -1,14 +1,17 @@
 package com.alexdremov.notate.data
 
 import android.content.Context
-import android.net.Uri
 import com.alexdremov.notate.config.CanvasConfig
+import com.alexdremov.notate.data.io.AtomicContainerStorage
+import com.alexdremov.notate.data.io.FileLockManager
 import com.alexdremov.notate.data.region.RegionManager
 import com.alexdremov.notate.data.region.RegionStorage
 import com.alexdremov.notate.util.Logger
 import com.alexdremov.notate.util.ThumbnailGenerator
-import com.alexdremov.notate.util.ZipUtils
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.protobuf.ProtoBuf
@@ -19,7 +22,7 @@ import java.security.MessageDigest
 
 /**
  * Repository responsible for loading and saving Canvas data (V2: ZIP Format only).
- * Handles session extraction and atomic persistence.
+ * Handles session extraction and atomic persistence using strict file locking.
  */
 class CanvasRepository(
     private val context: Context,
@@ -34,189 +37,339 @@ class CanvasRepository(
         File(context.cacheDir, "sessions").apply { mkdirs() }
     }
 
+    private val atomicStorage = AtomicContainerStorage(context)
+    private val repositoryScope = kotlinx.coroutines.CoroutineScope(Dispatchers.IO + kotlinx.coroutines.SupervisorJob())
+
+    companion object {
+        // Cache active sessions to handle quick close/re-open and share state within the SAME process.
+        private val activeSessions = java.util.concurrent.ConcurrentHashMap<String, CanvasSession>()
+        private val sessionLock = Mutex()
+    }
+
+    class CanvasLockedException(
+        message: String,
+    ) : Exception(message)
+
+    /**
+     * Checks if a local file is currently locked by another process.
+     * Note: This attempts to acquire and immediately release the lock to test.
+     */
+    fun isLocked(path: String): Boolean {
+        if (path.startsWith("content://")) return false // Cannot check lock on content URI
+        return try {
+            val lock = FileLockManager.acquire(path)
+            lock.close()
+            false
+        } catch (e: Exception) {
+            true
+        }
+    }
+
     @OptIn(ExperimentalSerializationApi::class)
     suspend fun openCanvasSession(path: String): CanvasSession? =
         withContext(Dispatchers.IO) {
-            try {
-                val sessionName = "${hashPath(path)}_${java.util.UUID.randomUUID()}"
-                val sessionDir = File(sessionsDir, sessionName)
-                sessionDir.mkdirs()
+            sessionLock.withLock {
+                val sessionName = hashPath(path)
 
-                val inputStream = openInputStream(path)
-                if (inputStream == null) {
-                    // New file - create empty session
-                    Logger.i("CanvasRepository", "Creating new session for:  $path")
-                    val storage = RegionStorage(sessionDir)
-                    storage.init()
-                    val regionManager = RegionManager(storage, CanvasConfig.DEFAULT_REGION_SIZE)
-                    val metadata = CanvasData(version = 3, regionSize = CanvasConfig.DEFAULT_REGION_SIZE)
-                    return@withContext CanvasSession(
-                        sessionDir = sessionDir,
-                        regionManager = regionManager,
-                        originLastModified = 0L,
-                        originSize = 0L,
-                        metadata = metadata,
-                    )
+                // 1. Check Active Session Cache (Hot Handoff - Same Process)
+                val existingSession = activeSessions[sessionName]
+                if (existingSession != null && !existingSession.isClosed()) {
+                    Logger.i("CanvasRepository", "Attaching to active session: $path")
+                    existingSession.retain()
+                    return@withContext existingSession
                 }
 
-                val isZip = isZipFile(inputStream)
-                inputStream.close()
-
-                if (!isZip) {
-                    Logger.e("CanvasRepository", "Legacy file format not supported in V2: $path")
-                    sessionDir.deleteRecursively()
-                    return@withContext null
+                // Remove stale reference
+                if (existingSession != null) {
+                    activeSessions.remove(sessionName)
                 }
 
-                // Re-open for reading
-                val sourceStream = openInputStream(path) ?: return@withContext null
-
-                val storage = RegionStorage(sessionDir)
-                storage.init()
-
-                // Unzip to session directory
-                ZipUtils.unzip(sourceStream, sessionDir)
-                sourceStream.close()
-
-                // Load metadata
-                val manifestFile = File(sessionDir, "manifest.bin")
-                val metadata: CanvasData
-                if (manifestFile.exists()) {
+                // 2. Acquire System File Lock (Cross-Process Exclusion)
+                // Prevents Process B from opening while Process A has it open.
+                var fileLock: FileLockManager.LockedFileHandle? = null
+                if (!path.startsWith("content://")) {
                     try {
-                        metadata = ProtoBuf.decodeFromByteArray(CanvasData.serializer(), manifestFile.readBytes())
+                        fileLock = FileLockManager.acquire(path)
                     } catch (e: Exception) {
-                        Logger.e("CanvasRepository", "Failed to decode manifest", e)
-                        sessionDir.deleteRecursively()
-                        return@withContext null
+                        Logger.e("CanvasRepository", "Cannot open session. File is locked: $path", e)
+                        throw CanvasLockedException("File is currently open in another window or process.")
                     }
-                } else {
-                    Logger.e("CanvasRepository", "Manifest missing in ZIP")
-                    sessionDir.deleteRecursively()
-                    return@withContext null
                 }
 
-                // Initialize RegionManager AFTER unzipping so it sees the index. bin
-                val regionManager = RegionManager(storage, metadata.regionSize)
+                try {
+                    val sessionDir = File(sessionsDir, sessionName)
 
-                val originFile = File(path)
-                val (ts, size) =
-                    if (originFile.exists()) {
-                        originFile.lastModified() to originFile.length()
-                    } else {
-                        0L to 0L
+                    // Track source info
+                    val originFile = if (path.startsWith("content://")) null else File(path)
+                    val originLastModified = originFile?.lastModified() ?: 0L
+                    val originSize = originFile?.length() ?: 0L
+
+                    // 3. Initialize Session Directory
+                    var sessionValid = false
+                    if (sessionDir.exists()) {
+                        // Check if we can resume this session (crash recovery / persistence)
+                        val manifestFile = File(sessionDir, "manifest.bin")
+                        val sourcePathFile = File(sessionDir, "source_path.txt")
+
+                        if (manifestFile.exists()) {
+                            val storedPath = if (sourcePathFile.exists()) sourcePathFile.readText().trim() else ""
+                            if (storedPath == path) {
+                                // Check timestamps to ensure the session cache isn't older than the file
+                                // (e.g. file updated by sync or another device)
+                                if (originFile != null && originFile.exists()) {
+                                    if (manifestFile.lastModified() > originLastModified) {
+                                        Logger.i("CanvasRepository", "Resuming existing session (newer than file): $path")
+                                        sessionValid = true
+                                    } else {
+                                        Logger.i("CanvasRepository", "Existing session stale. Reloading from file.")
+                                    }
+                                } else {
+                                    // Remote file - assume valid if path matches
+                                    sessionValid = true
+                                }
+                            }
+                        }
                     }
 
-                CanvasSession(
-                    sessionDir = sessionDir,
-                    regionManager = regionManager,
-                    originLastModified = ts,
-                    originSize = size,
-                    metadata = metadata,
-                )
-            } catch (e: Exception) {
-                Logger.e("CanvasRepository", "Failed to open session", e, showToUser = true)
-                null
+                    val finalSession: CanvasSession
+                    if (!sessionValid) {
+                        // Clean start: Wipe directory
+                        if (sessionDir.exists()) sessionDir.deleteRecursively()
+                        sessionDir.mkdirs()
+                        File(sessionDir, "source_path.txt").writeText(path)
+
+                        val inputStream = openInputStream(path)
+                        if (inputStream == null) {
+                            // New file
+                            Logger.i("CanvasRepository", "Creating new session for: $path")
+                            val storage = RegionStorage(sessionDir)
+                            storage.init()
+
+                            val metadata = CanvasData(version = 3, regionSize = CanvasConfig.DEFAULT_REGION_SIZE)
+                            val manifestFile = File(sessionDir, "manifest.bin")
+                            val metaBytes = ProtoBuf.encodeToByteArray(CanvasData.serializer(), metadata)
+                            manifestFile.writeBytes(metaBytes)
+
+                            val regionManager = RegionManager(storage, CanvasConfig.DEFAULT_REGION_SIZE)
+                            finalSession =
+                                CanvasSession(
+                                    sessionDir = sessionDir,
+                                    regionManager = regionManager,
+                                    originLastModified = originLastModified,
+                                    originSize = originSize,
+                                    metadata = metadata,
+                                    lockHandle = fileLock,
+                                )
+                        } else {
+                            val isZip = isZipFile(inputStream)
+                            inputStream.close()
+
+                            if (!isZip) {
+                                Logger.e("CanvasRepository", "Legacy file format not supported in V2: $path")
+                                sessionDir.deleteRecursively()
+                                fileLock?.close()
+                                return@withContext null
+                            }
+
+                            // Unpack
+                            val sourceStream =
+                                openInputStream(path) ?: run {
+                                    fileLock?.close()
+                                    return@withContext null
+                                }
+
+                            try {
+                                atomicStorage.unpack(sourceStream, sessionDir)
+                            } finally {
+                                sourceStream.close()
+                            }
+
+                            // Load Metadata
+                            val manifestFile = File(sessionDir, "manifest.bin")
+                            val metadata: CanvasData
+                            if (manifestFile.exists()) {
+                                metadata = ProtoBuf.decodeFromByteArray(CanvasData.serializer(), manifestFile.readBytes())
+                            } else {
+                                Logger.e("CanvasRepository", "Manifest missing in ZIP")
+                                sessionDir.deleteRecursively()
+                                fileLock?.close()
+                                return@withContext null
+                            }
+
+                            val storage = RegionStorage(sessionDir)
+                            storage.init()
+                            val regionManager = RegionManager(storage, metadata.regionSize)
+
+                            finalSession =
+                                CanvasSession(
+                                    sessionDir = sessionDir,
+                                    regionManager = regionManager,
+                                    originLastModified = originLastModified,
+                                    originSize = originSize,
+                                    metadata = metadata,
+                                    lockHandle = fileLock,
+                                )
+                        }
+                    } else {
+                        // Resuming
+                        val storage = RegionStorage(sessionDir)
+                        storage.init()
+                        val manifestFile = File(sessionDir, "manifest.bin")
+                        val metadata = ProtoBuf.decodeFromByteArray(CanvasData.serializer(), manifestFile.readBytes())
+                        val regionManager = RegionManager(storage, metadata.regionSize)
+
+                        finalSession =
+                            CanvasSession(
+                                sessionDir = sessionDir,
+                                regionManager = regionManager,
+                                originLastModified = originLastModified,
+                                originSize = originSize,
+                                metadata = metadata,
+                                lockHandle = fileLock,
+                            )
+                    }
+
+                    activeSessions[sessionName] = finalSession
+                    return@withContext finalSession
+                } catch (e: Exception) {
+                    Logger.e("CanvasRepository", "Failed to open session", e, showToUser = true)
+                    fileLock?.close() // Ensure lock is released on error
+                    null
+                }
             }
         }
+
+    suspend fun releaseCanvasSession(session: CanvasSession) =
+        withContext(Dispatchers.IO) {
+            sessionLock.withLock {
+                val lastClient = session.release()
+                if (lastClient) {
+                    val name = session.sessionDir.name
+                    activeSessions.remove(name)
+                    session.close() // Releases lock
+                    Logger.i("CanvasRepository", "Session released and closed: $name")
+                } else {
+                    Logger.i("CanvasRepository", "Session released (retained by other clients)")
+                }
+            }
+        }
+
+    /**
+     * Initiates a background save and then closes the session.
+     * Use this when exiting the editor to allow the UI to close immediately while
+     * the large file saves in the background. The FileLock remains held until save completes.
+     */
+    suspend fun saveAndCloseSession(
+        path: String,
+        session: CanvasSession,
+    ) = withContext(Dispatchers.IO) {
+        sessionLock.withLock {
+            val lastClient = session.release()
+            if (lastClient) {
+                val name = session.sessionDir.name
+                activeSessions.remove(name) // Remove from active cache immediately so new opens fail fast (Lock held)
+
+                Logger.i("CanvasRepository", "Launching background save and close for: $name")
+
+                // Launch in Repository Scope to survive Activity death
+                repositoryScope.launch {
+                    try {
+                        saveCanvasSession(path, session, commitToZip = true)
+                    } catch (e: Exception) {
+                        Logger.e("CanvasRepository", "Background save failed for $path", e)
+                    } finally {
+                        session.close() // Releases lock
+                        Logger.i("CanvasRepository", "Background save complete, session closed: $name")
+                    }
+                }
+            } else {
+                Logger.i("CanvasRepository", "saveAndCloseSession: Session retained by other clients, performing standard save.")
+                saveCanvasSession(path, session, commitToZip = true)
+            }
+        }
+    }
 
     @OptIn(ExperimentalSerializationApi::class)
     suspend fun saveCanvasSession(
         path: String,
         session: CanvasSession,
+        commitToZip: Boolean = true,
     ): SaveResult =
         withContext(Dispatchers.IO) {
-            // Acquire session for operation - prevents close() from deleting directory
             if (!session.acquireForOperation()) {
-                throw IllegalStateException("Cannot save:  session is closed")
+                throw IllegalStateException("Cannot save: session is closed")
             }
 
             try {
-                // Verify session directory still exists
-                if (!session.sessionDir.exists()) {
-                    throw java.io.IOException("Session directory does not exist: ${session.sessionDir.absolutePath}")
+                // Mutex ensures sequential saves for this session
+                session.saveMutex.withLock {
+                    if (!session.sessionDir.exists()) {
+                        throw java.io.IOException("Session directory missing")
+                    }
+
+                    // 1. Flush RegionManager (writes to session dir)
+                    session.regionManager.saveAll()
+
+                    // 2. Generate Thumbnail
+                    val thumbBase64 = ThumbnailGenerator.generateBase64(session.regionManager, session.metadata, context)
+                    val metadataWithThumb =
+                        if (thumbBase64 != null) {
+                            session.metadata.copy(thumbnail = thumbBase64)
+                        } else {
+                            session.metadata
+                        }
+                    session.updateMetadata(metadataWithThumb)
+
+                    // 3. Save Manifest
+                    val manifestFile = File(session.sessionDir, "manifest.bin")
+                    val metaBytes = ProtoBuf.encodeToByteArray(CanvasData.serializer(), metadataWithThumb)
+                    manifestFile.writeBytes(metaBytes)
+
+                    if (!commitToZip) {
+                        Logger.d("CanvasRepository", "Session flushed (no-zip).")
+                        return@withLock SaveResult(
+                            savedPath = session.sessionDir.absolutePath,
+                            newLastModified = session.originLastModified,
+                            newSize = session.originSize,
+                        )
+                    }
+
+                    // 4. Atomic Pack & Commit
+                    var targetPath = path
+
+                    // Conflict logic for Local files
+                    // If we hold the lock, we should be the only writer.
+                    // However, if the file was modified EXTERNALLY (while we held lock? unlikely on local fs,
+                    // but possible if lock was broken or over network), we check.
+                    val targetFile = File(path)
+                    if (targetFile.exists() && session.originLastModified > 0 && !path.startsWith("content://")) {
+                        // Note: If we hold an exclusive lock, lastModified shouldn't change unless WE changed it.
+                        // But FileLock doesn't prevent non-cooperating processes on all OSs/Filesystems.
+                        // Or user replaced file via adb.
+                        if (targetFile.lastModified() != session.originLastModified) {
+                            Logger.w("CanvasRepository", "External modification detected despite lock! Saving copy.")
+                            val parent = targetFile.parentFile
+                            val name = targetFile.nameWithoutExtension
+                            val ext = targetFile.extension
+                            targetPath = File(parent, "${name}_conflict_${System.currentTimeMillis()}.$ext").absolutePath
+                        }
+                    }
+
+                    atomicStorage.pack(session.sessionDir, targetPath)
+
+                    val savedFile = File(targetPath)
+                    val newLastModified = savedFile.lastModified()
+                    val newSize = savedFile.length()
+
+                    // Update session origin to match what we just wrote
+                    session.updateOrigin(newLastModified, newSize)
+
+                    SaveResult(targetPath, newLastModified, newSize)
                 }
-
-                var targetPath = path
-                val targetFile = File(path)
-
-                // Conflict Detection (Local Files only)
-                if (targetFile.exists() && session.originLastModified > 0 && !path.startsWith("content://")) {
-                    if (targetFile.lastModified() != session.originLastModified ||
-                        targetFile.length() != session.originSize
-                    ) {
-                        Logger.w("CanvasRepository", "Conflict detected!  File changed on disk.  Saving as conflict copy.")
-                        val parent = targetFile.parentFile
-                        val name = targetFile.nameWithoutExtension
-                        val ext = targetFile.extension
-                        val timestamp = System.currentTimeMillis()
-                        val newName = "${name}_conflict_$timestamp.$ext"
-                        targetPath = File(parent, newName).absolutePath
-                    }
-                }
-
-                // 1. Flush RegionManager (writes to session directory)
-                session.regionManager.saveAll()
-
-                // 2. Generate Thumbnail
-                val thumbBase64 = ThumbnailGenerator.generateBase64(session.regionManager, session.metadata, context)
-                val metadataWithThumb =
-                    if (thumbBase64 != null) {
-                        session.metadata.copy(thumbnail = thumbBase64)
-                    } else {
-                        session.metadata
-                    }
-
-                // 3. Save Metadata to session directory
-                val manifestFile = File(session.sessionDir, "manifest.bin")
-                val metaBytes = ProtoBuf.encodeToByteArray(CanvasData.serializer(), metadataWithThumb)
-                manifestFile.writeBytes(metaBytes)
-
-                if (!manifestFile.exists() || manifestFile.length() == 0L) {
-                    throw java.io.IOException("Manifest generation failed")
-                }
-
-                // 4. Create ZIP in a temp location OUTSIDE the session directory
-                val tempZip = File(context.cacheDir, "save_${System.currentTimeMillis()}.zip.tmp")
-                try {
-                    ZipUtils.zip(session.sessionDir, tempZip)
-
-                    // Verify ZIP
-                    if (!tempZip.exists() || tempZip.length() < 22) {
-                        throw java.io.IOException("Zip generation failed:  File empty or too small (${tempZip.length()} bytes)")
-                    }
-
-                    tempZip.inputStream().use {
-                        if (!isZipFile(it)) throw java.io.IOException("Zip generation failed: Invalid header")
-                    }
-
-                    // Log success
-                    val files =
-                        session.sessionDir
-                            .walkTopDown()
-                            .filter { it.isFile }
-                            .toList()
-                    Logger.i("CanvasRepository", "ZIP created:  ${tempZip.length()} bytes from ${files.size} files")
-
-                    // 5. Write to target using atomic operations
-                    writeSafe(targetPath, tempZip)
-                } finally {
-                    // Always clean up temp ZIP
-                    if (tempZip.exists()) {
-                        tempZip.delete()
-                    }
-                }
-
-                val savedFile = File(targetPath)
-                SaveResult(
-                    savedPath = targetPath,
-                    newLastModified = savedFile.lastModified(),
-                    newSize = savedFile.length(),
-                )
             } catch (e: Exception) {
                 Logger.e("CanvasRepository", "Failed to save session", e, showToUser = true)
                 throw e
             } finally {
-                // Always release the operation lock
                 session.releaseOperation()
             }
         }
@@ -233,7 +386,17 @@ class CanvasRepository(
 
     private fun hashPath(path: String): String {
         val digest = MessageDigest.getInstance("SHA-256")
-        digest.update(path.toByteArray())
+        val bytes =
+            if (!path.startsWith("content://")) {
+                try {
+                    File(path).canonicalPath.toByteArray()
+                } catch (e: Exception) {
+                    path.toByteArray()
+                }
+            } else {
+                path.toByteArray()
+            }
+        digest.update(bytes)
         return bytesToHex(digest.digest())
     }
 
@@ -249,70 +412,9 @@ class CanvasRepository(
 
     private fun openInputStream(path: String): InputStream? =
         if (path.startsWith("content://")) {
-            context.contentResolver.openInputStream(Uri.parse(path))
+            context.contentResolver.openInputStream(android.net.Uri.parse(path))
         } else {
             val file = File(path)
             if (file.exists() && file.length() > 0) file.inputStream() else null
         }
-
-    /**
-     * Atomically writes a source file to the target path.
-     * For local files:  rename with backup
-     * For SAF: stream copy
-     */
-    private fun writeSafe(
-        targetPath: String,
-        sourceFile: File,
-    ) {
-        if (targetPath.startsWith("content://")) {
-            // SAF: Stream copy
-            context.contentResolver.openOutputStream(Uri.parse(targetPath), "wt")?.use { os ->
-                sourceFile.inputStream().use { input ->
-                    input.copyTo(os)
-                }
-            } ?: throw java.io.IOException("Failed to open SAF output stream")
-        } else {
-            // Local File: Atomic Rename with backup
-            val targetFile = File(targetPath)
-            val backupFile = File(targetFile.parent, "${targetFile.name}.bak")
-
-            // Ensure parent directory exists
-            targetFile.parentFile?. mkdirs()
-
-            if (targetFile.exists()) {
-                if (backupFile.exists()) backupFile.delete()
-                if (!targetFile.renameTo(backupFile)) {
-                    throw java.io.IOException("Failed to create backup: ${backupFile.absolutePath}")
-                }
-            }
-
-            // Try rename first (fast, atomic if same filesystem)
-            if (!sourceFile.renameTo(targetFile)) {
-                // Rename failed (cross-filesystem) - copy instead
-                try {
-                    sourceFile.inputStream().use { input ->
-                        targetFile.outputStream().use { output ->
-                            input.copyTo(output)
-                        }
-                    }
-                    // Verify copy
-                    if (targetFile.length() != sourceFile.length()) {
-                        throw java.io.IOException("Copy verification failed: size mismatch")
-                    }
-                } catch (e: Exception) {
-                    // Restore backup on failure
-                    if (backupFile.exists()) {
-                        targetFile.delete()
-                        backupFile.renameTo(targetFile)
-                    }
-                    throw java.io.IOException("Failed to commit file to ${targetFile.absolutePath}", e)
-                }
-            }
-
-            // Success - delete backup
-            if (backupFile.exists()) {
-                backupFile.delete()
-            }
-        }
-    }
 }

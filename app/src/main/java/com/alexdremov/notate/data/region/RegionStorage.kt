@@ -175,6 +175,47 @@ class RegionStorage(
 
     private fun getRegionFile(id: RegionId): File = File(baseDir, "r_${id.x}_${id.y}.bin")
 
+    private fun getThumbnailFile(id: RegionId): File {
+        val thumbDir = File(baseDir, "thumbnails")
+        if (!thumbDir.exists()) thumbDir.mkdirs()
+        return File(thumbDir, "t_${id.x}_${id.y}.png")
+    }
+
+    fun saveThumbnail(
+        id: RegionId,
+        bitmap: android.graphics.Bitmap,
+    ): Boolean =
+        try {
+            val file = getThumbnailFile(id)
+            file.outputStream().use { out ->
+                bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, out)
+            }
+            true
+        } catch (e: Exception) {
+            Logger.e("RegionStorage", "Failed to save thumbnail for region $id", e)
+            false
+        }
+
+    fun loadThumbnail(id: RegionId): android.graphics.Bitmap? {
+        val file = getThumbnailFile(id)
+        if (!file.exists()) return null
+        return try {
+            android.graphics.BitmapFactory.decodeFile(file.absolutePath)
+        } catch (e: Exception) {
+            Logger.e("RegionStorage", "Failed to load thumbnail for region $id", e)
+            null
+        }
+    }
+
+    fun deleteThumbnail(id: RegionId) {
+        val file = getThumbnailFile(id)
+        if (file.exists()) {
+            if (!file.delete()) {
+                Logger.w("RegionStorage", "Failed to delete thumbnail file: $file")
+            }
+        }
+    }
+
     @OptIn(ExperimentalSerializationApi::class)
     fun saveIndex(index: Map<RegionId, RectF>): Boolean {
         val list =

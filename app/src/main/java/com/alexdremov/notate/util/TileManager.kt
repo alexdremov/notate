@@ -252,8 +252,8 @@ class TileManager(
             val pLevel = level + offset
             if (pLevel > CanvasConfig.MAX_ZOOM_LEVEL) break
 
-            val pCol = if (col >= 0) col shr offset else (col - (1 shl offset) + 1) shr offset
-            val pRow = if (row >= 0) row shr offset else (row - (1 shl offset) + 1) shr offset
+            val pCol = col shr offset
+            val pRow = row shr offset
             val pKey = TileCache.TileKey(pCol, pRow, pLevel)
 
             val pBitmap = tileCache.get(pKey)

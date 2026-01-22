@@ -152,20 +152,18 @@ class CanvasActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // Intercept Back Press - WAIT for save to complete
+        // Intercept Back Press - Save in background and close immediately
         onBackPressedDispatcher.addCallback(this) {
-            lifecycleScope.launch {
-                try {
-                    // Perform final save and wait for completion
-                    saveCanvasSuspend()
-                } catch (e: Exception) {
-                    Logger.e("CanvasActivity", "Error during final save", e)
-                } finally {
-                    // Close session (will wait for any concurrent saves)
-                    currentSessionRef.get()?.close()
-                    finish()
+            val session = currentSessionRef.get()
+            val path = currentCanvasPath
+            if (session != null && path != null && !session.isClosed()) {
+                // Launch background save and close
+                lifecycleScope.launch {
+                    canvasRepository.saveAndCloseSession(path, session)
                 }
             }
+            // Close UI immediately
+            finish()
         }
 
         // Initialize State Holder
@@ -421,7 +419,7 @@ class CanvasActivity : AppCompatActivity() {
             lifecycleScope.launch {
                 delay(500)
                 if (isActive) {
-                    saveCanvas()
+                    saveCanvas(commit = false)
                 }
             }
     }
@@ -429,11 +427,10 @@ class CanvasActivity : AppCompatActivity() {
     private fun loadCanvas() {
         val path = currentCanvasPath ?: return
         lifecycleScope.launch(Dispatchers.IO) {
-            // Acquire mutex to prevent races with save
-            sessionMutex.withLock {
-                // Close previous session safely
-                val oldSession = currentSessionRef.getAndSet(null)
-                oldSession?.close()
+            // Close previous session safely via Repository
+            val oldSession = currentSessionRef.getAndSet(null)
+            if (oldSession != null) {
+                canvasRepository.releaseCanvasSession(oldSession)
             }
 
             val session = canvasRepository.openCanvasSession(path)
@@ -464,7 +461,8 @@ class CanvasActivity : AppCompatActivity() {
 
     override fun onPause() {
         super.onPause()
-        saveCanvas()
+        // Force commit on pause
+        saveCanvas(commit = true)
 
         // Trigger sync in background
         currentCanvasPath?.let { path ->
@@ -490,8 +488,8 @@ class CanvasActivity : AppCompatActivity() {
         val session = currentSessionRef.getAndSet(null)
         if (session != null) {
             ProcessLifecycleOwner.get().lifecycleScope.launch(Dispatchers.IO) {
-                // Session. close() will wait for active operations
-                session.close()
+                // Release via Repository
+                canvasRepository.releaseCanvasSession(session)
             }
         }
     }
@@ -499,10 +497,10 @@ class CanvasActivity : AppCompatActivity() {
     /**
      * Triggers an async save.  Does not wait for completion.
      */
-    private fun saveCanvas() {
+    private fun saveCanvas(commit: Boolean = false) {
         ProcessLifecycleOwner.get().lifecycleScope.launch(Dispatchers.Default) {
             try {
-                saveCanvasSuspend()
+                saveCanvasSuspend(commit)
             } catch (e: Exception) {
                 // Already logged in saveCanvasSuspend
             }
@@ -512,7 +510,7 @@ class CanvasActivity : AppCompatActivity() {
     /**
      * Performs the actual save.  Can be awaited for synchronous save (e.g., on back press).
      */
-    private suspend fun saveCanvasSuspend() {
+    private suspend fun saveCanvasSuspend(commit: Boolean = true) {
         val path = currentCanvasPath ?: return
 
         com.alexdremov.notate.data.SaveStatusManager
@@ -539,6 +537,7 @@ class CanvasActivity : AppCompatActivity() {
             }
 
             withContext(NonCancellable) {
+                // We keep sessionMutex locally to prevent race between load/save within Activity
                 sessionMutex.withLock {
                     // Get session INSIDE the lock to prevent races with loadCanvas
                     val session = currentSessionRef.get()
@@ -558,15 +557,20 @@ class CanvasActivity : AppCompatActivity() {
                     // Update metadata in the session (in-place, no copy)
                     session.updateMetadata(updatedMetadata)
 
-                    Logger.d("CanvasActivity", "Saving canvas session to $path")
+                    Logger.d("CanvasActivity", "Saving canvas session to $path (Commit=$commit)")
 
                     try {
-                        val result = canvasRepository.saveCanvasSession(path, session)
+                        val result = canvasRepository.saveCanvasSession(path, session, commitToZip = commit)
 
                         // Update origin timestamps for conflict detection (in-place)
                         session.updateOrigin(result.newLastModified, result.newSize)
 
-                        Logger.i("CanvasActivity", "Save complete: ${result.savedPath}")
+                        if (commit) {
+                            Logger.i("CanvasActivity", "Full Save complete: ${result.savedPath}")
+                        } else {
+                            // Verbose only for flush
+                            // Logger.v("CanvasActivity", "Session flushed.")
+                        }
                     } catch (e: Exception) {
                         Logger.e("CanvasActivity", "Failed to save canvas", e, showToUser = true)
                         // Don't rethrow - allow app to continue

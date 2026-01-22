@@ -1,14 +1,17 @@
 package com.alexdremov.notate.data
 
+import com.alexdremov.notate.data.io.FileLockManager
 import com.alexdremov.notate.data.region.RegionManager
 import com.alexdremov.notate.util.Logger
+import kotlinx.coroutines.sync.Mutex
 import java.io.File
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * Represents an active editing session for a canvas.
- * Thread-safe lifecycle management to prevent deletion during active saves.
+ * Thread-safe lifecycle management.
+ * Uses reference counting to share session across recreations.
  *
  * NOTE: This is NOT a data class because we need mutable state with proper
  * synchronization. The atomics must be shared across all references to the
@@ -20,6 +23,7 @@ class CanvasSession(
     originLastModified: Long = 0L,
     originSize: Long = 0L,
     metadata: CanvasData,
+    private val lockHandle: FileLockManager.LockedFileHandle? = null,
 ) {
     // Mutable state - updated in place, not copied
     @Volatile
@@ -37,6 +41,12 @@ class CanvasSession(
     // Track active operations (saves) to prevent premature cleanup
     private val activeOperations = AtomicInteger(0)
     private val closed = AtomicBoolean(false)
+
+    // Reference Counting for Active Clients (Activities)
+    private val refCount = AtomicInteger(1)
+
+    // Mutex to synchronize save operations across shared sessions
+    val saveMutex = Mutex()
 
     /**
      * Updates the metadata for this session.
@@ -56,6 +66,27 @@ class CanvasSession(
     ) {
         originLastModified = lastModified
         originSize = size
+    }
+
+    /**
+     * Increment reference count.
+     */
+    fun retain() {
+        if (closed.get()) {
+            Logger.w("CanvasSession", "Retaining closed session! Race condition likely.")
+        }
+        val count = refCount.incrementAndGet()
+        Logger.d("CanvasSession", "Session retained. RefCount: $count")
+    }
+
+    /**
+     * Decrement reference count.
+     * Returns true if this was the last client (count reached 0).
+     */
+    fun release(): Boolean {
+        val count = refCount.decrementAndGet()
+        Logger.d("CanvasSession", "Session released. RefCount: $count")
+        return count <= 0
     }
 
     /**
@@ -89,8 +120,9 @@ class CanvasSession(
     }
 
     /**
-     * Closes the session and deletes the session directory.
+     * Closes the session resources.
      * Waits for active operations to complete (with timeout).
+     * DOES NOT DELETE DIRECTORY (it persists as cache).
      *
      * This method is idempotent - calling it multiple times is safe.
      */
@@ -99,6 +131,8 @@ class CanvasSession(
             // Already closed by another thread
             return
         }
+
+        Logger.i("CanvasSession", "Closing session (Memory cleanup). Directory persists: ${sessionDir.name}")
 
         // Wait for active operations to complete (max 10 seconds)
         val startTime = System.currentTimeMillis()
@@ -120,18 +154,14 @@ class CanvasSession(
             }
         }
 
-        // Now safe to delete
+        // Clear memory caches
+        regionManager.clear()
+
+        // Release File Lock
         try {
-            if (sessionDir.exists()) {
-                val deleted = sessionDir.deleteRecursively()
-                if (deleted) {
-                    Logger.d("CanvasSession", "Session directory deleted: ${sessionDir.name}")
-                } else {
-                    Logger.w("CanvasSession", "Failed to delete session directory: ${sessionDir.absolutePath}")
-                }
-            }
+            lockHandle?.close()
         } catch (e: Exception) {
-            Logger.e("CanvasSession", "Error closing session", e)
+            Logger.e("CanvasSession", "Failed to release file lock", e)
         }
     }
 
