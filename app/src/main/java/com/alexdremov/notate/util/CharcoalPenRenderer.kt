@@ -81,6 +81,11 @@ object CharcoalPenRenderer {
         }
     }
 
+    fun getPath(
+        stroke: Stroke,
+        maxPressure: Float,
+    ): Path? = getOrValidateMesh(stroke, stroke.width, maxPressure)?.outlinePath
+
     private fun getOrValidateMesh(
         stroke: Stroke,
         baseWidth: Float,
