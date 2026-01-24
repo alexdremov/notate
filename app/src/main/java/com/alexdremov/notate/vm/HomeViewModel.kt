@@ -91,6 +91,21 @@ class HomeViewModel(
                 if (finished.isNotEmpty()) {
                     Logger.d("HomeViewModel", "Detected background save completion for $finished. Refreshing UI.")
                     refresh()
+
+                    // Trigger Sync for completed saves
+                    finished.forEach { path ->
+                        launch(Dispatchers.IO) {
+                            try {
+                                val projectId = syncManager.findProjectForFile(path)
+                                if (projectId != null) {
+                                    Logger.d("HomeViewModel", "Auto-triggering sync for saved file in project $projectId")
+                                    syncManager.syncProject(projectId)
+                                }
+                            } catch (e: Exception) {
+                                Logger.e("HomeViewModel", "Failed to auto-sync after save", e)
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -117,9 +132,42 @@ class HomeViewModel(
                     _syncProgress.value = status
                     _syncingProjectIds.value = newIds
                 }
+
+                // Update items status
+                val currentItems = _browserItems.value
+                _browserItems.value = applySyncStatus(currentItems)
             }
         }
     }
+
+    private suspend fun applySyncStatus(items: List<FileSystemItem>): List<FileSystemItem> =
+        withContext(Dispatchers.IO) {
+            val project =
+                _currentProject.value ?: return@withContext items.map {
+                    if (it is CanvasItem) it.copy(syncStatus = SyncStatus.NONE) else it
+                }
+
+            val syncingIds = _syncingProjectIds.value
+            val isSyncing = syncingIds.contains(project.id)
+            val config = SyncPreferencesManager.getProjectSyncConfig(getApplication(), project.id)
+            val lastSyncTime = config?.lastSyncTimestamp ?: 0L
+            val isEnabled = config?.isEnabled == true
+
+            items.map { item ->
+                if (item is CanvasItem) {
+                    val isDirty = isEnabled && item.lastModified > lastSyncTime
+                    val newStatus =
+                        when {
+                            isDirty && isSyncing -> SyncStatus.SYNCING
+                            isDirty -> SyncStatus.PLANNED
+                            else -> SyncStatus.NONE
+                        }
+                    if (item.syncStatus != newStatus) item.copy(syncStatus = newStatus) else item
+                } else {
+                    item
+                }
+            }
+        }
 
     private fun resumeInterruptedSyncs() {
         val interrupted = SyncManager.getInterruptedProjects()
@@ -475,7 +523,7 @@ class HomeViewModel(
                 withContext(Dispatchers.IO) {
                     repo.getItems(path)
                 }
-            _browserItems.value = sortItems(items)
+            _browserItems.value = sortItems(applySyncStatus(items))
 
             // Auto-import tags from index (Project-wide)
             withContext(Dispatchers.IO) {

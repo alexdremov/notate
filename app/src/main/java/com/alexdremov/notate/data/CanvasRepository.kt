@@ -90,8 +90,8 @@ class CanvasRepository(
                 // 1. Check Active Session Cache (Hot Handoff - Same Process)
                 val existingSession = activeSessions[sessionName]
                 if (existingSession != null && !existingSession.isClosed()) {
-                    Logger.i("CanvasRepository", "Attaching to active in-memory session")
-                    existingSession.retain()
+                    val newCount = existingSession.retain()
+                    Logger.i("CanvasRepository", "Attaching to active in-memory session. Clients: $newCount")
                     return@withContext existingSession
                 }
 

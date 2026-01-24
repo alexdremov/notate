@@ -3,6 +3,7 @@ package com.alexdremov.notate.data.worker
 import android.content.Context
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
+import com.alexdremov.notate.data.SaveStatusManager
 import com.alexdremov.notate.data.io.AtomicContainerStorage
 import com.alexdremov.notate.data.io.FileLockManager
 import com.alexdremov.notate.util.Logger
@@ -28,6 +29,7 @@ class SaveWorker(
         }
 
         Logger.i("SaveWorker", "Starting background save for: $targetPath")
+        SaveStatusManager.startSaving(targetPath)
 
         val atomicStorage = AtomicContainerStorage(applicationContext)
         var lockHandle: FileLockManager.LockedFileHandle? = null
@@ -53,6 +55,7 @@ class SaveWorker(
             Result.retry()
         } finally {
             lockHandle?.close()
+            SaveStatusManager.finishSaving(targetPath)
         }
     }
 

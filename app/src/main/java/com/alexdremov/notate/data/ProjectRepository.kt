@@ -12,6 +12,13 @@ sealed interface FileSystemItem {
     val fileName: String
     val path: String
     val lastModified: Long
+    val syncStatus: SyncStatus
+}
+
+enum class SyncStatus {
+    NONE,
+    PLANNED,
+    SYNCING,
 }
 
 data class ProjectItem(
@@ -20,6 +27,7 @@ data class ProjectItem(
     override val path: String,
     override val lastModified: Long,
     val itemsCount: Int,
+    override val syncStatus: SyncStatus = SyncStatus.NONE,
 ) : FileSystemItem
 
 data class CanvasItem(
@@ -30,6 +38,7 @@ data class CanvasItem(
     val thumbnail: String? = null,
     val tagIds: List<String> = emptyList(),
     val embeddedTags: List<Tag> = emptyList(),
+    override val syncStatus: SyncStatus = SyncStatus.NONE,
 ) : FileSystemItem
 
 class ProjectRepository(

@@ -22,6 +22,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.alexdremov.notate.data.ProjectConfig
 import com.alexdremov.notate.data.ProjectItem
+import com.alexdremov.notate.data.SyncStatus
 import com.alexdremov.notate.ui.home.components.DeleteConfirmationDialog
 import com.alexdremov.notate.ui.home.components.EmptyState
 import com.alexdremov.notate.ui.home.components.FileGridItem
@@ -59,6 +60,7 @@ fun ProjectListScreen(
             modifier = Modifier.fillMaxSize(),
         ) {
             items(projects) { project ->
+                val isSyncing = syncingProjectIds.contains(project.id)
                 // Map ProjectConfig to ProjectItem for the shared component
                 val item =
                     ProjectItem(
@@ -67,11 +69,11 @@ fun ProjectListScreen(
                         path = project.uri,
                         lastModified = 0L, // Metadata not tracked for root projects
                         itemsCount = 0,
+                        syncStatus = if (isSyncing) SyncStatus.SYNCING else SyncStatus.NONE,
                     )
 
                 FileGridItem(
                     item = item,
-                    isSyncing = syncingProjectIds.contains(project.id),
                     onClick = { onOpenProject(project) },
                     onLongClick = { projectToManage = project },
                 )

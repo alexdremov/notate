@@ -80,13 +80,15 @@ class CanvasSession(
 
     /**
      * Increment reference count.
+     * Returns the new reference count.
      */
-    fun retain() {
+    fun retain(): Int {
         if (closed.get()) {
             Logger.w("CanvasSession", "Retaining closed session! Race condition likely.")
         }
         val count = refCount.incrementAndGet()
         Logger.d("CanvasSession", "Session retained. RefCount: $count")
+        return count
     }
 
     /**
@@ -98,6 +100,11 @@ class CanvasSession(
         Logger.d("CanvasSession", "Session released. RefCount: $count")
         return count <= 0
     }
+
+    /**
+     * Returns the current client reference count.
+     */
+    fun getRefCount(): Int = refCount.get()
 
     /**
      * Marks the start of an operation (e.g., save) that requires the session directory.

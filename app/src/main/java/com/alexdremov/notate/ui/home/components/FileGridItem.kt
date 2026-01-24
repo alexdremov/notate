@@ -29,6 +29,7 @@ import androidx.compose.ui.unit.sp
 import com.alexdremov.notate.data.CanvasItem
 import com.alexdremov.notate.data.FileSystemItem
 import com.alexdremov.notate.data.ProjectItem
+import com.alexdremov.notate.data.SyncStatus
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -36,7 +37,6 @@ import java.util.*
 @Composable
 fun FileGridItem(
     item: FileSystemItem,
-    isSyncing: Boolean = false,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
 ) {
@@ -105,16 +105,20 @@ fun FileGridItem(
                     )
                 }
 
-                if (isSyncing) {
+                if (item.syncStatus != SyncStatus.NONE) {
                     val infiniteTransition = rememberInfiniteTransition()
-                    val angle by infiniteTransition.animateFloat(
-                        initialValue = 0f,
-                        targetValue = 360f,
-                        animationSpec =
-                            infiniteRepeatable(
-                                animation = tween(1000, easing = LinearEasing),
-                            ),
-                    )
+                    val angle by if (item.syncStatus == SyncStatus.SYNCING) {
+                        infiniteTransition.animateFloat(
+                            initialValue = 0f,
+                            targetValue = 360f,
+                            animationSpec =
+                                infiniteRepeatable(
+                                    animation = tween(1000, easing = LinearEasing),
+                                ),
+                        )
+                    } else {
+                        remember { mutableFloatStateOf(0f) }
+                    }
 
                     Box(
                         modifier =
@@ -128,7 +132,7 @@ fun FileGridItem(
                         Icon(
                             imageVector = Icons.Default.Sync,
                             contentDescription = "Syncing",
-                            tint = Color(0xFF007AFF),
+                            tint = if (item.syncStatus == SyncStatus.SYNCING) Color(0xFF007AFF) else Color.Gray,
                             modifier = Modifier.fillMaxSize().rotate(angle),
                         )
                     }

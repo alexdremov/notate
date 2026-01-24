@@ -2,6 +2,7 @@ package com.alexdremov.notate.data
 
 import android.content.Context
 import kotlinx.coroutines.*
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.*
 import org.junit.Before
@@ -62,22 +63,17 @@ class SyncManagerTest {
                     override suspend fun deleteFile(remotePath: String) = true
                 }
 
-            syncManager = SyncManager(context, canvasRepository) { _, _, _ -> hangingProvider }
+            val testDispatcher = UnconfinedTestDispatcher(testScheduler)
+            syncManager = SyncManager(context, canvasRepository, testDispatcher) { _, _, _ -> hangingProvider }
 
             // Start sync in a separate job
             val syncJob =
-                launch(Dispatchers.IO) {
+                launch(testDispatcher) {
                     syncManager.syncProject(testProjectId)
                 }
 
-            // Wait a bit to ensure sync has started and reached the suspension point
-            // We poll the global progress to see if it started
-            var attempts = 0
-            while (SyncManager.globalSyncProgress.value.isEmpty() && attempts < 50) {
-                delay(50)
-                attempts++
-            }
-
+            // Unconfined dispatcher executes until first suspension (delay in provider),
+            // so progress should be updated immediately.
             assertTrue("Sync should be reported in global progress", SyncManager.globalSyncProgress.value.containsKey(testProjectId))
 
             // Trigger cancellation
