@@ -7,6 +7,7 @@ object CanvasConfig {
     const val MIN_SCALE = 0.01f
     const val MAX_SCALE = 100.0f
     const val WORLD_BOUNDS_SIZE = 50000f // +/- from origin
+    const val DEFAULT_REGION_SIZE = 4096f
 
     // Tiling & Performance
     const val TILE_SIZE = 512
@@ -15,19 +16,22 @@ object CanvasConfig {
     const val MIN_ZOOM_LEVEL = -10
     const val MAX_ZOOM_LEVEL = 10
     const val LOD_BIAS = 0.0f // Switch to lower resolution sooner
-    const val CACHE_MEMORY_PERCENT = 0.65 // of heap
-    const val IMAGE_CACHE_MEMORY_PERCENT = 0.25 // of heap
+    const val CACHE_MEMORY_PERCENT = 0.50 // of heap
+    const val IMAGE_CACHE_MEMORY_PERCENT = 0.10 // of heap
+    const val REGIONS_CACHE_MEMORY_PERCENT = 0.30 // of heap
     const val IMAGE_METADATA_CACHE_SIZE = 200
     const val ERROR_CACHE_SIZE = 100
     const val NEIGHBOR_PRECACHE_THRESHOLD_PERCENT = 0.9
     const val NEIGHBOR_COUNT = 2
     val THREAD_POOL_SIZE = Runtime.getRuntime().availableProcessors()
+    const val THUMBNAIL_RESOLUTION = 2048f
 
     // Debugging
     var DEBUG_USE_SIMPLE_RENDERER = false
     var DEBUG_SHOW_RAM_USAGE = false
     var DEBUG_SHOW_TILES = false
     var DEBUG_SHOW_BOUNDING_BOX = false
+    var DEBUG_SHOW_REGIONS = false
     const val DEBUG_TEXT_SIZE_BASE = 40f
     const val DEBUG_STROKE_WIDTH_BASE = 2f
     const val DEBUG_TEXT_OFFSET_Y_BASE = 50f

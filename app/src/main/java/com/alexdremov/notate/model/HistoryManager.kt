@@ -3,8 +3,13 @@ package com.alexdremov.notate.model
 import android.graphics.RectF
 import java.util.Stack
 
+/**
+ * Pure state manager for Undo/Redo stacks.
+ * Decoupled from execution logic to allow Suspend/Async execution in the Model.
+ */
 class HistoryManager(
-    private val strokeExecutor: StrokeExecutor,
+    // Optional callbacks if needed, but we try to keep it pure
+    private val executor: StrokeExecutor? = null,
 ) {
     companion object {
         private const val MAX_HISTORY_SIZE = 100
@@ -17,11 +22,12 @@ class HistoryManager(
     private val currentBatch = ArrayList<HistoryAction>()
 
     interface StrokeExecutor {
-        fun execute(action: HistoryAction)
-
-        fun revert(action: HistoryAction)
-
         fun calculateBounds(action: HistoryAction): RectF
+
+        // Execute/Revert removed to allow suspend handling in Model
+        fun execute(action: HistoryAction) {}
+
+        fun revert(action: HistoryAction) {}
     }
 
     fun startBatchSession() {
@@ -40,8 +46,10 @@ class HistoryManager(
         isBatching = false
     }
 
-    fun applyAction(action: HistoryAction) {
-        strokeExecutor.execute(action)
+    /**
+     * Records an action that has ALREADY been executed.
+     */
+    fun addToStack(action: HistoryAction) {
         if (isBatching) {
             currentBatch.add(action)
         } else {
@@ -51,26 +59,51 @@ class HistoryManager(
         }
     }
 
-    fun undo(): RectF? {
+    // Legacy support if needed, but prefer addToStack
+    fun applyAction(action: HistoryAction) {
+        executor?.execute(action)
+        addToStack(action)
+    }
+
+    /**
+     * Pops action from Undo stack and pushes to Redo stack.
+     * Returns the action for the caller to Revert.
+     */
+    fun undoActionOnly(): HistoryAction? {
         if (undoStack.isNotEmpty()) {
             val action = undoStack.pop()
-            strokeExecutor.revert(action)
             redoStack.push(action)
             limitStackSize(redoStack)
-            return strokeExecutor.calculateBounds(action)
+            return action
         }
         return null
     }
 
-    fun redo(): RectF? {
+    /**
+     * Pops action from Redo stack and pushes to Undo stack.
+     * Returns the action for the caller to Execute.
+     */
+    fun redoActionOnly(): HistoryAction? {
         if (redoStack.isNotEmpty()) {
             val action = redoStack.pop()
-            strokeExecutor.execute(action)
             undoStack.push(action)
             limitStackSize(undoStack)
-            return strokeExecutor.calculateBounds(action)
+            return action
         }
         return null
+    }
+
+    // Legacy methods calling executor if present (for non-suspend paths if any)
+    fun undo(): RectF? {
+        val action = undoActionOnly() ?: return null
+        executor?.revert(action)
+        return executor?.calculateBounds(action)
+    }
+
+    fun redo(): RectF? {
+        val action = redoActionOnly() ?: return null
+        executor?.execute(action)
+        return executor?.calculateBounds(action)
     }
 
     fun clear() {

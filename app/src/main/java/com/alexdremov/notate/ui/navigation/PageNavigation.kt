@@ -30,11 +30,12 @@ import com.alexdremov.notate.model.InfiniteCanvasModel
 import com.alexdremov.notate.ui.render.CanvasRenderer
 import com.alexdremov.notate.ui.render.RenderQuality
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.math.min
 
 object PageThumbnailGenerator {
-    fun generatePageThumbnail(
+    suspend fun generatePageThumbnail(
         model: InfiniteCanvasModel,
         pageIndex: Int,
         width: Int,
@@ -45,33 +46,24 @@ object PageThumbnailGenerator {
         val canvas = Canvas(bitmap)
         canvas.drawColor(android.graphics.Color.WHITE)
 
-        // 1. Get Page Bounds from Model
         val pageRect = model.getPageBounds(pageIndex)
-
-        // 2. Query all items (Strokes + Images)
-        val items = model.queryItems(pageRect)
-        // Sort items by Z-Index/Order for correct layering
-        items.sortWith(compareBy<com.alexdremov.notate.model.CanvasItem> { it.zIndex }.thenBy { it.order })
-
-        // 3. Setup Matrix to fit pageRect into width/height
-        val scaleX = width.toFloat() / pageRect.width()
-        val scaleY = height.toFloat() / pageRect.height()
-        val scale = min(scaleX, scaleY)
+        val scale = min(width.toFloat() / pageRect.width(), height.toFloat() / pageRect.height())
 
         canvas.save()
         canvas.scale(scale, scale)
         canvas.translate(-pageRect.left, -pageRect.top)
 
-        // 4. Delegate Rendering to Shared Logic
-        // We use RenderQuality.SIMPLE for fast vector drawing of strokes
-        CanvasRenderer.renderItems(
-            canvas = canvas,
-            items = items,
-            visibleRect = pageRect, // Optimization: clip to page
-            quality = RenderQuality.SIMPLE,
-            viewScale = scale,
-            context = context,
-        )
+        val regionManager = model.getRegionManager()
+        if (regionManager != null) {
+            val regionIds = regionManager.getRegionIdsInRect(pageRect)
+            val regionSize = regionManager.regionSize
+
+            for (id in regionIds) {
+                val regionThumb = regionManager.getRegionThumbnail(id, context) ?: continue
+                val dstRect = RectF(id.x * regionSize, id.y * regionSize, (id.x + 1) * regionSize, (id.y + 1) * regionSize)
+                canvas.drawBitmap(regionThumb, null, dstRect, null)
+            }
+        }
 
         canvas.restore()
         return bitmap
@@ -80,16 +72,15 @@ object PageThumbnailGenerator {
 
 /**
  * A floating navigation strip for Fixed Page mode.
- * Shows [ < ] [ Page X / Y ] [ > ].
  */
 @Composable
 fun PageNavigationStrip(
     controller: CanvasController,
     modifier: Modifier = Modifier,
 ) {
-    // Legacy / standalone version
-    var currentPage by remember { mutableStateOf(controller.getCurrentPageIndex() + 1) }
-    var totalPages by remember { mutableStateOf(controller.getTotalPages()) }
+    val scope = rememberCoroutineScope()
+    var currentPage by remember { mutableIntStateOf(1) }
+    var totalPages by remember { mutableIntStateOf(1) }
     var showGrid by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
@@ -110,8 +101,10 @@ fun PageNavigationStrip(
             modifier = Modifier.padding(8.dp),
         ) {
             IconButton(onClick = {
-                controller.prevPage()
-                currentPage = controller.getCurrentPageIndex() + 1
+                scope.launch {
+                    controller.prevPage()
+                    currentPage = controller.getCurrentPageIndex() + 1
+                }
             }) {
                 Icon(Icons.Default.ArrowBack, "Previous Page")
             }
@@ -121,15 +114,15 @@ fun PageNavigationStrip(
             }
 
             IconButton(onClick = {
-                controller.nextPage()
-                currentPage = controller.getCurrentPageIndex() + 1
+                scope.launch {
+                    controller.nextPage()
+                    currentPage = controller.getCurrentPageIndex() + 1
+                }
             }) {
                 Icon(Icons.Default.ArrowForward, "Next Page")
             }
         }
     }
-    // Note: This version doesn't support model for grid, so grid will fail if used.
-    // Assuming this is deprecated/unused now.
 }
 
 /**
@@ -143,13 +136,12 @@ fun CompactPageNavigation(
     modifier: Modifier = Modifier,
     onGridOpenChanged: (Boolean) -> Unit = {},
 ) {
-    var currentPage by remember { mutableStateOf(controller.getCurrentPageIndex() + 1) }
-    var totalPages by remember { mutableStateOf(controller.getTotalPages()) }
+    val scope = rememberCoroutineScope()
+    var currentPage by remember { mutableIntStateOf(1) }
+    var totalPages by remember { mutableIntStateOf(1) }
     var showGrid by remember { mutableStateOf(false) }
 
-    LaunchedEffect(showGrid) {
-        onGridOpenChanged(showGrid)
-    }
+    LaunchedEffect(showGrid) { onGridOpenChanged(showGrid) }
 
     LaunchedEffect(Unit) {
         while (true) {
@@ -166,17 +158,14 @@ fun CompactPageNavigation(
         ) {
             IconButton(
                 onClick = {
-                    controller.prevPage()
-                    currentPage = controller.getCurrentPageIndex() + 1
+                    scope.launch {
+                        controller.prevPage()
+                        currentPage = controller.getCurrentPageIndex() + 1
+                    }
                 },
                 modifier = Modifier.size(36.dp),
             ) {
-                Icon(
-                    Icons.Default.ArrowBack,
-                    contentDescription = "Prev",
-                    tint = Color.Black,
-                    modifier = Modifier.size(20.dp),
-                )
+                Icon(Icons.Default.ArrowBack, "Prev", tint = Color.Black, modifier = Modifier.size(20.dp))
             }
 
             TextButton(
@@ -194,17 +183,14 @@ fun CompactPageNavigation(
 
             IconButton(
                 onClick = {
-                    controller.nextPage()
-                    currentPage = controller.getCurrentPageIndex() + 1
+                    scope.launch {
+                        controller.nextPage()
+                        currentPage = controller.getCurrentPageIndex() + 1
+                    }
                 },
                 modifier = Modifier.size(36.dp),
             ) {
-                Icon(
-                    Icons.Default.ArrowForward,
-                    contentDescription = "Next",
-                    tint = Color.Black,
-                    modifier = Modifier.size(20.dp),
-                )
+                Icon(Icons.Default.ArrowForward, "Next", tint = Color.Black, modifier = Modifier.size(20.dp))
             }
         }
     } else {
@@ -214,17 +200,14 @@ fun CompactPageNavigation(
         ) {
             IconButton(
                 onClick = {
-                    controller.prevPage()
-                    currentPage = controller.getCurrentPageIndex() + 1
+                    scope.launch {
+                        controller.prevPage()
+                        currentPage = controller.getCurrentPageIndex() + 1
+                    }
                 },
                 modifier = Modifier.size(36.dp),
             ) {
-                Icon(
-                    Icons.Default.ArrowBack,
-                    contentDescription = "Prev",
-                    tint = Color.Black,
-                    modifier = Modifier.size(20.dp),
-                )
+                Icon(Icons.Default.ArrowBack, "Prev", tint = Color.Black, modifier = Modifier.size(20.dp))
             }
 
             TextButton(
@@ -232,26 +215,19 @@ fun CompactPageNavigation(
                 contentPadding = PaddingValues(horizontal = 4.dp),
                 modifier = Modifier.height(36.dp),
             ) {
-                Text(
-                    text = "$currentPage",
-                    color = Color.Black,
-                    style = MaterialTheme.typography.labelLarge,
-                )
+                Text(text = "$currentPage", color = Color.Black, style = MaterialTheme.typography.labelLarge)
             }
 
             IconButton(
                 onClick = {
-                    controller.nextPage()
-                    currentPage = controller.getCurrentPageIndex() + 1
+                    scope.launch {
+                        controller.nextPage()
+                        currentPage = controller.getCurrentPageIndex() + 1
+                    }
                 },
                 modifier = Modifier.size(36.dp),
             ) {
-                Icon(
-                    Icons.Default.ArrowForward,
-                    contentDescription = "Next",
-                    tint = Color.Black,
-                    modifier = Modifier.size(20.dp),
-                )
+                Icon(Icons.Default.ArrowForward, "Next", tint = Color.Black, modifier = Modifier.size(20.dp))
             }
         }
     }
@@ -264,8 +240,10 @@ fun CompactPageNavigation(
             currentPage = currentPage,
             onDismiss = { showGrid = false },
             onPageSelected = { page ->
-                controller.jumpToPage(page - 1)
-                showGrid = false
+                scope.launch {
+                    controller.jumpToPage(page - 1)
+                    showGrid = false
+                }
             },
         )
     }

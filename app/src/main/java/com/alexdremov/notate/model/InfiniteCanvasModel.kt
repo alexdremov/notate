@@ -1,39 +1,37 @@
 package com.alexdremov.notate.model
 
-import android.graphics.Path
 import android.graphics.RectF
-import android.util.Log
 import com.alexdremov.notate.config.CanvasConfig
 import com.alexdremov.notate.data.CanvasData
 import com.alexdremov.notate.data.CanvasSerializer
 import com.alexdremov.notate.data.CanvasType
-import com.alexdremov.notate.util.Quadtree
+import com.alexdremov.notate.data.region.RegionManager
 import com.alexdremov.notate.util.StrokeGeometry
 import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
-import java.util.ArrayList
-import java.util.concurrent.locks.ReentrantReadWriteLock
-import kotlin.concurrent.read
-import kotlin.concurrent.write
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlin.math.floor
 
 /**
  * The core data model for the infinite canvas application.
- * Manages item storage, spatial indexing (Quadtree), undo/redo history, and persistence.
- * All public methods are thread-safe, utilizing a ReentrantReadWriteLock to allow concurrent
- * reads (rendering) while ensuring exclusive writes (drawing/erasing).
+ * Manages item storage via RegionManager, undo/redo history, and persistence.
+ *
+ * Refactored to be fully Suspendable/Async to prevent deadlocks.
  */
 class InfiniteCanvasModel {
-    // Master list for persistence
-    private val allItems = ArrayList<CanvasItem>()
+    private var regionManager: RegionManager? = null
 
-    // Spatial Index for Rendering
-    private var quadtree = Quadtree(0, RectF(-50000f, -50000f, 50000f, 50000f))
-
+    // Track global bounds for navigation/zoom-to-fit
     private val contentBounds = RectF()
+    private val _contentBoundsFlow = MutableStateFlow(RectF())
+    val contentBoundsFlow: StateFlow<RectF> = _contentBoundsFlow.asStateFlow()
 
-    private val rwLock = ReentrantReadWriteLock()
+    private val mutex = Mutex()
 
     private var nextOrder: Long = 0
 
@@ -45,11 +43,11 @@ class InfiniteCanvasModel {
     private val historyManager =
         HistoryManager(
             object : HistoryManager.StrokeExecutor {
-                override fun execute(action: HistoryAction) = executeAction(action)
-
-                override fun revert(action: HistoryAction) = revertAction(action)
-
                 override fun calculateBounds(action: HistoryAction) = calculateActionBounds(action)
+
+                override fun execute(action: HistoryAction) {}
+
+                override fun revert(action: HistoryAction) {}
             },
         )
 
@@ -64,7 +62,11 @@ class InfiniteCanvasModel {
 
         data class ItemsUpdated(
             val items: List<CanvasItem>,
-        ) : ModelEvent() // For specialized updates if needed
+        ) : ModelEvent()
+
+        data class RegionLoaded(
+            val bounds: RectF,
+        ) : ModelEvent()
 
         object ContentCleared : ModelEvent()
     }
@@ -87,48 +89,49 @@ class InfiniteCanvasModel {
     var tagIds: List<String> = emptyList()
     var tagDefinitions: List<Tag> = emptyList()
 
-    /**
-     * Updates the background style of the canvas.
-     * Thread-safe (Write Lock).
-     */
-    fun setBackground(style: BackgroundStyle) {
-        rwLock.write {
+    fun getRegionManager(): RegionManager? = regionManager
+
+    suspend fun initializeSession(manager: RegionManager) {
+        mutex.withLock {
+            regionManager = manager
+            val bounds = manager.getContentBounds()
+            contentBounds.set(bounds)
+            _contentBoundsFlow.value = RectF(bounds)
+
+            manager.onRegionLoaded = { region ->
+                val size = manager.regionSize
+                val rLeft = region.id.x * size
+                val rTop = region.id.y * size
+                val regionBounds = RectF(rLeft, rTop, rLeft + size, rTop + size)
+                _events.tryEmit(ModelEvent.RegionLoaded(regionBounds))
+            }
+        }
+    }
+
+    suspend fun setBackground(style: BackgroundStyle) {
+        mutex.withLock {
             backgroundStyle = style
         }
     }
 
-    /**
-     * Starts a batch session for history tracking.
-     * Useful for grouping multiple small changes (e.g., continuous eraser strokes) into a single undo step.
-     * Thread-safe (Write Lock).
-     */
-    fun startBatchSession() {
-        rwLock.write {
+    suspend fun startBatchSession() {
+        mutex.withLock {
             historyManager.startBatchSession()
         }
     }
 
-    /**
-     * Ends the current batch session.
-     * Thread-safe (Write Lock).
-     */
-    fun endBatchSession() {
-        rwLock.write {
+    suspend fun endBatchSession() {
+        mutex.withLock {
             historyManager.endBatchSession()
         }
     }
 
-    /**
-     * Adds a new item to the model.
-     * - Validates item against page bounds if in Fixed Page mode.
-     * - Assigns a unique order.
-     * - Updates spatial index and history.
-     *
-     * @param item The item to add.
-     * @return The added item with assigned order, or null if rejected.
-     */
-    fun addItem(item: CanvasItem): CanvasItem? {
-        // Enforce Fixed Page horizontal bounds
+    fun importImage(
+        uri: android.net.Uri,
+        context: android.content.Context,
+    ): String? = regionManager?.importImage(uri, context)
+
+    suspend fun addItem(item: CanvasItem): CanvasItem? {
         if (canvasType == CanvasType.FIXED_PAGES) {
             if (item.bounds.right < 0 || item.bounds.left > pageWidth) {
                 return null
@@ -136,49 +139,48 @@ class InfiniteCanvasModel {
         }
 
         var addedItem: CanvasItem? = null
-        rwLock.write {
+        mutex.withLock {
             val orderedItem =
                 when (item) {
                     is Stroke -> item.copy(strokeOrder = nextOrder++)
                     is CanvasImage -> item.copy(order = nextOrder++)
+                    else -> throw IllegalArgumentException("Unsupported CanvasItem type: ${item::class.java.name}")
                 }
-            historyManager.applyAction(HistoryAction.Add(listOf(orderedItem)))
+
+            executeAction(HistoryAction.Add(listOf(orderedItem)))
+            historyManager.addToStack(HistoryAction.Add(listOf(orderedItem)))
+
             addedItem = orderedItem
         }
         return addedItem
     }
 
-    // Backwards compatibility for strokes
-    fun addStroke(stroke: Stroke): Stroke? = addItem(stroke) as? Stroke
+    suspend fun addStroke(stroke: Stroke): Stroke? = addItem(stroke) as? Stroke
 
-    /**
-     * Performs erasure on the canvas based on the provided eraser stroke and type.
-     */
-    fun erase(
+    suspend fun erase(
         eraserStroke: Stroke,
         type: EraserType,
     ): RectF? {
         var invalidatedBounds: RectF? = null
-
-        // Phase 1: Read-Only Calculation (Expensive geometry)
-        val actionsToApply = ArrayList<HistoryAction>()
-        var boundsToInvalidate = RectF()
-
-        // Temporary storage for granular replacements (Target -> New Parts)
-        val pendingReplacements = ArrayList<Pair<CanvasItem, List<CanvasItem>>>()
+        val boundsToInvalidate = RectF()
         val toRemove = ArrayList<CanvasItem>()
+        val pendingReplacements = ArrayList<Pair<CanvasItem, List<CanvasItem>>>()
 
-        rwLock.read {
-            val candidates = ArrayList<CanvasItem>()
+        mutex.withLock {
+            val rm = regionManager ?: return@withLock null
             val searchBounds = RectF(eraserStroke.bounds)
             searchBounds.inset(-(eraserStroke.width + 5f), -(eraserStroke.width + 5f))
-            quadtree.retrieve(candidates, searchBounds)
 
-            if (candidates.isEmpty()) return@read
+            val regions = rm.getRegionsInRect(searchBounds)
+            val candidates = ArrayList<CanvasItem>()
+            regions.forEach { region ->
+                region.quadtree?.retrieve(candidates, searchBounds)
+            }
+
+            if (candidates.isEmpty()) return@withLock null
 
             when (type) {
                 EraserType.STROKE -> {
-                    // "Stroke Eraser": Deletes entire strokes touched by the eraser.
                     candidates.forEach { item ->
                         if (item is Stroke && RectF.intersects(item.bounds, eraserStroke.bounds) &&
                             StrokeGeometry.strokeIntersects(item, eraserStroke)
@@ -187,24 +189,20 @@ class InfiniteCanvasModel {
                         } else if (item is CanvasImage && RectF.intersects(item.bounds, eraserStroke.bounds) &&
                             item.bounds.contains(eraserStroke.bounds.centerX(), eraserStroke.bounds.centerY())
                         ) {
-                            // Simple hit test for images with stroke eraser
                             toRemove.add(item)
                         }
                     }
                 }
 
                 EraserType.LASSO -> {
-                    // "Lasso Eraser": Deletes items strictly fully contained within the lasso loop.
                     candidates.forEach { item ->
                         if (!eraserStroke.bounds.contains(item.bounds)) return@forEach
-
                         val isContained =
                             if (item is Stroke) {
                                 item.points.all { p ->
                                     StrokeGeometry.isPointInPolygon(p.x, p.y, eraserStroke.points)
                                 }
                             } else {
-                                // For images, check all 4 corners
                                 val b = item.bounds
                                 StrokeGeometry.isPointInPolygon(b.left, b.top, eraserStroke.points) &&
                                     StrokeGeometry.isPointInPolygon(b.right, b.top, eraserStroke.points) &&
@@ -219,8 +217,6 @@ class InfiniteCanvasModel {
                 }
 
                 EraserType.STANDARD -> {
-                    // "Standard Eraser": Physically cuts strokes (Point Eraser).
-                    // Does NOT affect images currently.
                     candidates.filterIsInstance<Stroke>().forEach { target ->
                         if (RectF.intersects(target.bounds, eraserStroke.bounds)) {
                             val newParts = StrokeGeometry.splitStroke(target, eraserStroke)
@@ -231,92 +227,75 @@ class InfiniteCanvasModel {
                     }
                 }
             }
-        }
 
-        // Phase 2: Write
-        if (toRemove.isNotEmpty() || pendingReplacements.isNotEmpty()) {
-            rwLock.write {
-                // VALIDATION: Ensure items still exist (TOCTOU fix)
-                // Filter removals to only those currently in the model
-                val validRemovals = toRemove.filter { allItems.contains(it) }
-
-                // Filter replacements to only those whose target is currently in the model
-                val validReplacements = pendingReplacements.filter { allItems.contains(it.first) }
-
-                if (validRemovals.isNotEmpty()) {
-                    val action = HistoryAction.Remove(validRemovals)
-                    actionsToApply.add(action)
-                    boundsToInvalidate.union(calculateBounds(validRemovals))
-                    historyManager.applyAction(action)
+            if (toRemove.isNotEmpty() || pendingReplacements.isNotEmpty()) {
+                if (toRemove.isNotEmpty()) {
+                    val action = HistoryAction.Remove(toRemove)
+                    executeAction(action)
+                    historyManager.addToStack(action)
+                    boundsToInvalidate.union(calculateBounds(toRemove))
                 }
 
-                if (validReplacements.isNotEmpty()) {
-                    val finalRemoved = validReplacements.map { it.first }
-                    val finalAdded = validReplacements.flatMap { it.second }
+                if (pendingReplacements.isNotEmpty()) {
+                    val finalRemoved = pendingReplacements.map { it.first }
+                    val finalAdded = pendingReplacements.flatMap { it.second }
 
-                    // Assign order to new parts (must happen inside write lock)
                     val orderedAdded =
                         finalAdded.map { item ->
                             if (item is Stroke) item.copy(strokeOrder = nextOrder++) else item
                         }
 
                     val action = HistoryAction.Replace(finalRemoved, orderedAdded)
-                    actionsToApply.add(action)
+                    executeAction(action)
+                    historyManager.addToStack(action)
+
                     boundsToInvalidate.union(calculateBounds(finalRemoved))
                     boundsToInvalidate.union(calculateBounds(orderedAdded))
-                    historyManager.applyAction(action)
                 }
 
                 invalidatedBounds = boundsToInvalidate
             }
         }
-
         return invalidatedBounds
     }
 
-    fun deleteItems(items: List<CanvasItem>) {
+    suspend fun deleteItems(items: List<CanvasItem>) {
         if (items.isEmpty()) return
-        rwLock.write {
-            historyManager.applyAction(HistoryAction.Remove(items))
+        mutex.withLock {
+            val action = HistoryAction.Remove(items)
+            executeAction(action)
+            historyManager.addToStack(action)
         }
     }
 
-    // Backwards compatibility
-    fun deleteStrokes(strokes: List<Stroke>) {
+    suspend fun deleteStrokes(strokes: List<Stroke>) {
         deleteItems(strokes)
     }
 
-    private fun executeAction(
+    private suspend fun executeAction(
         action: HistoryAction,
         recalculateBounds: Boolean = true,
     ) {
+        val rm = regionManager ?: return
         when (action) {
             is HistoryAction.Add -> {
                 action.items.forEach { item ->
-                    allItems.add(item)
-                    quadtree = quadtree.insert(item)
+                    rm.addItem(item)
                     updateContentBounds(item.bounds)
                 }
                 _events.tryEmit(ModelEvent.ItemsAdded(action.items))
             }
 
             is HistoryAction.Remove -> {
-                action.items.forEach { item ->
-                    allItems.remove(item)
-                    quadtree.remove(item)
-                }
+                rm.removeItems(action.items)
                 if (recalculateBounds) recalculateContentBounds()
                 _events.tryEmit(ModelEvent.ItemsRemoved(action.items))
             }
 
             is HistoryAction.Replace -> {
-                action.removed.forEach { item ->
-                    allItems.remove(item)
-                    quadtree.remove(item)
-                }
+                rm.removeItems(action.removed)
                 action.added.forEach { item ->
-                    allItems.add(item)
-                    quadtree = quadtree.insert(item)
+                    rm.addItem(item)
                     updateContentBounds(item.bounds)
                 }
                 if (recalculateBounds) recalculateContentBounds()
@@ -331,37 +310,30 @@ class InfiniteCanvasModel {
         }
     }
 
-    private fun revertAction(
+    private suspend fun revertAction(
         action: HistoryAction,
         recalculateBounds: Boolean = true,
     ) {
+        val rm = regionManager ?: return
         when (action) {
             is HistoryAction.Add -> {
-                action.items.forEach { item ->
-                    allItems.remove(item)
-                    quadtree.remove(item)
-                }
+                rm.removeItems(action.items)
                 if (recalculateBounds) recalculateContentBounds()
                 _events.tryEmit(ModelEvent.ItemsRemoved(action.items))
             }
 
             is HistoryAction.Remove -> {
                 action.items.forEach { item ->
-                    allItems.add(item)
-                    quadtree = quadtree.insert(item)
+                    rm.addItem(item)
                     updateContentBounds(item.bounds)
                 }
                 _events.tryEmit(ModelEvent.ItemsAdded(action.items))
             }
 
             is HistoryAction.Replace -> {
-                action.added.forEach { item ->
-                    allItems.remove(item)
-                    quadtree.remove(item)
-                }
+                rm.removeItems(action.added)
                 action.removed.forEach { item ->
-                    allItems.add(item)
-                    quadtree = quadtree.insert(item)
+                    rm.addItem(item)
                     updateContentBounds(item.bounds)
                 }
                 if (recalculateBounds) recalculateContentBounds()
@@ -376,9 +348,19 @@ class InfiniteCanvasModel {
         }
     }
 
-    fun undo(): RectF? = rwLock.write { historyManager.undo() }
+    suspend fun undo(): RectF? =
+        mutex.withLock {
+            val action = historyManager.undoActionOnly() ?: return@withLock null
+            revertAction(action)
+            return@withLock calculateActionBounds(action)
+        }
 
-    fun redo(): RectF? = rwLock.write { historyManager.redo() }
+    suspend fun redo(): RectF? =
+        mutex.withLock {
+            val action = historyManager.redoActionOnly() ?: return@withLock null
+            executeAction(action)
+            return@withLock calculateActionBounds(action)
+        }
 
     private fun calculateActionBounds(action: HistoryAction): RectF =
         when (action) {
@@ -401,35 +383,36 @@ class InfiniteCanvasModel {
             }
         }
 
-    fun clear() {
-        rwLock.write {
-            allItems.clear()
+    suspend fun clear() {
+        mutex.withLock {
+            regionManager?.clear()
             historyManager.clear()
-            quadtree = Quadtree(0, RectF(-50000f, -50000f, 50000f, 50000f))
             contentBounds.setEmpty()
+            _contentBoundsFlow.value = RectF()
             nextOrder = 0
             _events.tryEmit(ModelEvent.ContentCleared)
         }
     }
 
-    fun getContentBounds(): RectF = RectF(contentBounds)
-
-    fun performRead(block: (List<CanvasItem>) -> Unit) {
-        rwLock.read {
-            block(allItems)
-        }
+    fun getContentBounds(): RectF {
+        // Safe read from StateFlow or cached RectF
+        // Note: contentBounds RectF is NOT thread safe, so we return a copy from StateFlow
+        return RectF(_contentBoundsFlow.value)
     }
 
-    fun queryItems(rect: RectF): ArrayList<CanvasItem> {
+    suspend fun queryItems(rect: RectF): ArrayList<CanvasItem> {
         val result = ArrayList<CanvasItem>()
-        rwLock.read {
-            quadtree.retrieve(result, rect)
+        mutex.withLock {
+            val rm = regionManager ?: return@withLock
+            val regions = rm.getRegionsInRect(rect)
+            regions.forEach { region ->
+                region.quadtree?.retrieve(result, rect)
+            }
         }
         return result
     }
 
-    // Backwards compatibility
-    fun queryStrokes(rect: RectF): ArrayList<Stroke> {
+    suspend fun queryStrokes(rect: RectF): ArrayList<Stroke> {
         val items = queryItems(rect)
         val strokes = ArrayList<Stroke>()
         for (item in items) {
@@ -438,24 +421,19 @@ class InfiniteCanvasModel {
         return strokes
     }
 
-    // --- Helpers ---
     private fun updateContentBounds(bounds: RectF) {
         if (contentBounds.isEmpty) {
             contentBounds.set(bounds)
         } else {
             contentBounds.union(bounds)
         }
+        _contentBoundsFlow.value = RectF(contentBounds)
     }
 
-    private fun recalculateContentBounds() {
-        contentBounds.setEmpty()
-        allItems.forEach { item ->
-            if (contentBounds.isEmpty) {
-                contentBounds.set(item.bounds)
-            } else {
-                contentBounds.union(item.bounds)
-            }
-        }
+    private suspend fun recalculateContentBounds() {
+        val bounds = regionManager?.getContentBounds() ?: RectF()
+        contentBounds.set(bounds)
+        _contentBoundsFlow.value = RectF(contentBounds)
     }
 
     private fun calculateBounds(items: List<CanvasItem>): RectF {
@@ -469,10 +447,19 @@ class InfiniteCanvasModel {
         return r
     }
 
-    fun toCanvasData(): CanvasData =
-        rwLock.read {
+    /**
+     * Serializes the current canvas state to [CanvasData].
+     *
+     * Note: this requires an initialized session; [regionManager] must be non-null.
+     */
+    suspend fun toCanvasData(): CanvasData =
+        mutex.withLock {
+            val manager =
+                regionManager
+                    ?: throw IllegalStateException("toCanvasData() called before session initialization: regionManager is null")
+            val size = manager.regionSize
+
             CanvasSerializer.toData(
-                allItems,
                 canvasType,
                 pageWidth,
                 pageHeight,
@@ -483,17 +470,21 @@ class InfiniteCanvasModel {
                 toolbarItems,
                 tagIds,
                 tagDefinitions,
+                regionSize = size,
+                nextStrokeOrder = nextOrder,
             )
         }
 
-    fun setLoadedState(state: CanvasSerializer.LoadedCanvasState) {
-        rwLock.write {
-            allItems.clear()
+    suspend fun setLoadedState(state: CanvasSerializer.LoadedCanvasState) {
+        mutex.withLock {
+            regionManager?.clear()
             historyManager.clear()
+            contentBounds.setEmpty()
+            nextOrder = 0
+            _events.tryEmit(ModelEvent.ContentCleared)
 
-            allItems.addAll(state.items)
-            quadtree = state.quadtree
             contentBounds.set(state.contentBounds)
+            _contentBoundsFlow.value = RectF(state.contentBounds)
             nextOrder = state.nextStrokeOrder
 
             canvasType = state.canvasType
@@ -509,25 +500,8 @@ class InfiniteCanvasModel {
         }
     }
 
-    fun loadFromCanvasData(data: CanvasData) {
-        rwLock.write {
-            // ... existing complicated load logic but delegated to serializer ideally,
-            // but here we are doing it in-place.
-            // For safety and DRY, let's rely on Serializer's parsing logic which we already improved
-            // But parseCanvasData is suspend...
-            // We can just use the Serializer's synchronous helper if we expose it, or duplicate logic.
-            // Given I refactored the serializer to handle everything, it's better to use it.
-            // However, loadFromCanvasData in Model was doing synchronous path reconstruction (bad).
-            // The calling code (CanvasActivity) uses CanvasRepository which uses CanvasSerializer.parseCanvasData (suspend).
-            // So this method might not be used anymore or only for legacy?
-            // Let's implement it using Serializer's fromData which is synchronous callback based.
-
-            allItems.clear()
-            historyManager.clear()
-            quadtree = Quadtree(0, RectF(-50000f, -50000f, 50000f, 50000f))
-            contentBounds.setEmpty()
-            nextOrder = 0
-
+    suspend fun loadFromCanvasData(data: CanvasData) {
+        mutex.withLock {
             canvasType = data.canvasType
             pageWidth = data.pageWidth
             pageHeight = data.pageHeight
@@ -538,24 +512,17 @@ class InfiniteCanvasModel {
             toolbarItems = data.toolbarItems
             tagIds = data.tagIds
             tagDefinitions = data.tagDefinitions
-
-            CanvasSerializer.fromData(data) { item ->
-                if (item.order >= nextOrder) nextOrder = item.order + 1
-                allItems.add(item)
-                quadtree = quadtree.insert(item)
-                updateContentBounds(item.bounds)
-            }
+            nextOrder = data.nextStrokeOrder
         }
     }
 
     fun getTotalPages(): Int {
         if (canvasType != CanvasType.FIXED_PAGES) return 1
-        return rwLock.read {
-            if (contentBounds.isEmpty) return@read 1
-            val pageFullHeight = pageHeight + CanvasConfig.PAGE_SPACING
-            val maxPage = floor(contentBounds.bottom / pageFullHeight).toInt()
-            (maxPage + 1).coerceAtLeast(1)
-        }
+        val bounds = _contentBoundsFlow.value
+        if (bounds.isEmpty) return 1
+        val pageFullHeight = pageHeight + CanvasConfig.PAGE_SPACING
+        val maxPage = floor(bounds.bottom / pageFullHeight).toInt()
+        return (maxPage + 1).coerceAtLeast(1)
     }
 
     fun getPageBounds(pageIndex: Int): RectF {
@@ -564,12 +531,41 @@ class InfiniteCanvasModel {
         return RectF(0f, top, pageWidth, top + pageHeight)
     }
 
-    fun hitTest(
+    fun hitTestSync(
         x: Float,
         y: Float,
         tolerance: Float = 10f,
-    ): CanvasItem? =
-        rwLock.read {
-            quadtree.hitTest(x, y, tolerance)
+    ): CanvasItem? {
+        val rm = regionManager ?: return null
+        val searchRect = RectF(x - tolerance, y - tolerance, x + tolerance, y + tolerance)
+        val regionIds = rm.getRegionIdsInRect(searchRect)
+
+        var hit: CanvasItem? = null
+        val candidates = ArrayList<CanvasItem>()
+
+        for (id in regionIds) {
+            val region = rm.getRegionReadOnly(id) ?: continue
+            region.quadtree?.retrieve(candidates, searchRect)
         }
+
+        candidates.sortByDescending { it.order }
+
+        for (item in candidates) {
+            if (item.distanceToPoint(x, y) < tolerance) {
+                hit = item
+                break
+            }
+        }
+        return hit
+    }
+
+    suspend fun hitTest(
+        x: Float,
+        y: Float,
+        tolerance: Float = 10f,
+    ): CanvasItem? = mutex.withLock { hitTestSync(x, y, tolerance) }
+
+    suspend fun flush() {
+        regionManager?.saveAll()
+    }
 }

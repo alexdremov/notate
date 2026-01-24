@@ -7,58 +7,76 @@ import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.RectF
 import android.util.Base64
+import com.alexdremov.notate.config.CanvasConfig
 import com.alexdremov.notate.data.CanvasData
+import com.alexdremov.notate.data.CanvasSerializer
 import com.alexdremov.notate.data.CanvasType
 import com.alexdremov.notate.data.StrokeData
+import com.alexdremov.notate.data.region.RegionManager
 import com.alexdremov.notate.model.CanvasImage
+import com.alexdremov.notate.model.CanvasItem
+import com.alexdremov.notate.model.Stroke
 import com.alexdremov.notate.model.StrokeType
 import java.io.ByteArrayOutputStream
 import kotlin.math.min
 
 object ThumbnailGenerator {
-    private const val THUMB_WIDTH = 300
-    private const val THUMB_HEIGHT = 300
-    private const val PADDING = 10f
+    private val THUMB_WIDTH = CanvasConfig.THUMBNAIL_RESOLUTION.toInt()
+    private val THUMB_HEIGHT = CanvasConfig.THUMBNAIL_RESOLUTION.toInt()
+    private const val PADDING = 4f
 
-    fun generateBase64(
-        data: CanvasData,
+    suspend fun generateBase64(
+        regionManager: RegionManager,
+        metadata: CanvasData,
         context: android.content.Context,
     ): String? =
         try {
-            val bitmap = generateBitmap(data, context)
+            val bitmap = generateBitmapFromRegions(regionManager, metadata, context)
             val outputStream = ByteArrayOutputStream()
             bitmap.compress(Bitmap.CompressFormat.JPEG, 80, outputStream)
             val byteArray = outputStream.toByteArray()
             bitmap.recycle()
             Base64.encodeToString(byteArray, Base64.NO_WRAP)
         } catch (e: Exception) {
-            Logger.e("Thumbnail", "Generation failed", e)
+            Logger.e("Thumbnail", "Generation from regions failed", e)
             null
         }
 
-    private fun generateBitmap(
-        data: CanvasData,
+    private suspend fun generateBitmapFromRegions(
+        regionManager: RegionManager,
+        metadata: CanvasData,
         context: android.content.Context,
     ): Bitmap {
         val bitmap = Bitmap.createBitmap(THUMB_WIDTH, THUMB_HEIGHT, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bitmap)
-        canvas.drawColor(Color.WHITE) // Background
+        canvas.drawColor(Color.WHITE)
 
-        // 1. Calculate World Bounds
         val bounds =
-            when (data.canvasType) {
+            when (metadata.canvasType) {
                 CanvasType.FIXED_PAGES -> {
-                    val w = if (data.pageWidth > 0) data.pageWidth else 2480f
-                    val h = if (data.pageHeight > 0) data.pageHeight else 3508f
+                    val w = if (metadata.pageWidth > 0) metadata.pageWidth else 2480f
+                    val h = if (metadata.pageHeight > 0) metadata.pageHeight else 3508f
                     RectF(0f, 0f, w, h)
                 }
 
                 CanvasType.INFINITE -> {
-                    calculateContentBounds(data)
+                    val dm = context.resources.displayMetrics
+                    val vW = dm.widthPixels.toFloat()
+                    val vH = dm.heightPixels.toFloat()
+
+                    val mat = android.graphics.Matrix()
+                    mat.postScale(metadata.zoomLevel, metadata.zoomLevel)
+                    mat.postTranslate(metadata.offsetX, metadata.offsetY)
+
+                    val inv = android.graphics.Matrix()
+                    mat.invert(inv)
+
+                    val viewport = RectF(0f, 0f, vW, vH)
+                    inv.mapRect(viewport)
+                    viewport
                 }
             }
 
-        // 2. Setup Transform
         val scaleX = (THUMB_WIDTH - PADDING * 2) / bounds.width()
         val scaleY = (THUMB_HEIGHT - PADDING * 2) / bounds.height()
         val scale = min(scaleX, scaleY).takeIf { it.isFinite() && it > 0 } ?: 1f
@@ -70,7 +88,6 @@ object ThumbnailGenerator {
         canvas.translate(dx, dy)
         canvas.scale(scale, scale)
 
-        // 3. Draw Strokes
         val paint =
             Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 style = Paint.Style.STROKE
@@ -78,125 +95,39 @@ object ThumbnailGenerator {
                 strokeJoin = Paint.Join.ROUND
             }
 
-        val strokesToDraw =
-            if (data.strokes.size > 2000) {
-                data.strokes.filterIndexed { index, _ -> index % 2 == 0 }
-            } else {
-                data.strokes
-            }
-
-        strokesToDraw.forEach { stroke ->
-            drawStroke(canvas, stroke, paint, scale)
-        }
-
-        // 4. Draw Images
-        data.images.forEach { imgData ->
-            val image =
-                CanvasImage(
-                    uri = imgData.uri,
-                    bounds = RectF(imgData.x, imgData.y, imgData.x + imgData.width, imgData.y + imgData.height),
-                    zIndex = imgData.zIndex,
-                    order = imgData.order,
-                    rotation = imgData.rotation,
-                    opacity = imgData.opacity,
-                )
-            StrokeRenderer.drawItem(canvas, image, false, paint, context, scale)
-        }
+        renderThumbnailFromRegions(canvas, regionManager, bounds, paint, scale, context)
 
         canvas.restore()
         return bitmap
     }
 
-    private fun drawStroke(
+    private suspend fun renderThumbnailFromRegions(
         canvas: Canvas,
-        stroke: StrokeData,
+        regionManager: RegionManager,
+        bounds: RectF,
         paint: Paint,
-        viewScale: Float,
+        scale: Float,
+        context: android.content.Context,
     ) {
-        paint.color = stroke.color
+        val regionIds = regionManager.getRegionIdsInRect(bounds)
+        if (regionIds.isEmpty()) return
 
-        // Ensure visibility on minimap/thumbnail (large canvases)
-        val minPixels = 1.0f
-        val minWidth = minPixels / viewScale
-        var targetWidth = kotlin.math.max(stroke.width, minWidth)
+        val regionSize = regionManager.regionSize
 
-        if (stroke.style == StrokeType.HIGHLIGHTER) {
-            paint.alpha = 80
-            targetWidth *= 1.5f
-        } else {
-            paint.alpha = 255
-        }
+        for ((index, regionId) in regionIds.withIndex()) {
+            val bitmap = regionManager.getRegionThumbnail(regionId, context) ?: continue
+            val dstRect =
+                RectF(
+                    regionId.x * regionSize,
+                    regionId.y * regionSize,
+                    (regionId.x + 1) * regionSize,
+                    (regionId.y + 1) * regionSize,
+                )
+            canvas.drawBitmap(bitmap, null, dstRect, null)
 
-        paint.strokeWidth = targetWidth
-
-        val path = Path()
-
-        if (stroke.pointsPacked != null && stroke.pointsPacked.size >= 2) {
-            val arr = stroke.pointsPacked
-            val stride = StrokeData.PACKED_POINT_STRIDE
-            path.moveTo(arr[0], arr[1])
-            var i = stride
-            while (i < arr.size) {
-                path.lineTo(arr[i], arr[i + 1])
-                i += stride
+            if (index % 5 == 0) {
+                kotlinx.coroutines.yield()
             }
-        } else if (stroke.points.isNotEmpty()) {
-            val list = stroke.points
-            path.moveTo(list[0].x, list[0].y)
-            for (i in 1 until list.size) {
-                path.lineTo(list[i].x, list[i].y)
-            }
-        }
-
-        canvas.drawPath(path, paint)
-    }
-
-    private fun calculateContentBounds(data: CanvasData): RectF {
-        if (data.strokes.isEmpty() && data.images.isEmpty()) return RectF(0f, 0f, 1000f, 1000f)
-
-        var minX = Float.MAX_VALUE
-        var minY = Float.MAX_VALUE
-        var maxX = Float.MIN_VALUE
-        var maxY = Float.MIN_VALUE
-        var hasContent = false
-
-        data.strokes.forEach { stroke ->
-            if (stroke.pointsPacked != null) {
-                val arr = stroke.pointsPacked
-                var i = 0
-                while (i < arr.size) {
-                    val x = arr[i]
-                    val y = arr[i + 1]
-                    if (x < minX) minX = x
-                    if (x > maxX) maxX = x
-                    if (y < minY) minY = y
-                    if (y > maxY) maxY = y
-                    hasContent = true
-                    i += 4 * StrokeData.PACKED_POINT_STRIDE // Skip some points
-                }
-            } else {
-                stroke.points.forEach { p ->
-                    if (p.x < minX) minX = p.x
-                    if (p.x > maxX) maxX = p.x
-                    if (p.y < minY) minY = p.y
-                    if (p.y > maxY) maxY = p.y
-                    hasContent = true
-                }
-            }
-        }
-
-        data.images.forEach { img ->
-            if (img.x < minX) minX = img.x
-            if (img.x + img.width > maxX) maxX = img.x + img.width
-            if (img.y < minY) minY = img.y
-            if (img.y + img.height > maxY) maxY = img.y + img.height
-            hasContent = true
-        }
-
-        return if (hasContent) {
-            RectF(minX, minY, maxX, maxY)
-        } else {
-            RectF(0f, 0f, 1000f, 1000f)
         }
     }
 }

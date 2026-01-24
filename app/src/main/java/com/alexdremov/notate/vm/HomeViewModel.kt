@@ -67,11 +67,126 @@ class HomeViewModel(
     private val _sortOption = MutableStateFlow(SortOption.DATE_NEWEST)
     val sortOption: StateFlow<SortOption> = _sortOption.asStateFlow()
 
+    // --- State: Saving Background Processes ---
+    private val _savingPaths = MutableStateFlow<Set<String>>(emptySet())
+    val savingPaths: StateFlow<Set<String>> = _savingPaths.asStateFlow()
+
     init {
         loadProjects()
         loadTags()
         loadSortOption()
         startIndexing()
+        observeSaveStatus()
+        observeGlobalSync()
+    }
+
+    private fun observeSaveStatus() {
+        viewModelScope.launch {
+            SaveStatusManager.savingFiles.collect { files ->
+                val previous = _savingPaths.value
+                _savingPaths.value = files
+
+                // If a file was in 'previous' but not in 'files', it finished saving
+                val finished = previous - files
+                if (finished.isNotEmpty()) {
+                    Logger.d("HomeViewModel", "Detected background save completion for $finished. Refreshing UI.")
+                    refresh()
+
+                    // Trigger Sync for completed saves
+                    finished.forEach { path ->
+                        launch(Dispatchers.IO) {
+                            try {
+                                val projectId = syncManager.findProjectForFile(path)
+                                if (projectId != null) {
+                                    Logger.d("HomeViewModel", "Auto-triggering sync for saved file in project $projectId")
+                                    syncManager.syncProject(projectId)
+                                }
+                            } catch (e: Exception) {
+                                Logger.e("HomeViewModel", "Failed to auto-sync after save", e)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private fun observeGlobalSync() {
+        viewModelScope.launch {
+            SyncManager.globalSyncProgress.collect { progressMap ->
+                val currentIds = _syncingProjectIds.value
+                val newIds = progressMap.keys
+
+                // Detect completions (in current but not in new)
+                val completed = currentIds - newIds
+                if (completed.isNotEmpty()) {
+                    refresh()
+                }
+
+                if (progressMap.isEmpty()) {
+                    _syncProgress.value = null
+                    _syncingProjectIds.value = emptySet()
+                } else {
+                    // Show the first active sync
+                    val (id, status) = progressMap.entries.first()
+                    _syncProgress.value = status
+                    _syncingProjectIds.value = newIds
+                }
+
+                // Update items status
+                val currentItems = _browserItems.value
+                _browserItems.value = applySyncStatus(currentItems)
+            }
+        }
+    }
+
+    private suspend fun applySyncStatus(items: List<FileSystemItem>): List<FileSystemItem> =
+        withContext(Dispatchers.IO) {
+            val project =
+                _currentProject.value ?: return@withContext items.map {
+                    if (it is CanvasItem) it.copy(syncStatus = SyncStatus.NONE) else it
+                }
+
+            val syncingIds = _syncingProjectIds.value
+            val isSyncing = syncingIds.contains(project.id)
+            val config = SyncPreferencesManager.getProjectSyncConfig(getApplication(), project.id)
+            val lastSyncTime = config?.lastSyncTimestamp ?: 0L
+            val isEnabled = config?.isEnabled == true
+
+            items.map { item ->
+                if (item is CanvasItem) {
+                    val isDirty = isEnabled && item.lastModified > lastSyncTime
+                    val newStatus =
+                        when {
+                            isDirty && isSyncing -> SyncStatus.SYNCING
+                            isDirty -> SyncStatus.PLANNED
+                            else -> SyncStatus.NONE
+                        }
+                    if (item.syncStatus != newStatus) item.copy(syncStatus = newStatus) else item
+                } else {
+                    item
+                }
+            }
+        }
+
+    private fun resumeInterruptedSyncs() {
+        val interrupted = SyncManager.getInterruptedProjects()
+        if (interrupted.isNotEmpty()) {
+            Logger.d("HomeViewModel", "Resuming interrupted syncs for: $interrupted")
+            interrupted.forEach { projectId ->
+                // Don't call syncProject directly to avoid double-checking existing IDs or UI logic
+                // Just launch the sync via manager, let global observer handle UI
+                viewModelScope.launch {
+                    try {
+                        withContext(Dispatchers.IO) {
+                            syncManager.syncProject(projectId)
+                        }
+                    } catch (e: Exception) {
+                        Logger.e("HomeViewModel", "Failed to resume sync for $projectId", e)
+                    }
+                }
+            }
+        }
     }
 
     private fun getRepository(project: ProjectConfig): ProjectRepository =
@@ -408,7 +523,7 @@ class HomeViewModel(
                 withContext(Dispatchers.IO) {
                     repo.getItems(path)
                 }
-            _browserItems.value = sortItems(items)
+            _browserItems.value = sortItems(applySyncStatus(items))
 
             // Auto-import tags from index (Project-wide)
             withContext(Dispatchers.IO) {
@@ -498,18 +613,64 @@ class HomeViewModel(
 
     fun deleteItem(item: FileSystemItem) {
         val repo = repository ?: return
+        val currentProject = _currentProject.value
+        val currentProjectId = currentProject?.id
+        val projectUri = currentProject?.uri
+        val currentPathVal = _currentPath.value
+
+        // Optimistic UI update
+        _browserItems.value = _browserItems.value.filter { it.path != item.path }
+
         viewModelScope.launch {
             val success =
                 withContext(Dispatchers.IO) {
                     repo.deleteItem(item.path)
                 }
             if (success) {
+                // Refresh local UI immediately from the repository to confirm local deletion
                 val tag = _selectedTag.value
                 if (tag != null) {
                     loadTaggedItems(tag.id)
                 } else {
-                    loadBrowserItems(_currentPath.value)
+                    loadBrowserItems(currentPathVal)
                 }
+
+                // Try to delete from remote in background
+                if (currentProjectId != null && projectUri != null) {
+                    launch(Dispatchers.IO) {
+                        try {
+                            Logger.d("HomeViewModel", "Attempting to propagate deletion to remote for ${item.name}")
+                            val relativePath =
+                                if (projectUri.startsWith("content://")) {
+                                    if (currentPathVal == repository?.getRootPath()) {
+                                        item.name
+                                    } else {
+                                        item.name
+                                    }
+                                } else {
+                                    File(item.path).relativeTo(File(projectUri)).path
+                                }
+
+                            Logger.d("HomeViewModel", "Calculated relative path for deletion: $relativePath")
+
+                            // 1. Record pending deletion
+                            SyncPreferencesManager.addPendingDeletion(getApplication(), currentProjectId, relativePath)
+
+                            // 2. Try immediate deletion
+                            val result = syncManager.deleteFromRemote(currentProjectId, relativePath)
+                            if (result) {
+                                Logger.d("HomeViewModel", "Immediate remote deletion successful")
+                            } else {
+                                Logger.d("HomeViewModel", "Immediate remote deletion skipped or failed (will be retried on sync)")
+                            }
+                        } catch (e: Exception) {
+                            Logger.w("HomeViewModel", "Failed to delete remote file: ${item.path}", e)
+                        }
+                    }
+                }
+            } else {
+                // If local deletion failed, refresh to restore item in list
+                refresh()
             }
         }
     }

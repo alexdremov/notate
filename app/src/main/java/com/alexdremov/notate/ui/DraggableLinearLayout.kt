@@ -71,7 +71,7 @@ class DraggableLinearLayout
 
         override fun onInterceptTouchEvent(ev: MotionEvent): Boolean {
             if (ev.action == MotionEvent.ACTION_DOWN) {
-                Logger.d("BooxVibesDebug", "DLL.onIntercept: DOWN, isDragEnabled=$isDragEnabled")
+                Logger.d("NotateDebug", "DLL.onIntercept: DOWN, isDragEnabled=$isDragEnabled")
             }
             if (!isDragEnabled) return false
 
@@ -89,7 +89,7 @@ class DraggableLinearLayout
                     val dx = abs(ev.rawX - lastTouchX)
                     val dy = abs(ev.rawY - lastTouchY)
                     if (dx > touchSlop || dy > touchSlop) {
-                        Logger.d("BooxVibesDebug", "DLL.onIntercept: MOVE > Slop, Intercepting!")
+                        Logger.d("NotateDebug", "DLL.onIntercept: MOVE > Slop, Intercepting!")
                         cancelLongPressCheck()
                         isDragging = true
                         onDragStart?.invoke()
@@ -98,7 +98,7 @@ class DraggableLinearLayout
                 }
 
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                    Logger.d("BooxVibesDebug", "DLL.onIntercept: UP/CANCEL")
+                    Logger.d("NotateDebug", "DLL.onIntercept: UP/CANCEL")
                     cancelLongPressCheck()
                     onUp?.invoke()
                     if (isDragging) {
@@ -112,7 +112,7 @@ class DraggableLinearLayout
 
         override fun onTouchEvent(event: MotionEvent): Boolean {
             if (event.action == MotionEvent.ACTION_DOWN) {
-                Logger.d("BooxVibesDebug", "DLL.onTouch: DOWN")
+                Logger.d("NotateDebug", "DLL.onTouch: DOWN")
             }
             when (event.action) {
                 MotionEvent.ACTION_DOWN -> {

@@ -107,6 +107,7 @@ fun MainScreen(viewModel: HomeViewModel) {
     val tags by viewModel.tags.collectAsState()
     val selectedTag by viewModel.selectedTag.collectAsState()
     val sortOption by viewModel.sortOption.collectAsState()
+    val savingPaths by viewModel.savingPaths.collectAsState()
 
     val context = LocalContext.current
     val snackbarHostState = remember { SnackbarHostState() }
@@ -326,6 +327,35 @@ fun MainScreen(viewModel: HomeViewModel) {
                                     modifier = Modifier.fillMaxWidth(),
                                     color = Color.Black,
                                     trackColor = Color.LightGray,
+                                )
+                            }
+                        }
+                    }
+                }
+
+                // Background Saving Indicator
+                if (savingPaths.isNotEmpty()) {
+                    Box(
+                        modifier = Modifier.fillMaxSize().padding(16.dp),
+                        contentAlignment = Alignment.BottomStart,
+                    ) {
+                        Card(
+                            modifier = Modifier.border(1.dp, Color.Black, RoundedCornerShape(8.dp)),
+                            colors = CardDefaults.cardColors(containerColor = Color.White),
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(16.dp),
+                                    strokeWidth = 2.dp,
+                                    color = Color.Black,
+                                )
+                                Spacer(Modifier.width(8.dp))
+                                Text(
+                                    text = if (savingPaths.size == 1) "Saving canvas..." else "Saving ${savingPaths.size} items...",
+                                    style = MaterialTheme.typography.bodySmall,
                                 )
                             }
                         }

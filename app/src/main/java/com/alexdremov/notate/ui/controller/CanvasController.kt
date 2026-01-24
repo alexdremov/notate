@@ -5,57 +5,32 @@ import com.alexdremov.notate.model.Stroke
 
 /**
  * Clean Architecture Interface for Canvas Operations.
- * Acts as the boundary between Input (Pen/Touch) and Core Logic (Model/Renderer).
+ * Boundary between Input (Pen/Touch) and Core Logic.
  *
- * This interface defines the contract for high-level canvas interactions, ensuring that
- * input handlers (like PenInputHandler) do not need to know about the internal workings
- * of the InfiniteCanvasModel or TileManager.
+ * Refactored to be fully suspendable for non-blocking concurrency.
  */
 interface CanvasController {
-    /**
-     * Starts a batch session in the history manager.
-     * Subsequent actions (like continuous eraser moves) will be grouped into a single undo step.
-     */
-    fun startBatchSession()
+    suspend fun startBatchSession()
 
-    /**
-     * Ends the current batch session.
-     * Finalizes the grouped actions in the history stack.
-     */
-    fun endBatchSession()
+    suspend fun endBatchSession()
 
     /**
      * Commits a completed stroke to the model.
-     * - Adds the stroke to the persistence layer.
-     * - Triggers a visual update on the renderer.
-     * - Updates the undo/redo history.
-     *
-     * @param stroke The stroke to commit.
      */
-    fun commitStroke(stroke: Stroke)
+    suspend fun commitStroke(stroke: Stroke)
 
     /**
-     * Previews an erasure operation without committing it to history immediately (for realtime feedback).
-     * - Standard Eraser: Updates visual tiles in-place (pixel manipulation).
-     * - Object Eraser: Calculates potential changes but might defer full history commitment until batch end.
-     *
-     * @param stroke The eraser path.
-     * @param type The type of eraser (Standard, Object, Lasso).
+     * Previews an erasure operation without committing it to history immediately.
      */
-    fun previewEraser(
+    suspend fun previewEraser(
         stroke: Stroke,
         type: EraserType,
     )
 
     /**
      * Commits a completed erasure action.
-     * - Finalizes the changes in the model.
-     * - Triggers a robust refresh of the affected area to ensure consistency.
-     *
-     * @param stroke The eraser path.
-     * @param type The type of eraser.
      */
-    fun commitEraser(
+    suspend fun commitEraser(
         stroke: Stroke,
         type: EraserType,
     )
@@ -65,43 +40,47 @@ interface CanvasController {
     fun setViewportController(controller: ViewportController)
 
     // --- Page Navigation ---
-    fun getCurrentPageIndex(): Int
+    suspend fun getCurrentPageIndex(): Int
 
-    fun getTotalPages(): Int
+    suspend fun getTotalPages(): Int
 
-    fun jumpToPage(index: Int)
+    suspend fun jumpToPage(index: Int)
 
-    fun nextPage()
+    suspend fun nextPage()
 
-    fun prevPage()
+    suspend fun prevPage()
 
     // --- Selection & Clipboard ---
-    fun getItemAt(
+    suspend fun getItemAt(
         x: Float,
         y: Float,
     ): com.alexdremov.notate.model.CanvasItem?
 
-    fun getItemsInRect(rect: android.graphics.RectF): List<com.alexdremov.notate.model.CanvasItem>
+    fun getItemAtSync(
+        x: Float,
+        y: Float,
+    ): com.alexdremov.notate.model.CanvasItem?
 
-    // Simplified Lasso: check if stroke center or bounds are substantially inside path
-    fun getItemsInPath(path: android.graphics.Path): List<com.alexdremov.notate.model.CanvasItem>
+    suspend fun getItemsInRect(rect: android.graphics.RectF): List<com.alexdremov.notate.model.CanvasItem>
 
-    fun selectItem(item: com.alexdremov.notate.model.CanvasItem)
+    suspend fun getItemsInPath(path: android.graphics.Path): List<com.alexdremov.notate.model.CanvasItem>
 
-    fun selectItems(items: List<com.alexdremov.notate.model.CanvasItem>)
+    suspend fun selectItem(item: com.alexdremov.notate.model.CanvasItem)
 
-    fun clearSelection()
+    suspend fun selectItems(items: List<com.alexdremov.notate.model.CanvasItem>)
 
-    fun deleteSelection()
+    suspend fun clearSelection()
 
-    fun copySelection()
+    suspend fun deleteSelection()
 
-    fun paste(
+    suspend fun copySelection()
+
+    suspend fun paste(
         x: Float,
         y: Float,
     )
 
-    fun pasteImage(
+    suspend fun pasteImage(
         uri: String,
         x: Float,
         y: Float,
@@ -109,16 +88,16 @@ interface CanvasController {
         height: Float,
     )
 
-    fun startMoveSelection()
+    suspend fun startMoveSelection()
 
-    fun moveSelection(
+    suspend fun moveSelection(
         dx: Float,
         dy: Float,
     )
 
-    fun transformSelection(matrix: android.graphics.Matrix)
+    suspend fun transformSelection(matrix: android.graphics.Matrix)
 
-    fun commitMoveSelection()
+    suspend fun commitMoveSelection()
 
     fun getSelectionManager(): SelectionManager
 

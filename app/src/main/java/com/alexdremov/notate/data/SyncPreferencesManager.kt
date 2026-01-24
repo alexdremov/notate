@@ -12,6 +12,7 @@ object SyncPreferencesManager {
     private const val ENCRYPTED_PREFS_NAME = "secure_sync_prefs"
     private const val KEY_REMOTE_STORAGES = "remote_storages"
     private const val KEY_PROJECT_SYNC_CONFIGS = "project_sync_configs"
+    private const val KEY_PENDING_DELETIONS = "pending_deletions"
 
     private val protoBuf = ProtoBuf
 
@@ -115,5 +116,72 @@ object SyncPreferencesManager {
             configs.add(config)
         }
         saveProjectSyncConfigs(context, configs)
+    }
+
+    fun getPendingDeletions(context: Context): List<PendingDeletion> {
+        val data = getPrefs(context).getString(KEY_PENDING_DELETIONS, null) ?: return emptyList()
+        return try {
+            val bytes = Base64.decode(data, Base64.DEFAULT)
+            protoBuf.decodeFromByteArray(ListSerializer(PendingDeletion.serializer()), bytes)
+        } catch (e: Exception) {
+            emptyList()
+        }
+    }
+
+    fun savePendingDeletions(
+        context: Context,
+        deletions: List<PendingDeletion>,
+    ) {
+        val bytes = protoBuf.encodeToByteArray(ListSerializer(PendingDeletion.serializer()), deletions)
+        val string = Base64.encodeToString(bytes, Base64.DEFAULT)
+        getPrefs(context).edit().putString(KEY_PENDING_DELETIONS, string).apply()
+    }
+
+    fun addPendingDeletion(
+        context: Context,
+        projectId: String,
+        relativePath: String,
+    ) {
+        val deletions = getPendingDeletions(context).toMutableList()
+        // Avoid duplicates
+        if (deletions.none { it.projectId == projectId && it.relativePath == relativePath }) {
+            deletions.add(PendingDeletion(projectId, relativePath, System.currentTimeMillis()))
+            savePendingDeletions(context, deletions)
+        }
+    }
+
+    fun removePendingDeletion(
+        context: Context,
+        projectId: String,
+        relativePath: String,
+    ) {
+        val deletions = getPendingDeletions(context).toMutableList()
+        deletions.removeAll { it.projectId == projectId && it.relativePath == relativePath }
+        savePendingDeletions(context, deletions)
+    }
+
+    fun getProjectSyncMetadata(
+        context: Context,
+        projectId: String,
+    ): SyncMetadata {
+        val key = "sync_metadata_$projectId"
+        val data = getPrefs(context).getString(key, null) ?: return SyncMetadata()
+        return try {
+            val bytes = Base64.decode(data, Base64.DEFAULT)
+            protoBuf.decodeFromByteArray(SyncMetadata.serializer(), bytes)
+        } catch (e: Exception) {
+            SyncMetadata()
+        }
+    }
+
+    fun saveProjectSyncMetadata(
+        context: Context,
+        projectId: String,
+        metadata: SyncMetadata,
+    ) {
+        val key = "sync_metadata_$projectId"
+        val bytes = protoBuf.encodeToByteArray(SyncMetadata.serializer(), metadata)
+        val string = Base64.encodeToString(bytes, Base64.DEFAULT)
+        getPrefs(context).edit().putString(key, string).apply()
     }
 }

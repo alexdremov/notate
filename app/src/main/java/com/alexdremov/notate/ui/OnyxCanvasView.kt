@@ -4,9 +4,12 @@ import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Matrix
+import android.graphics.Paint
+import android.graphics.Path
 import android.graphics.Rect
 import android.graphics.RectF
 import android.util.AttributeSet
+import android.view.Choreographer
 import android.view.MotionEvent
 import android.view.SurfaceHolder
 import android.view.SurfaceView
@@ -16,6 +19,7 @@ import com.alexdremov.notate.data.CanvasData
 import com.alexdremov.notate.data.CanvasType
 import com.alexdremov.notate.model.InfiniteCanvasModel
 import com.alexdremov.notate.model.PenTool
+import com.alexdremov.notate.model.Stroke
 import com.alexdremov.notate.ui.input.PenInputHandler
 import com.alexdremov.notate.ui.interaction.ViewportInteractor
 import com.alexdremov.notate.ui.render.CanvasRenderer
@@ -30,6 +34,11 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
+import java.util.LinkedList
 
 class OnyxCanvasView
     @JvmOverloads
@@ -41,10 +50,12 @@ class OnyxCanvasView
         SurfaceHolder.Callback {
         // --- Components ---
         private val viewScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
+        private val debugRamHistory = LinkedList<Float>()
+        private val MAX_RAM_HISTORY_POINTS = 60
         private var touchHelper: TouchHelper? = null
         private val canvasModel = InfiniteCanvasModel()
         private val canvasRenderer = CanvasRenderer(canvasModel, context.applicationContext, viewScope) { invalidateCanvas() }
-        private val canvasController = CanvasControllerImpl(canvasModel, canvasRenderer)
+        private val canvasController = CanvasControllerImpl(context.applicationContext, canvasModel, canvasRenderer)
 
         // --- Drawers ---
         private val selectionOverlayDrawer = SelectionOverlayDrawer(canvasController.getSelectionManager(), canvasRenderer)
@@ -53,6 +64,13 @@ class OnyxCanvasView
         private val matrix = Matrix()
         private val inverseMatrix = Matrix()
         var onViewportChanged: (() -> Unit)? = null
+
+        private var drawScheduled = false
+        private val frameCallback =
+            Choreographer.FrameCallback {
+                drawScheduled = false
+                drawContent()
+            }
 
         private val viewportInteractor =
             ViewportInteractor(
@@ -76,7 +94,7 @@ class OnyxCanvasView
                 },
             )
 
-        private val selectionInteractor = SelectionInteractor(this, canvasController, matrix, inverseMatrix)
+        private val selectionInteractor = SelectionInteractor(this, canvasController, viewScope, matrix, inverseMatrix)
 
         // --- Pen Input ---
         private val penInputHandler: PenInputHandler
@@ -114,6 +132,35 @@ class OnyxCanvasView
             setZOrderOnTop(false)
             holder.setFormat(android.graphics.PixelFormat.OPAQUE)
 
+            viewScope.launch {
+                while (isActive) {
+                    if (CanvasConfig.DEBUG_ENABLE_PROFILING) {
+                        com.alexdremov.notate.util.PerformanceProfiler
+                            .printReport()
+                    }
+                    delay(CanvasConfig.PROFILING_INTERVAL_MS)
+                }
+            }
+
+            viewScope.launch {
+                while (isActive) {
+                    if (CanvasConfig.DEBUG_SHOW_RAM_USAGE) {
+                        val runtime = Runtime.getRuntime()
+                        val used = (runtime.totalMemory() - runtime.freeMemory()).toFloat()
+                        val max = runtime.maxMemory().toFloat()
+                        val percent = if (max > 0) used / max else 0f
+
+                        debugRamHistory.add(percent)
+                        if (debugRamHistory.size > MAX_RAM_HISTORY_POINTS) {
+                            debugRamHistory.removeFirst()
+                        }
+
+                        invalidateCanvas()
+                    }
+                    delay(500)
+                }
+            }
+
             // Setup Viewport Controller to bridge Controller -> Interactor
             canvasController.setViewportController(
                 object : com.alexdremov.notate.controller.ViewportController {
@@ -144,6 +191,7 @@ class OnyxCanvasView
                 PenInputHandler(
                     canvasController,
                     this,
+                    viewScope,
                     matrix,
                     inverseMatrix,
                     onStrokeStarted = { onStrokeStarted?.invoke() },
@@ -169,34 +217,36 @@ class OnyxCanvasView
                         override fun onLongPress(e: MotionEvent) {
                             if (viewportInteractor.isBusy()) return
 
-                            // Compute fresh inverse to ensure hit test is accurate
-                            val inv = Matrix()
-                            matrix.invert(inv)
-                            val pts = floatArrayOf(e.x, e.y)
-                            inv.mapPoints(pts)
-                            val worldX = pts[0]
-                            val worldY = pts[1]
+                            viewScope.launch {
+                                // Compute fresh inverse to ensure hit test is accurate
+                                val inv = Matrix()
+                                matrix.invert(inv)
+                                val pts = floatArrayOf(e.x, e.y)
+                                inv.mapPoints(pts)
+                                val worldX = pts[0]
+                                val worldY = pts[1]
 
-                            val item = canvasController.getItemAt(worldX, worldY)
+                                val item = canvasController.getItemAt(worldX, worldY)
 
-                            if (item != null) {
-                                canvasController.clearSelection()
-                                canvasController.selectItem(item)
-                                // Hand off to Interactor to start drag
-                                selectionInteractor.onLongPressDragStart(e.x, e.y)
-                                performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
-                            } else {
-                                // Show Contextual Menu (Paste / Insert Image)
-                                if (pastePopup == null) {
+                                if (item != null) {
+                                    canvasController.clearSelection()
+                                    canvasController.selectItem(item)
+                                    // Hand off to Interactor to start drag
+                                    selectionInteractor.onLongPressDragStart(e.x, e.y)
+                                    performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
+                                } else {
+                                    // Show Contextual Menu (Paste / Insert Image)
                                     pastePopup =
                                         com.alexdremov.notate.ui.dialog.PasteActionPopup(
                                             context,
-                                            onPaste = { canvasController.paste(worldX, worldY) },
+                                            onPaste = {
+                                                viewScope.launch { canvasController.paste(worldX, worldY) }
+                                            },
                                             onPasteImage = { onRequestInsertImage?.invoke() },
                                         )
+                                    pastePopup?.show(this@OnyxCanvasView, e.x, e.y)
+                                    performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
                                 }
-                                pastePopup?.show(this@OnyxCanvasView, e.x, e.y)
-                                performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
                             }
                         }
                     },
@@ -257,8 +307,8 @@ class OnyxCanvasView
                     if (duration < CanvasConfig.TWO_FINGER_TAP_MAX_DELAY) {
                         if (!isTapSlopExceeded(event)) {
                             if (now - lastTwoFingerTapTime < CanvasConfig.TWO_FINGER_TAP_DOUBLE_TIMEOUT) {
-                                undo()
-                                lastTwoFingerTapTime = 0L // Reset to prevent a 3rd tap from pairing with the 2nd to trigger another undo
+                                viewScope.launch { undo() }
+                                lastTwoFingerTapTime = 0L
                             } else {
                                 lastTwoFingerTapTime = now
                             }
@@ -283,7 +333,7 @@ class OnyxCanvasView
             val index1 = event.findPointerIndex(twoFingerPointerId1)
             val index2 = event.findPointerIndex(twoFingerPointerId2)
 
-            if (index1 == -1 || index2 == -1) return true // Pointers lost, invalidate tap
+            if (index1 == -1 || index2 == -1) return true
 
             val d1 = distSq(event.getX(index1), event.getY(index1), twoFingerStartPt1[0], twoFingerStartPt1[1])
             val d2 = distSq(event.getX(index2), event.getY(index2), twoFingerStartPt2[0], twoFingerStartPt2[1])
@@ -321,6 +371,7 @@ class OnyxCanvasView
         override fun onDetachedFromWindow() {
             super.onDetachedFromWindow()
             viewScope.cancel()
+            minimapDrawer?.detach()
             canvasRenderer.destroy()
         }
 
@@ -347,13 +398,14 @@ class OnyxCanvasView
         }
 
         private fun invalidateCanvas() {
-            drawContent()
+            if (!drawScheduled) {
+                drawScheduled = true
+                Choreographer.getInstance().postFrameCallback(frameCallback)
+            }
         }
 
         private fun drawContent() {
             com.alexdremov.notate.util.PerformanceProfiler.trace("OnyxCanvasView.drawContent") {
-                // Use hardware canvas for GPU acceleration (API 26+)
-                // Critical for smooth zoom/pan with bitmap scaling
                 val cv =
                     try {
                         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
@@ -369,9 +421,7 @@ class OnyxCanvasView
 
                 try {
                     val bgColor =
-                        if (canvasModel.canvasType ==
-                            CanvasType.FIXED_PAGES
-                        ) {
+                        if (canvasModel.canvasType == CanvasType.FIXED_PAGES) {
                             CanvasConfig.FIXED_PAGE_CANVAS_BG_COLOR
                         } else {
                             Color.WHITE
@@ -382,22 +432,57 @@ class OnyxCanvasView
                     matrix.invert(inverseMatrix)
                     inverseMatrix.mapRect(visibleRect)
 
-                    canvasRenderer.render(cv, matrix, visibleRect, RenderQuality.HIGH, viewportInteractor.getCurrentScale())
-                    selectionOverlayDrawer.draw(cv, matrix, viewportInteractor.getCurrentScale())
+                    val values = FloatArray(9)
+                    matrix.getValues(values)
+                    val currentScale = values[Matrix.MSCALE_X]
+
+                    canvasRenderer.render(cv, matrix, visibleRect, RenderQuality.HIGH, currentScale)
+                    selectionOverlayDrawer.draw(cv, matrix, currentScale)
 
                     if (CanvasConfig.DEBUG_SHOW_RAM_USAGE) {
                         val runtime = Runtime.getRuntime()
-                        val text = "RAM: ${(runtime.totalMemory() - runtime.freeMemory()) / 1048576L}MB"
+                        val usedMem = (runtime.totalMemory() - runtime.freeMemory())
+                        val text = "RAM: ${usedMem / 1048576L}MB"
                         val debugPaint =
-                            android.graphics.Paint().apply {
+                            Paint().apply {
                                 color = Color.RED
                                 textSize = 40f
+                                style = Paint.Style.FILL
                             }
-                        cv.drawText(text, 20f, height - 20f, debugPaint)
-                    }
+                        cv.drawText(text, 20f, height - 130f, debugPaint)
 
-                    com.alexdremov.notate.util.PerformanceProfiler
-                        .printReportIfNeeded()
+                        val graphWidth = 300f
+                        val graphHeight = 100f
+                        val graphX = 20f
+                        val graphY = height - 20f - graphHeight
+
+                        val bgPaint =
+                            Paint().apply {
+                                color = Color.parseColor("#ffffffc7")
+                                style = Paint.Style.FILL
+                            }
+                        cv.drawRect(graphX, graphY, graphX + graphWidth, graphY + graphHeight, bgPaint)
+
+                        if (debugRamHistory.isNotEmpty()) {
+                            val path = Path()
+                            val stepX = graphWidth / MAX_RAM_HISTORY_POINTS
+                            debugPaint.style = Paint.Style.STROKE
+                            debugPaint.strokeWidth = 3f
+                            var first = true
+                            val historySnapshot = ArrayList(debugRamHistory)
+                            historySnapshot.forEachIndexed { index, percent ->
+                                val x = graphX + index * stepX
+                                val y = graphY + graphHeight - (percent * graphHeight)
+                                if (first) {
+                                    path.moveTo(x, y)
+                                    first = false
+                                } else {
+                                    path.lineTo(x, y)
+                                }
+                            }
+                            cv.drawPath(path, debugPaint)
+                        }
+                    }
                 } finally {
                     holder.unlockCanvasAndPost(cv)
                 }
@@ -432,23 +517,14 @@ class OnyxCanvasView
             canvasModel.viewportOffsetX = values[Matrix.MTRANS_X]
             canvasModel.viewportOffsetY = values[Matrix.MTRANS_Y]
             canvasModel.viewportScale = viewportInteractor.getCurrentScale()
-            return canvasModel.toCanvasData()
+            // CRITICAL: Since we can't make this suspend without breaking Activity callers,
+            // and getCanvasData is mostly used for saving, we'll use runBlocking for this leaf call.
+            // This is ONLY okay because toCanvasData is now mutex-protected and very fast
+            // (it just captures state, doesn't do IO).
+            return runBlocking { canvasModel.toCanvasData() }
         }
 
-        fun loadCanvasState(state: com.alexdremov.notate.data.CanvasSerializer.LoadedCanvasState) {
-            canvasModel.setLoadedState(state)
-            matrix.reset()
-            matrix.postScale(state.viewportScale, state.viewportScale)
-            matrix.postTranslate(state.viewportOffsetX, state.viewportOffsetY)
-            viewportInteractor.setScale(state.viewportScale)
-
-            canvasRenderer.updateLayoutStrategy()
-            canvasRenderer.clearTiles()
-
-            drawContent()
-        }
-
-        fun loadCanvasData(data: CanvasData) {
+        suspend fun loadMetadata(data: CanvasData) {
             canvasModel.loadFromCanvasData(data)
             matrix.reset()
             matrix.postScale(data.zoomLevel, data.zoomLevel)
@@ -457,7 +533,6 @@ class OnyxCanvasView
 
             canvasRenderer.updateLayoutStrategy()
             canvasRenderer.clearTiles()
-
             drawContent()
         }
 
@@ -475,7 +550,7 @@ class OnyxCanvasView
             penInputHandler.setCursorView(view)
         }
 
-        fun setBackgroundStyle(style: com.alexdremov.notate.model.BackgroundStyle) {
+        suspend fun setBackgroundStyle(style: com.alexdremov.notate.model.BackgroundStyle) {
             canvasModel.setBackground(style)
             invalidateCanvas()
             performHardRefresh()
@@ -504,23 +579,22 @@ class OnyxCanvasView
             }
         }
 
-        fun clear() {
+        suspend fun clear() {
             canvasModel.clear()
             canvasRenderer.clearTiles()
             minimapDrawer?.setDirty()
             drawContent()
-
             performHardRefresh()
             onContentChanged?.invoke()
         }
 
-        fun undo() {
+        suspend fun undo() {
             canvasModel.undo()?.let { canvasRenderer.invalidateTiles(it) }
             refreshAfterEdit()
             onContentChanged?.invoke()
         }
 
-        fun redo() {
+        suspend fun redo() {
             canvasModel.redo()?.let { canvasRenderer.invalidateTiles(it) }
             refreshAfterEdit()
             onContentChanged?.invoke()
@@ -533,9 +607,9 @@ class OnyxCanvasView
                     actionPopup =
                         com.alexdremov.notate.ui.dialog.SelectionActionPopup(
                             context,
-                            onCopy = { canvasController.copySelection() },
-                            onDelete = { canvasController.deleteSelection() },
-                            onDismiss = { /* handled by outside touch */ },
+                            onCopy = { viewScope.launch { canvasController.copySelection() } },
+                            onDelete = { viewScope.launch { canvasController.deleteSelection() } },
+                            onDismiss = { },
                         )
                 }
                 if (!selectionInteractor.isInteracting()) {
@@ -565,23 +639,21 @@ class OnyxCanvasView
         }
 
         private fun performHardRefresh() {
-            // Toggle Raw Drawing to ensure refresh works (mirrors Lasso Lift logic)
             val wasEnabled = touchHelper?.isRawDrawingInputEnabled() == true
             if (wasEnabled) {
                 touchHelper?.setRawDrawingEnabled(false)
             }
-
             EpdController.invalidate(this, UpdateMode.GC)
-
             if (wasEnabled) {
                 touchHelper?.setRawDrawingEnabled(true)
-                // Re-apply tool config after toggling
                 updateTouchHelperTool()
             }
         }
 
         private fun setupTouchHelper() {
             if (touchHelper == null) {
+                // Revert to Mode 2 (true) which handles surface interactions better for panning
+                // Use SFTouchRender (Mode 2) for better ink quality and panning support
                 touchHelper = TouchHelper.create(this, true, penInputHandler)
                 penInputHandler.setTouchHelper(touchHelper!!)
             }
@@ -594,6 +666,11 @@ class OnyxCanvasView
                 openRawDrawing()
                 setRawDrawingEnabled(true)
                 setRawDrawingRenderEnabled(true)
+
+                // Mode 2 ignores enableFingerTouch(), so we don't need to call it.
+                // Instead, we use setSingleRegionMode() which is crucial for fast stroke capture in SFTouchRender.
+                setSingleRegionMode()
+
                 EpdController.enterScribbleMode(this@OnyxCanvasView)
                 EpdController.setScreenHandWritingPenState(this@OnyxCanvasView, EpdPenManager.PEN_DRAWING)
             }
@@ -602,17 +679,11 @@ class OnyxCanvasView
 
         private fun refreshAfterEdit() {
             val visibleRect = RectF(0f, 0f, width.toFloat(), height.toFloat())
-
             matrix.invert(inverseMatrix)
-
             inverseMatrix.mapRect(visibleRect)
-
             canvasRenderer.refreshTiles(viewportInteractor.getCurrentScale(), visibleRect)
-
             minimapDrawer?.setDirty()
-
             drawContent()
-
             performHardRefresh()
         }
     }

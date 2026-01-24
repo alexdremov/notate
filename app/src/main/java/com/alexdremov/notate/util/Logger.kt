@@ -1,13 +1,14 @@
 package com.alexdremov.notate.util
 
 import android.util.Log
+import com.alexdremov.notate.config.CanvasConfig
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 
 object Logger {
-    private const val TAG_PREFIX = "BooxVibes"
+    private const val TAG_PREFIX = "Notate"
     private const val DEFAULT_TAG = "App"
 
     private val _userEvents =
@@ -49,22 +50,33 @@ object Logger {
     }
 
     fun d(
-        tag: String?,
-        message: String,
+        tag: String,
+        msg: String,
     ) {
-        Log.d(formatTag(tag), message)
+        if (CanvasConfig.DEBUG_SHOW_TILES || CanvasConfig.DEBUG_SHOW_REGIONS || CanvasConfig.DEBUG_ENABLE_PROFILING) {
+            Log.d(formatTag(tag), msg)
+        }
         if (minLogLevelToShow.priority <= Level.DEBUG.priority) {
-            _userEvents.tryEmit(UserEvent(message, Level.DEBUG))
+            _userEvents.tryEmit(UserEvent(msg, Level.DEBUG))
+        }
+    }
+
+    fun v(
+        tag: String,
+        msg: String,
+    ) {
+        if (CanvasConfig.DEBUG_SHOW_TILES) {
+            Log.v(formatTag(tag), msg)
         }
     }
 
     fun i(
-        tag: String?,
-        message: String,
+        tag: String,
+        msg: String,
     ) {
-        Log.i(formatTag(tag), message)
+        Log.i(formatTag(tag), msg)
         if (minLogLevelToShow.priority <= Level.INFO.priority) {
-            _userEvents.tryEmit(UserEvent(message, Level.INFO))
+            _userEvents.tryEmit(UserEvent(msg, Level.INFO))
         }
     }
 
@@ -102,9 +114,9 @@ object Logger {
     }
 
     // Overloads for convenience without tag
-    fun d(message: String) = d(null, message)
+    fun d(message: String) = d(DEFAULT_TAG, message)
 
-    fun i(message: String) = i(null, message)
+    fun i(message: String) = i(DEFAULT_TAG, message)
 
     fun w(
         message: String,

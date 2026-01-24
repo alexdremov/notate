@@ -9,24 +9,36 @@ import java.io.OutputStreamWriter
 
 sealed interface FileSystemItem {
     val name: String
+    val fileName: String
     val path: String
     val lastModified: Long
+    val syncStatus: SyncStatus
+}
+
+enum class SyncStatus {
+    NONE,
+    PLANNED,
+    SYNCING,
 }
 
 data class ProjectItem(
     override val name: String,
+    override val fileName: String,
     override val path: String,
     override val lastModified: Long,
     val itemsCount: Int,
+    override val syncStatus: SyncStatus = SyncStatus.NONE,
 ) : FileSystemItem
 
 data class CanvasItem(
     override val name: String,
+    override val fileName: String,
     override val path: String,
     override val lastModified: Long,
     val thumbnail: String? = null,
     val tagIds: List<String> = emptyList(),
     val embeddedTags: List<Tag> = emptyList(),
+    override val syncStatus: SyncStatus = SyncStatus.NONE,
 ) : FileSystemItem
 
 class ProjectRepository(
@@ -151,6 +163,7 @@ class ProjectRepository(
                 val metadata = provider.getFileMetadata(path)
                 CanvasItem(
                     name = meta.name,
+                    fileName = "${meta.name}.notate", // Best effort guess from index
                     path = path,
                     lastModified = meta.lastModified,
                     thumbnail = metadata?.thumbnail,

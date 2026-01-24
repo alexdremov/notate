@@ -2,6 +2,7 @@
 
 package com.alexdremov.notate.data
 
+import com.alexdremov.notate.config.CanvasConfig
 import com.alexdremov.notate.model.BackgroundStyle
 import com.alexdremov.notate.model.StrokeType
 import com.alexdremov.notate.model.Tag
@@ -19,8 +20,6 @@ data class CanvasData(
     val thumbnail: String? = null, // Base64 encoded PNG
     @ProtoNumber(2)
     val version: Int = 3,
-    @ProtoNumber(3)
-    val strokes: List<StrokeData> = emptyList(),
     @ProtoNumber(4)
     val offsetX: Float = 0f,
     @ProtoNumber(5)
@@ -35,14 +34,34 @@ data class CanvasData(
     val pageHeight: Float = 0f,
     @ProtoNumber(10)
     val backgroundStyle: BackgroundStyle = BackgroundStyle.Blank(),
-    @ProtoNumber(11)
-    val images: List<CanvasImageData> = emptyList(),
     @ProtoNumber(12)
     val toolbarItems: List<com.alexdremov.notate.model.ToolbarItem> = emptyList(),
     @ProtoNumber(13)
     val tagIds: List<String> = emptyList(),
     @ProtoNumber(14)
     val tagDefinitions: List<Tag> = emptyList(),
+    @ProtoNumber(15)
+    val regionSize: Float = CanvasConfig.DEFAULT_REGION_SIZE,
+    @ProtoNumber(16)
+    val nextStrokeOrder: Long = 0,
+)
+
+@Serializable
+data class RegionProto(
+    @ProtoNumber(1) val idX: Int,
+    @ProtoNumber(2) val idY: Int,
+    @ProtoNumber(3) val strokes: List<StrokeData> = emptyList(),
+    @ProtoNumber(4) val images: List<CanvasImageData> = emptyList(),
+)
+
+@Serializable
+data class RegionBoundsProto(
+    @ProtoNumber(1) val idX: Int,
+    @ProtoNumber(2) val idY: Int,
+    @ProtoNumber(3) val left: Float,
+    @ProtoNumber(4) val top: Float,
+    @ProtoNumber(5) val right: Float,
+    @ProtoNumber(6) val bottom: Float,
 )
 
 @Serializable
@@ -69,8 +88,6 @@ data class CanvasImageData(
 
 @Serializable
 data class StrokeData(
-    @ProtoNumber(1)
-    val points: List<PointData> = emptyList(),
     @ProtoNumber(2)
     val pointsPacked: FloatArray? = null, // [x, y, pressure, size, tiltX, tiltY, ...]
     @ProtoNumber(3)
@@ -96,7 +113,6 @@ data class StrokeData(
 
         other as StrokeData
 
-        if (points != other.points) return false
         if (pointsPacked != null) {
             if (other.pointsPacked == null) return false
             if (!pointsPacked.contentEquals(other.pointsPacked)) return false
@@ -117,8 +133,7 @@ data class StrokeData(
     }
 
     override fun hashCode(): Int {
-        var result = points.hashCode()
-        result = 31 * result + (pointsPacked?.contentHashCode() ?: 0)
+        var result = pointsPacked?.contentHashCode() ?: 0
         result = 31 * result + (timestampsPacked?.contentHashCode() ?: 0)
         result = 31 * result + color
         result = 31 * result + width.hashCode()
@@ -128,24 +143,6 @@ data class StrokeData(
         return result
     }
 }
-
-@Serializable
-data class PointData(
-    @ProtoNumber(1)
-    val x: Float,
-    @ProtoNumber(2)
-    val y: Float,
-    @ProtoNumber(3)
-    val pressure: Float,
-    @ProtoNumber(4)
-    val size: Float,
-    @ProtoNumber(5)
-    val tiltX: Float = 0f,
-    @ProtoNumber(6)
-    val tiltY: Float = 0f,
-    @ProtoNumber(7)
-    val timestamp: Long,
-)
 
 @Serializable
 data class CanvasDataPreview(

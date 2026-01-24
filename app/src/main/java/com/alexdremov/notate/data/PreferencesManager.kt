@@ -57,6 +57,14 @@ object PreferencesManager {
     private const val KEY_TOOLBAR_COLLAPSE_TIMEOUT = "toolbar_collapse_timeout"
     private const val KEY_MIN_LOG_LEVEL = "min_log_level_to_show"
 
+    // Debug Preferences
+    private const val KEY_DEBUG_USE_SIMPLE_RENDERER = "debug_use_simple_renderer"
+    private const val KEY_DEBUG_SHOW_RAM_USAGE = "debug_show_ram_usage"
+    private const val KEY_DEBUG_SHOW_TILES = "debug_show_tiles"
+    private const val KEY_DEBUG_SHOW_BOUNDING_BOX = "debug_show_bounding_box"
+    private const val KEY_DEBUG_SHOW_REGIONS = "debug_show_regions"
+    private const val KEY_DEBUG_ENABLE_PROFILING = "debug_enable_profiling"
+
     private val protoBuf = ProtoBuf
 
     private fun getPrefs(context: Context): SharedPreferences = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -84,6 +92,62 @@ object PreferencesManager {
         level: Int,
     ) {
         getPrefs(context).edit().putInt(KEY_MIN_LOG_LEVEL, level).apply()
+    }
+
+    // --- Debug Preferences Accessors ---
+
+    fun isDebugSimpleRendererEnabled(context: Context): Boolean = getPrefs(context).getBoolean(KEY_DEBUG_USE_SIMPLE_RENDERER, false)
+
+    fun setDebugSimpleRendererEnabled(
+        context: Context,
+        enabled: Boolean,
+    ) {
+        getPrefs(context).edit().putBoolean(KEY_DEBUG_USE_SIMPLE_RENDERER, enabled).apply()
+    }
+
+    fun isDebugRamUsageEnabled(context: Context): Boolean = getPrefs(context).getBoolean(KEY_DEBUG_SHOW_RAM_USAGE, false)
+
+    fun setDebugRamUsageEnabled(
+        context: Context,
+        enabled: Boolean,
+    ) {
+        getPrefs(context).edit().putBoolean(KEY_DEBUG_SHOW_RAM_USAGE, enabled).apply()
+    }
+
+    fun isDebugShowTilesEnabled(context: Context): Boolean = getPrefs(context).getBoolean(KEY_DEBUG_SHOW_TILES, false)
+
+    fun setDebugShowTilesEnabled(
+        context: Context,
+        enabled: Boolean,
+    ) {
+        getPrefs(context).edit().putBoolean(KEY_DEBUG_SHOW_TILES, enabled).apply()
+    }
+
+    fun isDebugShowRegionsEnabled(context: Context): Boolean = getPrefs(context).getBoolean(KEY_DEBUG_SHOW_REGIONS, false)
+
+    fun setDebugShowRegionsEnabled(
+        context: Context,
+        enabled: Boolean,
+    ) {
+        getPrefs(context).edit().putBoolean(KEY_DEBUG_SHOW_REGIONS, enabled).apply()
+    }
+
+    fun isDebugBoundingBoxEnabled(context: Context): Boolean = getPrefs(context).getBoolean(KEY_DEBUG_SHOW_BOUNDING_BOX, false)
+
+    fun setDebugBoundingBoxEnabled(
+        context: Context,
+        enabled: Boolean,
+    ) {
+        getPrefs(context).edit().putBoolean(KEY_DEBUG_SHOW_BOUNDING_BOX, enabled).apply()
+    }
+
+    fun isDebugProfilingEnabled(context: Context): Boolean = getPrefs(context).getBoolean(KEY_DEBUG_ENABLE_PROFILING, false)
+
+    fun setDebugProfilingEnabled(
+        context: Context,
+        enabled: Boolean,
+    ) {
+        getPrefs(context).edit().putBoolean(KEY_DEBUG_ENABLE_PROFILING, enabled).apply()
     }
 
     fun isScribbleToEraseEnabled(context: Context): Boolean = getPrefs(context).getBoolean(KEY_SCRIBBLE_TO_ERASE, true)

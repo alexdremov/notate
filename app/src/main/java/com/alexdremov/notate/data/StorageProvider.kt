@@ -80,107 +80,132 @@ internal object StorageUtils {
         fileSize: Long = 0,
     ): CanvasDataPreview? {
         if (fileSize > LARGE_FILE_THRESHOLD) {
-            Logger.w("Storage", "Reading metadata from large file: $fileName (${fileSize / 1024 / 1024}MB)")
+            Logger.d("Storage", "Reading metadata from large file: $fileName (${fileSize / 1024 / 1024}MB)")
         }
 
-        var isJson = false
-        try {
-            streamProvider()?.use { stream ->
-                val firstByte = stream.read()
-                if (firstByte == 0x7B) {
-                    isJson = true
+        return try {
+            streamProvider()?.use { rawStream ->
+                val stream = if (rawStream.markSupported()) rawStream else java.io.BufferedInputStream(rawStream)
+                stream.mark(4)
+                val signature = ByteArray(4)
+                val read = stream.read(signature)
+                stream.reset()
+
+                if (read >= 4 && signature[0] == 0x50.toByte() && signature[1] == 0x4B.toByte()) {
+                    // ZIP format
+                    extractMetadataZip(stream)
+                } else if (read > 0 && signature[0] == 0x7B.toByte()) {
+                    // JSON format
+                    extractMetadataJson(stream)
+                } else {
+                    // Legacy Protobuf
+                    parseProtobufMetadata(stream)
                 }
             }
         } catch (e: Exception) {
-            isJson = fileName?.endsWith(".json") == true
+            Logger.e("Metadata", "Failed to identify/read file format: $fileName", e)
+            null
         }
-
-        return if (isJson) extractMetadataJson(streamProvider) else extractMetadataProtobuf(streamProvider)
     }
 
-    private fun extractMetadataJson(streamProvider: () -> InputStream?): CanvasDataPreview? {
+    private fun extractMetadataZip(stream: InputStream): CanvasDataPreview? {
         return try {
-            streamProvider()?.use { stream ->
-                val buffer = ByteArray(500 * 1024) // 500KB
-                val read = stream.read(buffer)
-                if (read <= 0) return null
-                val header = String(buffer, 0, read, Charsets.UTF_8)
-                val match = Regex("""thumbnail"\s*:\s*"([^"]+)""").find(header)
-                val thumbnail = match?.groupValues?.get(1)
-                CanvasDataPreview(thumbnail = thumbnail)
+            val zipStream = java.util.zip.ZipInputStream(stream)
+            var entry = zipStream.nextEntry
+            while (entry != null) {
+                if (entry.name == "manifest.bin") {
+                    // Found manifest, parse it as protobuf
+                    // ZipInputStream reads until end of entry, which is what we want
+                    return parseProtobufMetadata(zipStream)
+                }
+                entry = zipStream.nextEntry
             }
+            null
+        } catch (e: Exception) {
+            Logger.e("Metadata", "Failed to extract metadata from ZIP", e)
+            null
+        }
+    }
+
+    private fun extractMetadataJson(stream: InputStream): CanvasDataPreview? {
+        return try {
+            val buffer = ByteArray(500 * 1024) // 500KB limit for header
+            val read = stream.read(buffer)
+            if (read <= 0) return null
+            val header = String(buffer, 0, read, Charsets.UTF_8)
+            val match = Regex("""thumbnail"\s*:\s*"([^"]+)""").find(header)
+            val thumbnail = match?.groupValues?.get(1)
+            CanvasDataPreview(thumbnail = thumbnail)
         } catch (e: Exception) {
             Logger.e("Metadata", "Failed to extract metadata from JSON", e)
             null
         }
     }
 
-    private fun extractMetadataProtobuf(streamProvider: () -> InputStream?): CanvasDataPreview? =
+    private fun parseProtobufMetadata(stream: InputStream): CanvasDataPreview? =
         try {
-            streamProvider()?.use { stream ->
-                var thumbnail: String? = null
-                val tagIds = mutableListOf<String>()
-                val tagDefinitions = mutableListOf<Tag>()
+            var thumbnail: String? = null
+            val tagIds = mutableListOf<String>()
+            val tagDefinitions = mutableListOf<Tag>()
 
-                while (true) {
-                    val tag = readVarint(stream)
-                    if (tag == -1L) break
+            while (true) {
+                val tag = readVarint(stream)
+                if (tag == -1L) break
 
-                    val fieldNumber = (tag ushr 3).toInt()
-                    val wireType = (tag and 0x07).toInt()
+                val fieldNumber = (tag ushr 3).toInt()
+                val wireType = (tag and 0x07).toInt()
 
-                    when (fieldNumber) {
-                        1 -> { // thumbnail
-                            if (wireType != 2) {
-                                skipField(stream, wireType)
-                            } else {
-                                val length = readVarint(stream)
-                                if (length > 0) {
-                                    val bytes = ByteArray(length.toInt())
-                                    readFully(stream, bytes)
-                                    thumbnail = String(bytes, Charsets.UTF_8)
-                                }
-                            }
-                        }
-
-                        13 -> { // tagIds
-                            if (wireType != 2) {
-                                skipField(stream, wireType)
-                            } else {
-                                val length = readVarint(stream)
-                                if (length > 0) {
-                                    val bytes = ByteArray(length.toInt())
-                                    readFully(stream, bytes)
-                                    tagIds.add(String(bytes, Charsets.UTF_8))
-                                }
-                            }
-                        }
-
-                        14 -> { // tagDefinitions
-                            if (wireType != 2) {
-                                skipField(stream, wireType)
-                            } else {
-                                val length = readVarint(stream)
-                                if (length > 0) {
-                                    val bytes = ByteArray(length.toInt())
-                                    readFully(stream, bytes)
-                                    try {
-                                        val tagVal = ProtoBuf.decodeFromByteArray(Tag.serializer(), bytes)
-                                        tagDefinitions.add(tagVal)
-                                    } catch (e: Exception) {
-                                        // Ignore malformed tag
-                                    }
-                                }
-                            }
-                        }
-
-                        else -> {
+                when (fieldNumber) {
+                    1 -> { // thumbnail
+                        if (wireType != 2) {
                             skipField(stream, wireType)
+                        } else {
+                            val length = readVarint(stream)
+                            if (length > 0) {
+                                val bytes = ByteArray(length.toInt())
+                                readFully(stream, bytes)
+                                thumbnail = String(bytes, Charsets.UTF_8)
+                            }
                         }
                     }
+
+                    13 -> { // tagIds
+                        if (wireType != 2) {
+                            skipField(stream, wireType)
+                        } else {
+                            val length = readVarint(stream)
+                            if (length > 0) {
+                                val bytes = ByteArray(length.toInt())
+                                readFully(stream, bytes)
+                                tagIds.add(String(bytes, Charsets.UTF_8))
+                            }
+                        }
+                    }
+
+                    14 -> { // tagDefinitions
+                        if (wireType != 2) {
+                            skipField(stream, wireType)
+                        } else {
+                            val length = readVarint(stream)
+                            if (length > 0) {
+                                val bytes = ByteArray(length.toInt())
+                                readFully(stream, bytes)
+                                try {
+                                    val tagVal = ProtoBuf.decodeFromByteArray(Tag.serializer(), bytes)
+                                    tagDefinitions.add(tagVal)
+                                } catch (e: Exception) {
+                                    // Ignore malformed tag
+                                }
+                            }
+                        }
+                    }
+
+                    else -> {
+                        skipField(stream, wireType)
+                    }
                 }
-                CanvasDataPreview(thumbnail, tagIds, tagDefinitions)
             }
+            CanvasDataPreview(thumbnail, tagIds, tagDefinitions)
         } catch (e: Exception) {
             Logger.e(
                 "Metadata",
@@ -259,6 +284,32 @@ internal object StorageUtils {
             writeVarint(outputStream, tagDefTag.toLong())
             writeVarint(outputStream, bytes.size.toLong())
             outputStream.write(bytes)
+        }
+    }
+
+    fun createV2CanvasZip(
+        outputStream: OutputStream,
+        data: CanvasData,
+    ) {
+        java.util.zip.ZipOutputStream(outputStream).use { zos ->
+            // 1. manifest.bin
+            val manifestEntry = java.util.zip.ZipEntry("manifest.bin")
+            zos.putNextEntry(manifestEntry)
+            val manifestBytes = ProtoBuf.encodeToByteArray(CanvasData.serializer(), data)
+            zos.write(manifestBytes)
+            zos.closeEntry()
+
+            // 2. index.bin (Empty region list)
+            val indexEntry = java.util.zip.ZipEntry("index.bin")
+            zos.putNextEntry(indexEntry)
+            // Empty list of RegionBoundsProto
+            val indexBytes =
+                ProtoBuf.encodeToByteArray(
+                    kotlinx.serialization.builtins.ListSerializer(RegionBoundsProto.serializer()),
+                    emptyList(),
+                )
+            zos.write(indexBytes)
+            zos.closeEntry()
         }
     }
 
@@ -394,6 +445,7 @@ class LocalStorageProvider(
                         it.isDirectory -> {
                             ProjectItem(
                                 name = it.name,
+                                fileName = it.name,
                                 path = it.absolutePath,
                                 lastModified = it.lastModified(),
                                 itemsCount = it.list()?.size ?: 0,
@@ -404,6 +456,7 @@ class LocalStorageProvider(
                             val metadata = StorageUtils.extractMetadata(it.name, { it.inputStream() }, it.length())
                             CanvasItem(
                                 name = it.nameWithoutExtension,
+                                fileName = it.name,
                                 path = it.absolutePath,
                                 lastModified = it.lastModified(),
                                 thumbnail = metadata?.thumbnail,
@@ -452,8 +505,9 @@ class LocalStorageProvider(
 
         return try {
             if (!file.exists()) {
-                val bytes = ProtoBuf.encodeToByteArray(data)
-                file.writeBytes(bytes)
+                file.outputStream().use { os ->
+                    StorageUtils.createV2CanvasZip(os, data)
+                }
                 file.absolutePath
             } else {
                 Logger.w("Storage", "File already exists: $fileName")
@@ -467,8 +521,23 @@ class LocalStorageProvider(
 
     override fun deleteItem(path: String): Boolean {
         val file = File(path)
+        if (!file.exists()) return false
+
+        // Prevent deleting open files - only lock regular files, as acquire() creates missing files
+        // and cannot lock directories.
+        if (file.isFile) {
+            try {
+                com.alexdremov.notate.data.io.FileLockManager
+                    .acquire(path)
+                    .close()
+            } catch (e: Exception) {
+                Logger.w("Storage", "Cannot delete item, file locked: $path")
+                return false
+            }
+        }
+
         return try {
-            if (file.exists()) file.deleteRecursively() else false
+            file.deleteRecursively()
         } catch (e: Exception) {
             Logger.e("Storage", "Failed to delete item $path", e, showToUser = true)
             false
@@ -481,6 +550,18 @@ class LocalStorageProvider(
     ): Boolean {
         val file = File(path)
         if (!file.exists()) return false
+
+        // Prevent renaming open files - only lock regular files
+        if (file.isFile) {
+            try {
+                com.alexdremov.notate.data.io.FileLockManager
+                    .acquire(path)
+                    .close()
+            } catch (e: Exception) {
+                Logger.w("Storage", "Cannot rename item, file locked: $path")
+                return false
+            }
+        }
 
         val finalName =
             if (file.isDirectory) {
@@ -507,6 +588,10 @@ class LocalStorageProvider(
         path: String,
         parentPath: String?,
     ): Boolean {
+        // Read lock not strictly required for duplication (copy),
+        // but nice to have consistency if we want "snapshot isolation".
+        // However, OS copy works fine on open files usually.
+        // For now, allowing duplication of open files is a feature (backup).
         val file = File(path)
         if (!file.exists()) return false
 
@@ -535,6 +620,16 @@ class LocalStorageProvider(
 
         if (file.extension != "notate") return false
 
+        // Acquire lock to ensure we don't modify an open file
+        val lock =
+            try {
+                com.alexdremov.notate.data.io.FileLockManager
+                    .acquire(path)
+            } catch (e: Exception) {
+                Logger.w("Storage", "Cannot set tags, file locked: $path")
+                return false
+            }
+
         val tempFile = File(file.parent, file.name + ".tmp")
         return try {
             file.inputStream().use { input ->
@@ -553,6 +648,8 @@ class LocalStorageProvider(
             Logger.e("Storage", "Failed to set tags for $path", e, showToUser = true)
             tempFile.delete()
             false
+        } finally {
+            lock.close()
         }
     }
 
@@ -567,6 +664,7 @@ class LocalStorageProvider(
                     if (metadata?.tagIds?.contains(tagId) == true) {
                         CanvasItem(
                             name = it.nameWithoutExtension,
+                            fileName = it.name,
                             path = it.absolutePath,
                             lastModified = it.lastModified(),
                             thumbnail = metadata.thumbnail,
@@ -620,6 +718,7 @@ class SafStorageProvider(
                         it.isDirectory -> {
                             ProjectItem(
                                 name = it.name ?: "Unknown",
+                                fileName = it.name ?: "Unknown",
                                 path = it.uri.toString(),
                                 lastModified = it.lastModified(),
                                 itemsCount = 0,
@@ -639,6 +738,7 @@ class SafStorageProvider(
                                 }, it.length())
                             CanvasItem(
                                 name = name.removeSuffix(if (isJsonExt) ".json" else ".notate"),
+                                fileName = name,
                                 path = it.uri.toString(),
                                 lastModified = it.lastModified(),
                                 thumbnail = metadata?.thumbnail,
@@ -694,9 +794,8 @@ class SafStorageProvider(
         val newFile = parentDir.createFile("application/octet-stream", fileName) ?: return null
 
         return try {
-            val bytes = ProtoBuf.encodeToByteArray(data)
             context.contentResolver.openOutputStream(newFile.uri)?.use { os ->
-                os.write(bytes)
+                StorageUtils.createV2CanvasZip(os, data)
             }
             newFile.uri.toString()
         } catch (e: Exception) {
@@ -853,6 +952,7 @@ class SafStorageProvider(
                         results.add(
                             CanvasItem(
                                 name = name.removeSuffix(if (isJsonExt) ".json" else ".notate"),
+                                fileName = name,
                                 path = file.uri.toString(),
                                 lastModified = file.lastModified(),
                                 thumbnail = metadata.thumbnail,

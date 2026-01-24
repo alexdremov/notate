@@ -22,7 +22,7 @@ class TileCache(
 
     // Bitmap Pool to reduce GC churn
     private val bitmapPool = Collections.synchronizedList(ArrayList<Bitmap>())
-    private val MAX_POOL_SIZE = 128 // Cap pool to prevent OOM
+    private val MAX_POOL_SIZE = 32 // Cap pool to prevent OOM
 
     // Bytes per tile (512*512*4 for ARGB_8888)
     private val tileByteCount = tileSize * tileSize * CanvasConfig.TILE_BYTES_PER_PIXEL
@@ -43,7 +43,7 @@ class TileCache(
     init {
         // Calculate initial cache size using config (e.g., 25% for starting buffer)
         val maxMemory = Runtime.getRuntime().maxMemory()
-        val initialSize = (maxMemory * CanvasConfig.CACHE_MEMORY_PERCENT * 0.3).toInt() // Start with 30% of total budget
+        val initialSize = (maxMemory * CanvasConfig.CACHE_MEMORY_PERCENT * 0.8).toInt() // Start with 80% of total budget
 
         Logger.i("TileCache", "Initializing with ${initialSize / (1024 * 1024)} MB")
 
@@ -140,4 +140,22 @@ class TileCache(
     }
 
     fun snapshot(): Map<TileKey, Bitmap> = memoryCache.snapshot()
+
+    fun getStats(): Map<String, String> {
+        val sizeMb = memoryCache.size() / (1024 * 1024)
+        val maxMb = memoryCache.maxSize() / (1024 * 1024)
+        val entries = memoryCache.snapshot().size
+        val pool = synchronized(bitmapPool) { bitmapPool.size }
+        val hits = memoryCache.hitCount()
+        val misses = memoryCache.missCount()
+        val total = hits + misses
+        val hitRate = if (total > 0) (hits.toDouble() / total) * 100.0 else 0.0
+
+        return mapOf(
+            "Size (MB)" to "$sizeMb / $maxMb",
+            "Entries" to "$entries",
+            "Pool Size" to "$pool",
+            "Hit Rate" to String.format("%.1f%%", hitRate),
+        )
+    }
 }

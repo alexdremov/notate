@@ -44,7 +44,29 @@ data class ProjectSyncConfig(
 )
 
 @Serializable
+data class FileSyncState(
+    @ProtoNumber(1)
+    val lastLocalModified: Long = 0,
+    @ProtoNumber(2)
+    val lastRemoteModified: Long = 0,
+    @ProtoNumber(3)
+    val lastSyncTime: Long = 0,
+)
+
+@Serializable
 data class SyncMetadata(
     @ProtoNumber(1)
     val fileHashes: Map<String, String> = emptyMap(), // localPath -> hash
+    @ProtoNumber(2)
+    val files: Map<String, FileSyncState> = emptyMap(), // relativePath -> state
+)
+
+@Serializable
+data class PendingDeletion(
+    @ProtoNumber(1)
+    val projectId: String,
+    @ProtoNumber(2)
+    val relativePath: String,
+    @ProtoNumber(3)
+    val timestamp: Long,
 )

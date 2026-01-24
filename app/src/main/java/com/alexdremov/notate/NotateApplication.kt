@@ -22,6 +22,14 @@ class NotateApplication : Application() {
         val minLevel = Logger.Level.values().find { it.priority == minLevelPriority } ?: Logger.Level.NONE
         Logger.setMinLogLevelToShow(minLevel)
 
+        // Restore Debug Settings
+        CanvasConfig.DEBUG_USE_SIMPLE_RENDERER = PreferencesManager.isDebugSimpleRendererEnabled(this)
+        CanvasConfig.DEBUG_SHOW_RAM_USAGE = PreferencesManager.isDebugRamUsageEnabled(this)
+        CanvasConfig.DEBUG_SHOW_TILES = PreferencesManager.isDebugShowTilesEnabled(this)
+        CanvasConfig.DEBUG_SHOW_REGIONS = PreferencesManager.isDebugShowRegionsEnabled(this)
+        CanvasConfig.DEBUG_SHOW_BOUNDING_BOX = PreferencesManager.isDebugBoundingBoxEnabled(this)
+        CanvasConfig.DEBUG_ENABLE_PROFILING = PreferencesManager.isDebugProfilingEnabled(this)
+
         logDeviceInfo()
 
         // Initialize Onyx SDK managers
@@ -35,6 +43,27 @@ class NotateApplication : Application() {
             } catch (e: Throwable) {
                 Logger.e(TAG, "HiddenApiBypass failed", e)
             }
+        }
+
+        cleanupSessions()
+    }
+
+    private fun cleanupSessions() {
+        try {
+            val sessionsDir = java.io.File(cacheDir, "sessions")
+            if (sessionsDir.exists()) {
+                val currentTime = System.currentTimeMillis()
+                val oneHourAgo = currentTime - (1000 * 60 * 60)
+
+                sessionsDir.listFiles()?.forEach { file ->
+                    if (file.isDirectory && file.lastModified() < oneHourAgo) {
+                        file.deleteRecursively()
+                        Logger.i(TAG, "Cleaned up old session: ${file.name}")
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Logger.e(TAG, "Failed to cleanup sessions", e)
         }
     }
 

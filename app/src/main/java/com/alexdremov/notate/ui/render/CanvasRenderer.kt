@@ -24,7 +24,7 @@ class CanvasRenderer(
     scope: CoroutineScope,
     private val onTileReady: () -> Unit,
 ) {
-    private val tileManager = TileManager(model, this, scope = scope)
+    private val tileManager = TileManager(context, model, this, scope = scope)
     private var layoutStrategy: CanvasLayout = InfiniteLayout()
 
     init {
@@ -86,6 +86,14 @@ class CanvasRenderer(
      */
     fun updateTilesWithItem(item: com.alexdremov.notate.model.CanvasItem) {
         tileManager.updateTilesWithItem(item)
+    }
+
+    /**
+     * Updates cached tiles with a list of items.
+     * Batch optimized version of updateTilesWithItem.
+     */
+    fun updateTilesWithItems(items: List<com.alexdremov.notate.model.CanvasItem>) {
+        tileManager.updateTilesWithItems(items)
     }
 
     /**
@@ -152,9 +160,8 @@ class CanvasRenderer(
     /**
      * Performs direct vector rendering of strokes with a given transformation.
      * Used for export, printing, or when the tiled engine is bypassed (e.g. minimap).
-     * Iterates through all strokes in the model and draws them to the canvas.
      */
-    fun renderDirectVectors(
+    suspend fun renderDirectVectors(
         canvas: Canvas,
         matrix: Matrix,
         visibleRect: RectF?,
@@ -168,19 +175,71 @@ class CanvasRenderer(
     }
 
     /**
-     * Performs direct vector rendering of strokes.
-     * Used for export, printing, or when the tiled engine is bypassed (e.g. minimap).
-     * Iterates through all strokes in the model and draws them to the canvas.
+     * Synchronous version of renderDirectVectors for UI thread usage.
+     * Only renders items from currently loaded regions to avoid blocking.
      */
-    private fun renderDirectVectorsInternal(
+    fun renderDirectVectorsSync(
+        canvas: Canvas,
+        matrix: Matrix,
+        visibleRect: RectF?,
+        quality: RenderQuality,
+    ) {
+        canvas.save()
+        canvas.setMatrix(matrix)
+        val viewScale = matrix.mapRadius(1.0f)
+
+        val queryRect = visibleRect ?: model.getContentBounds()
+        val rm = model.getRegionManager() ?: return
+
+        // Fast sync-safe query for IDs
+        val regionIds = rm.getRegionIdsInRect(queryRect)
+
+        for (id in regionIds) {
+            val region = rm.getRegionReadOnly(id) ?: continue
+            val regionItems = ArrayList<com.alexdremov.notate.model.CanvasItem>()
+            region.quadtree?.retrieve(regionItems, queryRect)
+            renderItems(canvas, regionItems, queryRect, quality, viewScale, context)
+        }
+
+        canvas.restore()
+    }
+
+    /**
+     * Performs direct vector rendering of strokes.
+     */
+    private suspend fun renderDirectVectorsInternal(
         canvas: Canvas,
         visibleRect: RectF?,
         quality: RenderQuality,
         viewScale: Float = 1.0f,
     ) {
-        // We need thread-safe access to items from Model
-        model.performRead { allItems ->
-            renderItems(canvas, allItems, visibleRect, quality, viewScale, context)
+        val queryRect = visibleRect ?: model.getContentBounds()
+
+        if (queryRect.width() > 5000 || queryRect.height() > 5000) {
+            renderDirectVectorsFromRegions(canvas, queryRect, quality, viewScale)
+        } else {
+            val items = model.queryItems(queryRect)
+            renderItems(canvas, items, visibleRect, quality, viewScale, context)
+        }
+    }
+
+    /**
+     * Region-aware direct vector rendering for large areas to avoid OOM.
+     */
+    private suspend fun renderDirectVectorsFromRegions(
+        canvas: Canvas,
+        queryRect: RectF,
+        quality: RenderQuality,
+        viewScale: Float,
+    ) {
+        val regionManager = model.getRegionManager() ?: return
+        val regions = regionManager.getRegionsInRect(queryRect)
+
+        for (region in regions) {
+            val regionItems = ArrayList<com.alexdremov.notate.model.CanvasItem>()
+            region.quadtree?.retrieve(regionItems, queryRect)
+            renderItems(canvas, regionItems, queryRect, quality, viewScale, context)
+            regionItems.clear()
         }
     }
 

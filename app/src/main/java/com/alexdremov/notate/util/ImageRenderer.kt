@@ -34,6 +34,24 @@ object ImageRenderer {
 
     init {
         Logger.i(TAG, "Initialized ImageCache with size: ${CACHE_SIZE / 1024 / 1024} MB")
+
+        PerformanceProfiler.registerMemoryStats(
+            "ImageRenderer",
+            object : PerformanceProfiler.MemoryStatsProvider {
+                override fun getStats(): Map<String, String> {
+                    val iSize = imageCache.size() / (1024 * 1024)
+                    val iMax = imageCache.maxSize() / (1024 * 1024)
+                    val mSize = metadataCache.size()
+                    val mMax = metadataCache.maxSize()
+
+                    return mapOf(
+                        "Image Cache (MB)" to "$iSize / $iMax",
+                        "Metadata Cache" to "$mSize / $mMax",
+                        "Active Locks" to "${loadingLocks.size}",
+                    )
+                }
+            },
+        )
     }
 
     fun draw(

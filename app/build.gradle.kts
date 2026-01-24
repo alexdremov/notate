@@ -64,6 +64,15 @@ android {
         jvmToolchain(21)
     }
 
+    testOptions {
+        unitTests {
+            isIncludeAndroidResources = true
+            all {
+                it.maxHeapSize = "6g"
+            }
+        }
+    }
+
     packaging {
         jniLibs {
             pickFirsts.add("lib/**/libc++_shared.so")
@@ -88,6 +97,7 @@ dependencies {
     implementation("androidx.core:core-ktx:1.17.0")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.10.0")
     implementation("androidx.lifecycle:lifecycle-process:2.10.0")
+    implementation("androidx.work:work-runtime-ktx:2.10.0")
     implementation("androidx.activity:activity-compose:1.12.2")
     implementation(platform("androidx.compose:compose-bom:2026.01.00"))
     implementation("androidx.compose.ui:ui")
@@ -118,6 +128,9 @@ dependencies {
     implementation("com.onyx.android.sdk:onyxsdk-base:1.8.3")
     implementation("org.lsposed.hiddenapibypass:hiddenapibypass:6.1")
 
+    // PDF Support
+    implementation("com.tom-roush:pdfbox-android:2.0.27.0")
+
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
     implementation(kotlin("stdlib-jdk8"))
@@ -130,6 +143,7 @@ dependencies {
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.9.0")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.9.0")
+    testImplementation("androidx.work:work-testing:2.10.0")
 
     // Security & Networking
     implementation("androidx.security:security-crypto:1.1.0")

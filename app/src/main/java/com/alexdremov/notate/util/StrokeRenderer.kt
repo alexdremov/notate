@@ -180,10 +180,11 @@ object StrokeRenderer {
         paint: Paint = Paint(), // Optional paint to reuse
         context: android.content.Context? = null,
         scale: Float = 1.0f,
+        forceVector: Boolean = false,
     ) {
         com.alexdremov.notate.util.PerformanceProfiler.trace("StrokeRenderer.drawItem") {
             when (item) {
-                is Stroke -> drawStroke(canvas, paint, item, debug)
+                is Stroke -> drawStroke(canvas, paint, item, debug, forceVector)
                 is com.alexdremov.notate.model.CanvasImage -> ImageRenderer.draw(canvas, paint, item, context, scale)
             }
         }

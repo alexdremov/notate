@@ -58,7 +58,7 @@ class InfiniteLayout : CanvasLayout {
 
             val useDirectVectors = visibleRect == null
             if (useDirectVectors) {
-                renderer.renderDirectVectors(canvas, matrix, visibleRect, quality)
+                renderer.renderDirectVectorsSync(canvas, matrix, visibleRect, quality)
             } else {
                 tileManager.render(canvas, visibleRect!!, zoomLevel)
             }
@@ -150,7 +150,7 @@ class FixedPageLayout(
             } else {
                 // Fallback for full export / minimap if rect is null (unbounded)
                 renderPagesBackgroundForExport(canvas, model, model.getContentBounds())
-                renderer.renderDirectVectors(canvas, matrix, visibleRect, quality)
+                renderer.renderDirectVectorsSync(canvas, matrix, visibleRect, quality)
             }
 
             canvas.restore()
