@@ -275,9 +275,10 @@ object ZipUtils {
                     val entry = entries.nextElement()
                     val file = File(targetDir, entry.name)
 
-                    // Security check
-                    if (!file.canonicalPath.startsWith(targetDir.canonicalPath)) {
-                        continue
+                    // Security check for Zip Slip
+                    val canonicalPath = file.canonicalPath
+                    if (!canonicalPath.startsWith(targetDir.canonicalPath + File.separator)) {
+                        throw SecurityException("Zip entry is outside of the target dir: ${entry.name}")
                     }
 
                     if (entry.isDirectory) {

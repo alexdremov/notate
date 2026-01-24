@@ -23,6 +23,7 @@ object FileLockManager {
         private val channel: FileChannel,
         private val lock: FileLock,
         val file: File,
+        private val raf: RandomAccessFile,
     ) : AutoCloseable {
         private var released = false
 
@@ -38,6 +39,11 @@ object FileLockManager {
                 channel.close()
             } catch (e: Exception) {
                 Logger.e("FileLockManager", "Error closing channel for ${file.name}", e)
+            }
+            try {
+                raf.close()
+            } catch (e: Exception) {
+                Logger.e("FileLockManager", "Error closing RandomAccessFile for ${file.name}", e)
             }
             released = true
             Logger.d("FileLockManager", "Released lock: ${file.absolutePath}")
@@ -70,7 +76,7 @@ object FileLockManager {
                 channel.tryLock()
                     ?: throw IllegalStateException("File is already locked by this process or another thread: $path")
 
-            return LockedFileHandle(channel, lock, file)
+            return LockedFileHandle(channel, lock, file, raf)
         } catch (e: OverlappingFileLockException) {
             throw IllegalStateException("File is currently locked by this JVM: $path")
         } catch (e: Exception) {
