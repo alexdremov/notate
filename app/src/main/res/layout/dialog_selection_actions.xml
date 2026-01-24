@@ -3,9 +3,9 @@
     android:layout_width="wrap_content"
     android:layout_height="wrap_content"
     android:orientation="horizontal"
-    android:background="@drawable/bg_floating_toolbar"
-    android:padding="8dp"
-    android:elevation="8dp">
+    android:background="@drawable/bg_popup_outlined"
+    android:elevation="0dp"
+    android:clipToOutline="true">
 
     <TextView
         android:id="@+id/btnCopy"
@@ -14,17 +14,17 @@
         android:text="Copy"
         android:textColor="@android:color/black"
         android:textSize="16sp"
-        android:padding="8dp"
+        android:padding="16dp"
         android:background="?attr/selectableItemBackground"
         android:clickable="true"
         android:focusable="true" />
 
     <View
-        android:layout_width="1dp"
+        android:layout_width="2dp"
         android:layout_height="match_parent"
-        android:background="#DDDDDD"
-        android:layout_marginHorizontal="4dp"
-        android:layout_marginVertical="4dp"/>
+        android:background="@android:color/black"
+        android:layout_marginHorizontal="2dp"
+        android:layout_marginVertical="8dp"/>
 
     <TextView
         android:id="@+id/btnDelete"
@@ -33,7 +33,7 @@
         android:text="Delete"
         android:textColor="@android:color/holo_red_dark"
         android:textSize="16sp"
-        android:padding="8dp"
+        android:padding="16dp"
         android:background="?attr/selectableItemBackground"
         android:clickable="true"
         android:focusable="true" />

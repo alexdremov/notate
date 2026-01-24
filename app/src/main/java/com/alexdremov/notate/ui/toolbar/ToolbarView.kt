@@ -162,6 +162,9 @@ fun MainToolbar(
         }
     }
 
+    val showDot = isCollapsible && !isEditMode
+    val showExpanded = !isCollapsed || isEditMode || !isCollapsible
+
     // --- Main Container ---
     Box(
         modifier =
@@ -183,69 +186,15 @@ fun MainToolbar(
                     }
                 },
     ) {
-        if (isCollapsible && isCollapsed && !isEditMode) {
-            // --- Collapsed State (Small Circle with Dot) ---
-            Box(
-                modifier =
-                    Modifier
-                        .size(64.dp) // Larger touch target
-                        .pointerInput(Unit) {
-                            awaitPointerEventScope {
-                                while (true) {
-                                    val event = awaitPointerEvent()
-                                    // Detect Hover Entry
-                                    if (event.type == androidx.compose.ui.input.pointer.PointerEventType.Enter) {
-                                        isCollapsed = false
-                                        onInteraction()
-                                    }
-                                }
-                            }
-                        }.clickable {
-                            isCollapsed = false
-                            onInteraction()
-                        },
-                contentAlignment = Alignment.Center,
-            ) {
-                // Actual Visual Dot
-                Box(
-                    modifier =
-                        Modifier
-                            .size(32.dp)
-                            .clip(CircleShape)
-                            .background(Color.White)
-                            .border(1.dp, Color.Black, CircleShape),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    // Inner Dot
-                    Box(
-                        modifier =
-                            Modifier
-                                .size(8.dp)
-                                .background(Color.Black, CircleShape),
-                    )
-                }
-            }
-        } else {
+        if (showExpanded) {
             // --- Expanded (Normal) State ---
-            val density = LocalDensity.current
-
-            // Add background here since we removed it from the parent View
             Surface(
                 modifier = Modifier.wrapContentSize(),
                 shape = RoundedCornerShape(12.dp),
                 color = Color.White,
                 shadowElevation = 4.dp,
             ) {
-                val layoutModifier =
-                    if (isHorizontal) {
-                        Modifier
-                            .wrapContentSize()
-                            .padding(2.dp)
-                    } else {
-                        Modifier
-                            .wrapContentSize()
-                            .padding(2.dp)
-                    }
+                val layoutModifier = Modifier.wrapContentSize().padding(2.dp)
 
                 // Layout Container
                 if (isHorizontal) {
@@ -254,6 +203,15 @@ fun MainToolbar(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
+                        if (showDot) {
+                            ToolbarDot(
+                                isCollapsed = false,
+                                canProcessClick = { canProcessClick() },
+                                onExpand = { isCollapsed = false },
+                                onCollapse = { isCollapsed = true },
+                                onInteraction = onInteraction,
+                            )
+                        }
                         DraggableItems(
                             items = localItems,
                             draggingItem = draggingItem,
@@ -352,6 +310,15 @@ fun MainToolbar(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
+                        if (showDot) {
+                            ToolbarDot(
+                                isCollapsed = false,
+                                canProcessClick = { canProcessClick() },
+                                onExpand = { isCollapsed = false },
+                                onCollapse = { isCollapsed = true },
+                                onInteraction = onInteraction,
+                            )
+                        }
                         DraggableItems(
                             items = localItems,
                             draggingItem = draggingItem,
@@ -437,6 +404,15 @@ fun MainToolbar(
                     }
                 }
             }
+        } else if (showDot) {
+            // --- Collapsed State (Small Circle with Dot) ---
+            ToolbarDot(
+                isCollapsed = true,
+                canProcessClick = { canProcessClick() },
+                onExpand = { isCollapsed = false },
+                onCollapse = { isCollapsed = true },
+                onInteraction = onInteraction,
+            )
         }
 
         // Edit Mode Popup
@@ -882,5 +858,59 @@ fun AddItemButton(
             RenderToolbarItemIcon(item)
         }
         Text(label, style = MaterialTheme.typography.labelSmall)
+    }
+}
+
+@Composable
+fun ToolbarDot(
+    isCollapsed: Boolean,
+    canProcessClick: () -> Boolean,
+    onExpand: () -> Unit,
+    onCollapse: () -> Unit,
+    onInteraction: () -> Unit,
+) {
+    Box(
+        modifier =
+            Modifier
+                .size(if (isCollapsed) 46.dp else 48.dp)
+                .pointerInput(Unit) {
+                    awaitPointerEventScope {
+                        while (true) {
+                            val event = awaitPointerEvent()
+                            // Detect Hover Entry
+                            if (event.type == androidx.compose.ui.input.pointer.PointerEventType.Enter) {
+                                onExpand()
+                                onInteraction()
+                            }
+                        }
+                    }
+                }.clickable {
+                    if (isCollapsed) {
+                        onExpand()
+                    } else if (canProcessClick()) {
+                        onCollapse()
+                    }
+                    onInteraction()
+                },
+        contentAlignment = Alignment.Center,
+    ) {
+        // Actual Visual Dot - Consistent size in both states
+        Box(
+            modifier =
+                Modifier
+                    .size(24.dp)
+                    .clip(CircleShape)
+                    .background(Color.White)
+                    .border(1.dp, Color.Black, CircleShape),
+            contentAlignment = Alignment.Center,
+        ) {
+            // Inner Dot
+            Box(
+                modifier =
+                    Modifier
+                        .size(6.dp)
+                        .background(Color.Black, CircleShape),
+            )
+        }
     }
 }
