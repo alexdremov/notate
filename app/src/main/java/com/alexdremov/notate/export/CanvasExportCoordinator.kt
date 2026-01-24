@@ -67,6 +67,9 @@ class CanvasExportCoordinator(
 
         scope.launch {
             try {
+                val scale =
+                    com.alexdremov.notate.data.PreferencesManager
+                        .getPdfExportScale(context)
                 // Open Stream
                 context.contentResolver.openOutputStream(uri)?.use { outputStream ->
                     PdfExporter.export(
@@ -84,6 +87,7 @@ class CanvasExportCoordinator(
                                 }
                             }
                         },
+                        bitmapScale = scale,
                     )
                 } ?: throw Exception("Could not open output stream for $uri")
 
@@ -108,6 +112,9 @@ class CanvasExportCoordinator(
                 val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
                 val fileName = "Share_$timestamp.pdf"
                 val file = File(context.cacheDir, fileName)
+                val scale =
+                    com.alexdremov.notate.data.PreferencesManager
+                        .getPdfExportScale(context)
 
                 // Write to temp file
                 file.outputStream().use { outputStream ->
@@ -126,6 +133,7 @@ class CanvasExportCoordinator(
                                 }
                             }
                         },
+                        bitmapScale = scale,
                     )
                 }
 

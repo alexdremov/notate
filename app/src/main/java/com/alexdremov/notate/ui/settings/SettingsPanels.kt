@@ -1,12 +1,16 @@
 package com.alexdremov.notate.ui.settings
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Switch
@@ -145,5 +149,79 @@ fun SettingsToggle(
             checked = checked,
             onCheckedChange = onCheckedChange,
         )
+    }
+}
+
+data class PdfSettingsState(
+    val exportScale: Float,
+    val syncPdfType: String = "VECTOR",
+)
+
+@Composable
+fun PdfSettingsPanel(
+    state: PdfSettingsState,
+    onScaleChange: (Float) -> Unit,
+    onScaleFinished: () -> Unit,
+    onSyncTypeChange: (String) -> Unit = {},
+    showSyncSettings: Boolean = false,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        Text(
+            text = "PDF Export Scale: %.1fx".format(state.exportScale),
+            style = MaterialTheme.typography.bodyLarge,
+        )
+        Text(
+            text = "Higher scale improves quality but increases file size.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Slider(
+            value = state.exportScale,
+            onValueChange = onScaleChange,
+            onValueChangeFinished = onScaleFinished,
+            valueRange = 1.0f..4.0f,
+            steps = 5, // 0.5 increments
+            colors =
+                SliderDefaults.colors(
+                    thumbColor = MaterialTheme.colorScheme.primary,
+                    activeTrackColor = MaterialTheme.colorScheme.primary,
+                ),
+        )
+
+        if (showSyncSettings) {
+            HorizontalDivider()
+            Text(
+                text = "Sync PDF Type",
+                style = MaterialTheme.typography.bodyLarge,
+            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Row(
+                    Modifier.clickable { onSyncTypeChange("VECTOR") },
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    RadioButton(
+                        selected = state.syncPdfType == "VECTOR",
+                        onClick = { onSyncTypeChange("VECTOR") },
+                    )
+                    Text("Vector")
+                }
+                Spacer(Modifier.width(16.dp))
+                Row(
+                    Modifier.clickable { onSyncTypeChange("BITMAP") },
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    RadioButton(
+                        selected = state.syncPdfType == "BITMAP",
+                        onClick = { onSyncTypeChange("BITMAP") },
+                    )
+                    Text("Bitmap")
+                }
+            }
+            Text(
+                text = if (state.syncPdfType == "VECTOR") "Smaller size, infinite zoom." else "Better for complex brushes.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
     }
 }

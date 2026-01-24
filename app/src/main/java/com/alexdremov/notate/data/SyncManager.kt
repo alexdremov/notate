@@ -606,8 +606,19 @@ class SyncManager(
                     null
                 }
 
+            val syncType = PreferencesManager.getSyncPdfType(context)
+            val isVector = syncType == "VECTOR"
+            val scale = PreferencesManager.getPdfExportScale(context)
+
             val out = ByteArrayOutputStream()
-            PdfExporter.export(context, model, out, isVector = true, callback = pdfCallback)
+            PdfExporter.export(
+                context,
+                model,
+                out,
+                isVector = isVector,
+                callback = pdfCallback,
+                bitmapScale = scale,
+            )
 
             val pdfInput = ByteArrayInputStream(out.toByteArray())
             provider.uploadFile(remotePdfPath, pdfInput)
