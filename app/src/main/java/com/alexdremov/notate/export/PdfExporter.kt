@@ -284,7 +284,7 @@ object PdfExporter {
         val r = Color.red(color) / 255f
         val g = Color.green(color) / 255f
         val b = Color.blue(color) / 255f
-        val a = Color.alpha(color)
+        val a = (Color.alpha(color) * stroke.style.alphaMultiplier).toInt().coerceIn(0, 255)
 
         // Handle Transparency
         if (a < 255) {
