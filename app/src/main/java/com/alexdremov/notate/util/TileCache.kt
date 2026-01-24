@@ -43,7 +43,7 @@ class TileCache(
     init {
         // Calculate initial cache size using config (e.g., 25% for starting buffer)
         val maxMemory = Runtime.getRuntime().maxMemory()
-        val initialSize = (maxMemory * CanvasConfig.CACHE_MEMORY_PERCENT * 0.3).toInt() // Start with 30% of total budget
+        val initialSize = (maxMemory * CanvasConfig.CACHE_MEMORY_PERCENT * 0.8).toInt() // Start with 80% of total budget
 
         Logger.i("TileCache", "Initializing with ${initialSize / (1024 * 1024)} MB")
 

@@ -83,7 +83,7 @@ class TileManager(
     // State Tracking
     private val generatingKeys = Collections.synchronizedSet(HashSet<TileCache.TileKey>())
     private val generationJobs = ConcurrentHashMap<TileCache.TileKey, Job>()
-    private val generationSemaphore = Semaphore(8) // Limit concurrent heavy rendering
+    private val generationSemaphore = Semaphore(32) // Limit concurrent heavy rendering
 
     private val renderVersion = AtomicInteger(0)
     private var lastRenderLevel = -1
@@ -465,7 +465,6 @@ class TileManager(
                     Logger.v("TileManager", "Job Start: $key")
                     // Task Cancellation Checks
                     if (!isActive || version != renderVersion.get() || (!isHighPriority && isInteracting)) {
-                        synchronized(generatingKeys) { generatingKeys.remove(key) }
                         return@launch
                     }
 
@@ -499,14 +498,18 @@ class TileManager(
                         errorMessages.put(key, "${t.javaClass.simpleName}: ${t.message}")
                         tileCache.put(key, tileCache.errorBitmap)
                     }
-                } finally {
-                    val wasRemoved = generationJobs.remove(key, coroutineContext[Job])
-                    if (wasRemoved) {
-                        synchronized(generatingKeys) { generatingKeys.remove(key) }
-                    }
-                    notifyTileReady()
                 }
             }
+
+        // CRITICAL FIX: Use invokeOnCompletion to ensure cleanup happens even if the job
+        // is cancelled before it starts (which skips the body and any try-finally blocks).
+        job.invokeOnCompletion {
+            val wasRemoved = generationJobs.remove(key, job)
+            if (wasRemoved) {
+                synchronized(generatingKeys) { generatingKeys.remove(key) }
+            }
+            notifyTileReady()
+        }
 
         generationJobs[key] = job
         job.start()

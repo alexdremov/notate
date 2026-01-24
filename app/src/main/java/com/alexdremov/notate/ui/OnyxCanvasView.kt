@@ -652,6 +652,8 @@ class OnyxCanvasView
 
         private fun setupTouchHelper() {
             if (touchHelper == null) {
+                // Revert to Mode 2 (true) which handles surface interactions better for panning
+                // Use SFTouchRender (Mode 2) for better ink quality and panning support
                 touchHelper = TouchHelper.create(this, true, penInputHandler)
                 penInputHandler.setTouchHelper(touchHelper!!)
             }
@@ -664,6 +666,11 @@ class OnyxCanvasView
                 openRawDrawing()
                 setRawDrawingEnabled(true)
                 setRawDrawingRenderEnabled(true)
+
+                // Mode 2 ignores enableFingerTouch(), so we don't need to call it.
+                // Instead, we use setSingleRegionMode() which is crucial for fast stroke capture in SFTouchRender.
+                setSingleRegionMode()
+
                 EpdController.enterScribbleMode(this@OnyxCanvasView)
                 EpdController.setScreenHandWritingPenState(this@OnyxCanvasView, EpdPenManager.PEN_DRAWING)
             }

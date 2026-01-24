@@ -290,6 +290,9 @@ class PenInputHandler(
         return pts
     }
 
+    @Volatile
+    private var lastProcessedTimestamp: Long = -1L
+
     /**
      * Called when the stylus touches the screen.
      * Starts a new stroke or eraser session.
@@ -304,6 +307,7 @@ class PenInputHandler(
         isStrokeInProgress = true
         isSelecting = false
         isIgnoringCurrentStroke = false
+        lastProcessedTimestamp = touchPoint.timestamp
 
         // Always clear previous selection when starting a new stylus interaction
         scope.launch { controller.clearSelection() }
@@ -339,23 +343,16 @@ class PenInputHandler(
             }
         }
 
-        // Logic for specialized modes (Eraser or Large Stroke)
-        if (currentTool.type == ToolType.ERASER || currentTool.type == ToolType.SELECT) {
-            com.onyx.android.sdk.api.device.EpdDeviceManager
-                .enterAnimationUpdate(true)
+        // Always enter A2 mode for writing to ensure low latency and visibility of fast strokes
+        com.onyx.android.sdk.api.device.EpdDeviceManager
+            .enterAnimationUpdate(true)
 
-            if (currentTool.type == ToolType.ERASER) {
-                scope.launch { controller.startBatchSession() }
-                eraserHandler.reset()
-            }
+        if (currentTool.type == ToolType.ERASER) {
+            scope.launch { controller.startBatchSession() }
+            eraserHandler.reset()
         } else {
             // Standard Pen Start: Ensure Eraser Channel is DEAD
             Device.currentDevice().setEraserRawDrawingEnabled(false)
-
-            if (isLargeStrokeMode) {
-                com.onyx.android.sdk.api.device.EpdDeviceManager
-                    .enterAnimationUpdate(true)
-            }
         }
 
         val worldPts = mapPoint(touchPoint.x, touchPoint.y)
@@ -405,18 +402,15 @@ class PenInputHandler(
     ) {
         if (isIgnoringCurrentStroke) {
             isIgnoringCurrentStroke = false
+            com.onyx.android.sdk.api.device.EpdDeviceManager
+                .exitAnimationUpdate(true)
             return
         }
 
         dwellDetector.onStop()
-        val isSpecialMode =
-            currentTool.type == ToolType.ERASER || currentTool.type == ToolType.SELECT ||
-                (currentTool.type != ToolType.ERASER && isLargeStrokeMode)
-
-        if (isSpecialMode) {
-            com.onyx.android.sdk.api.device.EpdDeviceManager
-                .exitAnimationUpdate(true)
-        }
+        // Always exit A2 mode
+        com.onyx.android.sdk.api.device.EpdDeviceManager
+            .exitAnimationUpdate(true)
 
         cursorView?.hide()
 
@@ -490,8 +484,9 @@ class PenInputHandler(
             var hasPoints = false
 
             synchronized(strokeBuilder) {
-                if (!dwellDetector.isShapeRecognized) {
+                if (!dwellDetector.isShapeRecognized && touchPoint.timestamp > lastProcessedTimestamp) {
                     strokeBuilder.addPoint(endPoint)
+                    lastProcessedTimestamp = touchPoint.timestamp
                 }
 
                 hasPoints = strokeBuilder.hasPoints()
@@ -622,9 +617,28 @@ class PenInputHandler(
      * Updates the current stroke path and handles real-time eraser feedback.
      */
     override fun onRawDrawingTouchPointMoveReceived(touchPoint: TouchPoint) {
+        internalProcessMove(touchPoint)
+    }
+
+    private fun internalProcessMove(
+        touchPoint: TouchPoint,
+        preInvertedMatrix: Matrix? = null,
+    ) {
         if (isIgnoringCurrentStroke) return
 
-        val worldPts = mapPoint(touchPoint.x, touchPoint.y)
+        // Timestamp-based deduplication
+        if (touchPoint.timestamp <= lastProcessedTimestamp) return
+        lastProcessedTimestamp = touchPoint.timestamp
+
+        val worldPts = floatArrayOf(touchPoint.x, touchPoint.y)
+        if (preInvertedMatrix != null) {
+            preInvertedMatrix.mapPoints(worldPts)
+        } else {
+            val inv = Matrix()
+            matrix.invert(inv)
+            inv.mapPoints(worldPts)
+        }
+
         val newPoint =
             TouchPoint(
                 worldPts[0],
@@ -687,7 +701,20 @@ class PenInputHandler(
         }
     }
 
-    override fun onRawDrawingTouchPointListReceived(touchPointList: TouchPointList) {}
+    override fun onRawDrawingTouchPointListReceived(touchPointList: TouchPointList) {
+        val points = touchPointList.points
+        if (points.isEmpty()) return
+
+        // Optimization: Invert matrix once for the entire batch
+        val invertedMatrix = Matrix()
+        matrix.invert(invertedMatrix)
+
+        synchronized(strokeBuilder) {
+            for (point in points) {
+                internalProcessMove(point, invertedMatrix)
+            }
+        }
+    }
 
     override fun onBeginRawErasing(
         b: Boolean,
@@ -714,5 +741,7 @@ class PenInputHandler(
         onRawDrawingTouchPointMoveReceived(touchPoint)
     }
 
-    override fun onRawErasingTouchPointListReceived(touchPointList: TouchPointList) {}
+    override fun onRawErasingTouchPointListReceived(touchPointList: TouchPointList) {
+        onRawDrawingTouchPointListReceived(touchPointList)
+    }
 }
