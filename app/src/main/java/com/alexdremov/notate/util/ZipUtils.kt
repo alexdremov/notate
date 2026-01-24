@@ -5,7 +5,9 @@ import java.io.BufferedOutputStream
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
+import java.io.InputStream
 import java.util.zip.ZipEntry
+import java.util.zip.ZipFile
 import java.util.zip.ZipInputStream
 import java.util.zip.ZipOutputStream
 
@@ -33,6 +35,10 @@ object ZipUtils {
                     BufferedOutputStream(FileOutputStream(file)).use { bos ->
                         zis.copyTo(bos)
                     }
+                    // Restore timestamp to allow incremental updates later
+                    if (entry.time != -1L) {
+                        file.setLastModified(entry.time)
+                    }
                 }
                 entry = zis.nextEntry
             }
@@ -48,6 +54,56 @@ object ZipUtils {
         }
     }
 
+    /**
+     * Creates a new ZIP file by incrementally updating a base ZIP with files from sourceDir.
+     * Preserves unchanged entries from baseZip to optimize IOPS (sequential read).
+     */
+    fun incrementalZip(
+        sourceDir: File,
+        baseZip: File,
+        targetZip: File,
+    ) {
+        // Track processed files to know what remains to be added
+        val processedRelPaths = HashSet<String>()
+
+        ZipOutputStream(BufferedOutputStream(FileOutputStream(targetZip))).use { zos ->
+            // 1. Copy unchanged entries from Base ZIP
+            if (baseZip.exists() && baseZip.length() > 0) {
+                try {
+                    ZipFile(baseZip).use { zip ->
+                        val entries = zip.entries()
+                        while (entries.hasMoreElements()) {
+                            val entry = entries.nextElement()
+                            val relPath = entry.name
+                            val localFile = File(sourceDir, relPath)
+
+                            // Check if local file exists and matches timestamp (within 2s DOS precision)
+                            if (localFile.exists() && !localFile.isDirectory) {
+                                val timeDiff = kotlin.math.abs(localFile.lastModified() - entry.time)
+                                if (timeDiff < 2000) {
+                                    // Match! Copy from ZIP.
+                                    // Note: Standard API re-compresses, but this saves Random IOPS on the source dir.
+                                    val newEntry = ZipEntry(relPath)
+                                    // Copy metadata if needed?
+                                    zos.putNextEntry(newEntry)
+                                    zip.getInputStream(entry).use { it.copyTo(zos) }
+                                    zos.closeEntry()
+                                    processedRelPaths.add(relPath)
+                                }
+                            }
+                        }
+                    }
+                } catch (e: Exception) {
+                    Logger.e("ZipUtils", "Failed to read base ZIP for incremental update, falling back to full zip", e)
+                    // If base zip fails, we just continue and write everything from source
+                }
+            }
+
+            // 2. Write new or modified files from Source Dir
+            zipRecursiveIncremental(sourceDir, sourceDir, zos, processedRelPaths)
+        }
+    }
+
     private fun zipRecursive(
         rootDir: File,
         currentDir: File,
@@ -60,6 +116,7 @@ object ZipUtils {
             } else {
                 val relPath = file.relativeTo(rootDir).path
                 val entry = ZipEntry(relPath)
+                entry.time = file.lastModified() // Ensure timestamp is stored for next incremental check
                 zos.putNextEntry(entry)
                 FileInputStream(file).use { fis ->
                     fis.copyTo(zos)
@@ -69,9 +126,34 @@ object ZipUtils {
         }
     }
 
+    private fun zipRecursiveIncremental(
+        rootDir: File,
+        currentDir: File,
+        zos: ZipOutputStream,
+        processedPaths: Set<String>,
+    ) {
+        val files = currentDir.listFiles() ?: return
+        for (file in files) {
+            if (file.isDirectory) {
+                zipRecursiveIncremental(rootDir, file, zos, processedPaths)
+            } else {
+                val relPath = file.relativeTo(rootDir).path
+                if (!processedPaths.contains(relPath)) {
+                    val entry = ZipEntry(relPath)
+                    entry.time = file.lastModified()
+                    zos.putNextEntry(entry)
+                    FileInputStream(file).use { fis ->
+                        fis.copyTo(zos)
+                    }
+                    zos.closeEntry()
+                }
+            }
+        }
+    }
+
     // For Content URI (Input Stream)
     fun unzip(
-        inputStream: java.io.InputStream,
+        inputStream: InputStream,
         targetDir: File,
     ) {
         if (!targetDir.exists()) targetDir.mkdirs()
@@ -91,6 +173,9 @@ object ZipUtils {
                     file.parentFile?.mkdirs()
                     BufferedOutputStream(FileOutputStream(file)).use { bos ->
                         zis.copyTo(bos)
+                    }
+                    if (entry.time != -1L) {
+                        file.setLastModified(entry.time)
                     }
                 }
                 entry = zis.nextEntry
@@ -204,6 +289,9 @@ object ZipUtils {
                                 java.io.BufferedOutputStream(java.io.FileOutputStream(file)).use { output ->
                                     input.copyTo(output)
                                 }
+                            }
+                            if (entry.time != -1L) {
+                                file.setLastModified(entry.time)
                             }
                         }
                     }

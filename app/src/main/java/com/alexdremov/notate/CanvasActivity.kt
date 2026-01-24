@@ -490,20 +490,22 @@ class CanvasActivity : AppCompatActivity() {
         // Allow sync to proceed in background
         com.alexdremov.notate.data.SyncManager.isCanvasOpen = false
 
-        // Force commit on pause
-        saveCanvas(commit = true)
-
-        // Trigger sync in background
-        currentCanvasPath?.let { path ->
+        val path = currentCanvasPath
+        if (path != null) {
+            // Sequential Save -> Sync to prevent race condition
             ProcessLifecycleOwner.get().lifecycleScope.launch(Dispatchers.IO) {
                 try {
+                    // 1. Full Save (Blocking in this coroutine)
+                    saveCanvasSuspend(commit = true)
+
+                    // 2. Trigger Sync (only after save completes)
                     val projectId = syncManager.findProjectForFile(path)
                     if (projectId != null) {
                         Logger.d("CanvasActivity", "Triggering background sync for project $projectId")
                         syncManager.syncProject(projectId)
                     }
                 } catch (e: Exception) {
-                    Logger.e("CanvasActivity", "Background sync failed", e)
+                    Logger.e("CanvasActivity", "Background save/sync failed", e)
                 }
             }
         }

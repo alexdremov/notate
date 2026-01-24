@@ -520,19 +520,24 @@ class LocalStorageProvider(
     }
 
     override fun deleteItem(path: String): Boolean {
-        // Prevent deleting open files
-        try {
-            com.alexdremov.notate.data.io.FileLockManager
-                .acquire(path)
-                .close()
-        } catch (e: Exception) {
-            Logger.w("Storage", "Cannot delete item, file locked: $path")
-            return false
+        val file = File(path)
+        if (!file.exists()) return false
+
+        // Prevent deleting open files - only lock regular files, as acquire() creates missing files
+        // and cannot lock directories.
+        if (file.isFile) {
+            try {
+                com.alexdremov.notate.data.io.FileLockManager
+                    .acquire(path)
+                    .close()
+            } catch (e: Exception) {
+                Logger.w("Storage", "Cannot delete item, file locked: $path")
+                return false
+            }
         }
 
-        val file = File(path)
         return try {
-            if (file.exists()) file.deleteRecursively() else false
+            file.deleteRecursively()
         } catch (e: Exception) {
             Logger.e("Storage", "Failed to delete item $path", e, showToUser = true)
             false
@@ -543,18 +548,20 @@ class LocalStorageProvider(
         path: String,
         newName: String,
     ): Boolean {
-        // Prevent renaming open files
-        try {
-            com.alexdremov.notate.data.io.FileLockManager
-                .acquire(path)
-                .close()
-        } catch (e: Exception) {
-            Logger.w("Storage", "Cannot rename item, file locked: $path")
-            return false
-        }
-
         val file = File(path)
         if (!file.exists()) return false
+
+        // Prevent renaming open files - only lock regular files
+        if (file.isFile) {
+            try {
+                com.alexdremov.notate.data.io.FileLockManager
+                    .acquire(path)
+                    .close()
+            } catch (e: Exception) {
+                Logger.w("Storage", "Cannot rename item, file locked: $path")
+                return false
+            }
+        }
 
         val finalName =
             if (file.isDirectory) {

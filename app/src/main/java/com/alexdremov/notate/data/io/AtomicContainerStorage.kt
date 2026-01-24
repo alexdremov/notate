@@ -47,8 +47,30 @@ class AtomicContainerStorage(
     ) {
         val tempZip = File(context.cacheDir, "save_${System.currentTimeMillis()}.zip.tmp")
         try {
-            // 1. Create ZIP
-            ZipUtils.zip(sourceDir, tempZip)
+            // 1. Create ZIP (Incremental if possible)
+            var usedIncremental = false
+            if (!targetPath.startsWith("content://")) {
+                val targetFile = File(targetPath)
+                if (targetFile.exists() && targetFile.length() > 0) {
+                    try {
+                        ZipUtils.incrementalZip(sourceDir, targetFile, tempZip)
+                        usedIncremental = true
+                        Logger.d("AtomicContainerStorage", "Used incremental zip for local file")
+                    } catch (e: Exception) {
+                        Logger.e("AtomicContainerStorage", "Incremental zip failed, falling back to full zip", e)
+                        // If incremental fails partially, we must ensure tempZip is clean/reset?
+                        // incrementalZip uses FileOutputStream(tempZip), which truncates.
+                        // But if it failed mid-way, it might be corrupt.
+                        // ZipUtils usually throws. We should retry full zip.
+                        if (tempZip.exists()) tempZip.delete()
+                    }
+                }
+            }
+
+            if (!usedIncremental) {
+                if (tempZip.exists()) tempZip.delete() // Ensure clean start
+                ZipUtils.zip(sourceDir, tempZip)
+            }
 
             // 2. Verify
             verifyZip(tempZip)

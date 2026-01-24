@@ -56,6 +56,9 @@ object Logger {
         if (CanvasConfig.DEBUG_SHOW_TILES || CanvasConfig.DEBUG_SHOW_REGIONS || CanvasConfig.DEBUG_ENABLE_PROFILING) {
             Log.d(formatTag(tag), msg)
         }
+        if (minLogLevelToShow.priority <= Level.DEBUG.priority) {
+            _userEvents.tryEmit(UserEvent(msg, Level.DEBUG))
+        }
     }
 
     fun v(
@@ -72,6 +75,9 @@ object Logger {
         msg: String,
     ) {
         Log.i(formatTag(tag), msg)
+        if (minLogLevelToShow.priority <= Level.INFO.priority) {
+            _userEvents.tryEmit(UserEvent(msg, Level.INFO))
+        }
     }
 
     fun w(

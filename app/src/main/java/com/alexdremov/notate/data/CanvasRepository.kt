@@ -1,14 +1,22 @@
 package com.alexdremov.notate.data
 
 import android.content.Context
+import androidx.work.BackoffPolicy
+import androidx.work.Data
+import androidx.work.ExistingWorkPolicy
+import androidx.work.OneTimeWorkRequest
+import androidx.work.OutOfQuotaPolicy
+import androidx.work.WorkManager
 import com.alexdremov.notate.config.CanvasConfig
 import com.alexdremov.notate.data.io.AtomicContainerStorage
 import com.alexdremov.notate.data.io.FileLockManager
 import com.alexdremov.notate.data.region.RegionManager
 import com.alexdremov.notate.data.region.RegionStorage
+import com.alexdremov.notate.data.worker.SaveWorker
 import com.alexdremov.notate.util.Logger
 import com.alexdremov.notate.util.ThumbnailGenerator
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -19,6 +27,10 @@ import java.io.BufferedInputStream
 import java.io.File
 import java.io.InputStream
 import java.security.MessageDigest
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import java.util.concurrent.TimeUnit
 
 /**
  * Repository responsible for loading and saving Canvas data (V2: ZIP Format only).
@@ -65,16 +77,20 @@ class CanvasRepository(
         }
     }
 
+    private fun formatTime(millis: Long): String =
+        if (millis == 0L) "0" else SimpleDateFormat("HH:mm:ss.SSS", Locale.US).format(Date(millis))
+
     @OptIn(ExperimentalSerializationApi::class)
     suspend fun openCanvasSession(path: String): CanvasSession? =
         withContext(Dispatchers.IO) {
             sessionLock.withLock {
                 val sessionName = hashPath(path)
+                Logger.d("CanvasRepository", "Opening session for: $path (Hash: $sessionName)")
 
                 // 1. Check Active Session Cache (Hot Handoff - Same Process)
                 val existingSession = activeSessions[sessionName]
                 if (existingSession != null && !existingSession.isClosed()) {
-                    Logger.i("CanvasRepository", "Attaching to active session: $path")
+                    Logger.i("CanvasRepository", "Attaching to active in-memory session")
                     existingSession.retain()
                     return@withContext existingSession
                 }
@@ -82,17 +98,27 @@ class CanvasRepository(
                 // Remove stale reference
                 if (existingSession != null) {
                     activeSessions.remove(sessionName)
+                    Logger.d("CanvasRepository", "Removed stale in-memory session reference")
                 }
 
                 // 2. Acquire System File Lock (Cross-Process Exclusion)
-                // Prevents Process B from opening while Process A has it open.
                 var fileLock: FileLockManager.LockedFileHandle? = null
                 if (!path.startsWith("content://")) {
-                    try {
-                        fileLock = FileLockManager.acquire(path)
-                    } catch (e: Exception) {
-                        Logger.e("CanvasRepository", "Cannot open session. File is locked: $path", e)
-                        throw CanvasLockedException("File is currently open in another window or process.")
+                    var attempts = 0
+                    val maxAttempts = 10
+                    while (attempts < maxAttempts) {
+                        try {
+                            fileLock = FileLockManager.acquire(path)
+                            break
+                        } catch (e: Exception) {
+                            attempts++
+                            if (attempts >= maxAttempts) {
+                                Logger.e("CanvasRepository", "Cannot open session. File is locked after retries: $path", e)
+                                throw CanvasLockedException("File is currently open in another window or process.")
+                            }
+                            Logger.w("CanvasRepository", "File locked, retrying ($attempts/$maxAttempts)...")
+                            delay(500)
+                        }
                     }
                 }
 
@@ -104,6 +130,8 @@ class CanvasRepository(
                     val originLastModified = originFile?.lastModified() ?: 0L
                     val originSize = originFile?.length() ?: 0L
 
+                    Logger.d("CanvasRepository", "Origin File Info - Time: ${formatTime(originLastModified)}, Size: $originSize")
+
                     // 3. Initialize Session Directory
                     var sessionValid = false
                     if (sessionDir.exists()) {
@@ -113,35 +141,67 @@ class CanvasRepository(
 
                         if (manifestFile.exists()) {
                             val storedPath = if (sourcePathFile.exists()) sourcePathFile.readText().trim() else ""
-                            if (storedPath == path) {
+
+                            // Relaxed Check: If storedPath is empty (missing/corrupt), we TRUST the hash collision probability (near zero).
+                            // This prevents data loss if source_path.txt failed to write but manifest exists.
+                            val pathMatches = storedPath == path || storedPath.isEmpty()
+
+                            if (pathMatches) {
+                                if (storedPath.isEmpty()) {
+                                    Logger.w("CanvasRepository", "Source path missing/empty in session. Assuming valid by hash.")
+                                    // Heal the session by writing the path now
+                                    try {
+                                        sourcePathFile.writeText(path)
+                                    } catch (e: Exception) {
+                                        Logger.e("CanvasRepository", "Failed to heal source_path.txt", e)
+                                    }
+                                }
+
                                 // Check timestamps to ensure the session cache isn't older than the file
-                                // (e.g. file updated by sync or another device)
                                 if (originFile != null && originFile.exists()) {
-                                    if (manifestFile.lastModified() > originLastModified) {
-                                        Logger.i("CanvasRepository", "Resuming existing session (newer than file): $path")
+                                    val manifestTime = manifestFile.lastModified()
+                                    Logger.d(
+                                        "CanvasRepository",
+                                        "Checking Recovery: ManifestTime=${formatTime(
+                                            manifestTime,
+                                        )} vs OriginTime=${formatTime(originLastModified)}",
+                                    )
+
+                                    if (manifestTime > originLastModified) {
+                                        Logger.i("CanvasRepository", "Resuming existing session (Cache is newer than file)")
                                         sessionValid = true
                                     } else {
-                                        Logger.i("CanvasRepository", "Existing session stale. Reloading from file.")
+                                        Logger.i("CanvasRepository", "Existing session stale. Reloading from file. (Manifest <= Origin)")
                                     }
                                 } else {
                                     // Remote file - assume valid if path matches
+                                    Logger.i("CanvasRepository", "Resuming existing session (Remote file or origin missing)")
                                     sessionValid = true
                                 }
+                            } else {
+                                Logger.w("CanvasRepository", "Session path mismatch: stored='$storedPath' vs requested='$path'")
                             }
+                        } else {
+                            Logger.w("CanvasRepository", "Session invalid: manifest.bin missing")
                         }
+                    } else {
+                        Logger.d("CanvasRepository", "No existing session directory found")
                     }
 
                     val finalSession: CanvasSession
                     if (!sessionValid) {
                         // Clean start: Wipe directory
-                        if (sessionDir.exists()) sessionDir.deleteRecursively()
+                        if (sessionDir.exists()) {
+                            Logger.d("CanvasRepository", "Wiping stale/invalid session directory")
+                            sessionDir.deleteRecursively()
+                        }
                         sessionDir.mkdirs()
                         File(sessionDir, "source_path.txt").writeText(path)
 
                         val inputStream = openInputStream(path)
                         if (inputStream == null) {
                             // New file
-                            Logger.i("CanvasRepository", "Creating new session for: $path")
+                            Logger.i("CanvasRepository", "Creating new session (New File)")
                             val storage = RegionStorage(sessionDir)
                             storage.init()
 
@@ -166,7 +226,7 @@ class CanvasRepository(
 
                             if (format == FileFormat.EMPTY) {
                                 // Treat as new file
-                                Logger.i("CanvasRepository", "Empty file detected via stream. Creating new session for: $path")
+                                Logger.i("CanvasRepository", "Creating new session (Empty File)")
                                 val storage = RegionStorage(sessionDir)
                                 storage.init()
 
@@ -326,9 +386,9 @@ class CanvasRepository(
         }
 
     /**
-     * Initiates a background save and then closes the session.
-     * Use this when exiting the editor to allow the UI to close immediately while
-     * the large file saves in the background. The FileLock remains held until save completes.
+     * Initiates a background save using WorkManager and then closes the session.
+     * This guarantees that the save operation (zipping) completes even if the application process dies.
+     * The session memory is flushed to disk before queueing the worker.
      */
     suspend fun saveAndCloseSession(
         path: String,
@@ -340,18 +400,42 @@ class CanvasRepository(
                 val name = session.sessionDir.name
                 activeSessions.remove(name) // Remove from active cache immediately so new opens fail fast (Lock held)
 
-                Logger.i("CanvasRepository", "Launching background save and close for: $name")
+                Logger.i("CanvasRepository", "Launching background WorkManager save and close for: $name")
 
-                // Launch in Repository Scope to survive Activity death
-                repositoryScope.launch {
-                    try {
-                        saveCanvasSession(path, session, commitToZip = true)
-                    } catch (e: Exception) {
-                        Logger.e("CanvasRepository", "Background save failed for $path", e)
-                    } finally {
-                        session.close() // Releases lock
-                        Logger.i("CanvasRepository", "Background save complete, session closed: $name")
-                    }
+                try {
+                    // 1. Flush to disk (fast, incremental)
+                    saveCanvasSession(path, session, commitToZip = false)
+
+                    // 2. Schedule Background Zipping via WorkManager
+                    val workData =
+                        Data
+                            .Builder()
+                            .putString(SaveWorker.KEY_SESSION_PATH, session.sessionDir.absolutePath)
+                            .putString(SaveWorker.KEY_TARGET_PATH, path)
+                            .build()
+
+                    val workRequest =
+                        OneTimeWorkRequest
+                            .Builder(SaveWorker::class.java)
+                            .setInputData(workData)
+                            .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
+                            .setBackoffCriteria(BackoffPolicy.LINEAR, 10, TimeUnit.SECONDS)
+                            .build()
+
+                    WorkManager
+                        .getInstance(context)
+                        .enqueueUniqueWork(
+                            "SaveWorker_$name",
+                            ExistingWorkPolicy.REPLACE,
+                            workRequest,
+                        )
+                } catch (e: Exception) {
+                    Logger.e("CanvasRepository", "Failed to prepare background save for $path", e)
+                } finally {
+                    // 3. Close Session (Release memory and FileLock)
+                    // The Worker will re-acquire a lock if possible/needed, or write regardless.
+                    session.close()
+                    Logger.i("CanvasRepository", "Session flushed and closed, worker enqueued: $name")
                 }
             } else {
                 Logger.i("CanvasRepository", "saveAndCloseSession: Session retained by other clients, performing standard save.")
@@ -381,6 +465,13 @@ class CanvasRepository(
                         throw java.io.IOException("Session directory missing")
                     }
 
+                    // Ensure source_path.txt exists (Self-Healing)
+                    // If it was deleted or never written, write it now to ensure crash recovery works
+                    val sourcePathFile = File(session.sessionDir, "source_path.txt")
+                    if (!sourcePathFile.exists()) {
+                        sourcePathFile.writeText(path)
+                    }
+
                     // 1. Flush RegionManager (writes to session dir)
                     session.regionManager.saveAll()
 
@@ -400,7 +491,7 @@ class CanvasRepository(
                     manifestFile.writeBytes(metaBytes)
 
                     if (!commitToZip) {
-                        Logger.d("CanvasRepository", "Session flushed (no-zip).")
+                        Logger.d("CanvasRepository", "Session flushed (no-zip). ManifestTime=${formatTime(manifestFile.lastModified())}")
                         return@withLock SaveResult(
                             savedPath = session.sessionDir.absolutePath,
                             newLastModified = session.originLastModified,
