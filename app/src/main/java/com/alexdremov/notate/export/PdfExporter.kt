@@ -14,8 +14,11 @@ import com.alexdremov.notate.model.InfiniteCanvasModel
 import com.alexdremov.notate.model.Stroke
 import com.alexdremov.notate.ui.render.BackgroundDrawer
 import com.alexdremov.notate.ui.render.background.PatternLayoutHelper
+import com.alexdremov.notate.util.CharcoalPenRenderer
+import com.alexdremov.notate.util.FountainPenRenderer
 import com.alexdremov.notate.util.Logger
 import com.alexdremov.notate.util.StrokeRenderer
+import com.onyx.android.sdk.api.device.epd.EpdController
 import com.tom_roush.pdfbox.android.PDFBoxResourceLoader
 import com.tom_roush.pdfbox.io.MemoryUsageSetting
 import com.tom_roush.pdfbox.pdmodel.PDDocument
@@ -267,12 +270,62 @@ object PdfExporter {
         }
     }
 
+    private fun getSafeMaxPressure(stroke: Stroke): Float {
+        val maxObserved = stroke.points.maxOfOrNull { it.pressure } ?: 0f
+
+        return when {
+            maxObserved > 0f && maxObserved <= 1.0f -> {
+                1.0f
+            }
+
+            else -> {
+                val hwMax = EpdController.getMaxTouchPressure()
+                if (hwMax <= 0f) 4096f else hwMax
+            }
+        }
+    }
+
     private fun renderStrokeToPdf(
         stream: PDPageContentStream,
         stroke: Stroke,
         alphaCache: HashMap<Int, com.tom_roush.pdfbox.pdmodel.graphics.state.PDExtendedGraphicsState>,
     ) {
-        val path = stroke.path
+        // Robust check: If stroke width is encoded in the path (outline), we fill.
+        // If stroke width is a property, we stroke.
+        // How to distinguish?
+        // StrokeType tells us.
+        val isFilled =
+            when (stroke.style) {
+                com.alexdremov.notate.model.StrokeType.FOUNTAIN -> true
+
+                com.alexdremov.notate.model.StrokeType.CHARCOAL -> true
+
+                // Brush treated as stroke (centerline) for vector fallback, as we don't have native outline.
+                com.alexdremov.notate.model.StrokeType.BRUSH -> false
+
+                else -> false // Ballpoint, Fineliner, Highlighter, Pencil, Dash
+            }
+
+        val path =
+            if (isFilled) {
+                val maxPressure = getSafeMaxPressure(stroke)
+                when (stroke.style) {
+                    com.alexdremov.notate.model.StrokeType.FOUNTAIN -> {
+                        FountainPenRenderer.getPath(stroke, maxPressure)
+                    }
+
+                    com.alexdremov.notate.model.StrokeType.CHARCOAL -> {
+                        CharcoalPenRenderer.getPath(stroke, maxPressure) ?: stroke.path
+                    }
+
+                    else -> {
+                        stroke.path
+                    }
+                }
+            } else {
+                stroke.path
+            }
+
         if (path.isEmpty) return
 
         // Approximate Path
@@ -284,7 +337,7 @@ object PdfExporter {
         val r = Color.red(color) / 255f
         val g = Color.green(color) / 255f
         val b = Color.blue(color) / 255f
-        val a = Color.alpha(color)
+        val a = (Color.alpha(color) * stroke.style.alphaMultiplier).toInt().coerceIn(0, 255)
 
         // Handle Transparency
         if (a < 255) {
@@ -310,30 +363,6 @@ object PdfExporter {
         }
 
         stream.setStrokingColor(r, g, b)
-        // Note: SimplePathStrategy is purely stroked.
-        // But Fountain/Charcoal are FILLED shapes in the Stroke object (outline).
-        // We need to know if we should Fill or Stroke.
-        // StrokeRenderer logic:
-        // Fountain -> Fill
-        // Ballpoint -> Stroke (if simple fallback)
-        // Highlighter -> Stroke
-
-        // Robust check: If stroke width is encoded in the path (outline), we fill.
-        // If stroke width is a property, we stroke.
-        // How to distinguish?
-        // StrokeType tells us.
-
-        val isFilled =
-            when (stroke.style) {
-                com.alexdremov.notate.model.StrokeType.FOUNTAIN -> true
-
-                com.alexdremov.notate.model.StrokeType.BRUSH -> true
-
-                // Assuming outline fallback
-                com.alexdremov.notate.model.StrokeType.CHARCOAL -> true
-
-                else -> false // Ballpoint, Fineliner, Highlighter, Pencil, Dash
-            }
 
         if (isFilled) {
             stream.setNonStrokingColor(r, g, b)

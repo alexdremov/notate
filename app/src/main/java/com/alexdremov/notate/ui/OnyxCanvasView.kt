@@ -642,20 +642,24 @@ class OnyxCanvasView
             val wasEnabled = touchHelper?.isRawDrawingInputEnabled() == true
             if (wasEnabled) {
                 touchHelper?.setRawDrawingEnabled(false)
+                EpdController.setScreenHandWritingPenState(this, EpdPenManager.PEN_PAUSE)
             }
             EpdController.invalidate(this, UpdateMode.GC)
             if (wasEnabled) {
-                touchHelper?.setRawDrawingEnabled(true)
                 updateTouchHelperTool()
+                EpdController.setScreenHandWritingPenState(this, EpdPenManager.PEN_DRAWING)
+                touchHelper?.setRawDrawingEnabled(true)
             }
         }
 
         private fun setupTouchHelper() {
+            var isFirstInit = false
             if (touchHelper == null) {
                 // Revert to Mode 2 (true) which handles surface interactions better for panning
                 // Use SFTouchRender (Mode 2) for better ink quality and panning support
                 touchHelper = TouchHelper.create(this, true, penInputHandler)
                 penInputHandler.setTouchHelper(touchHelper!!)
+                isFirstInit = true
             }
             com.alexdremov.notate.util.OnyxSystemHelper
                 .ignoreSystemSideButton(this)
@@ -674,7 +678,11 @@ class OnyxCanvasView
                 EpdController.enterScribbleMode(this@OnyxCanvasView)
                 EpdController.setScreenHandWritingPenState(this@OnyxCanvasView, EpdPenManager.PEN_DRAWING)
             }
-            updateTouchHelperTool()
+            if (isFirstInit) {
+                performHardRefresh()
+            } else {
+                updateTouchHelperTool()
+            }
         }
 
         private fun refreshAfterEdit() {
