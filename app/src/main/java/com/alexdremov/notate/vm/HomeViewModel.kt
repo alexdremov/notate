@@ -546,16 +546,17 @@ class HomeViewModel(
                     launch(Dispatchers.IO) {
                         try {
                             Logger.d("HomeViewModel", "Attempting to propagate deletion to remote for ${item.name}")
-                            val relativePath = if (projectUri.startsWith("content://")) {
-                                if (currentPathVal == repository?.getRootPath()) {
-                                    item.name
+                            val relativePath =
+                                if (projectUri.startsWith("content://")) {
+                                    if (currentPathVal == repository?.getRootPath()) {
+                                        item.name
+                                    } else {
+                                        item.name
+                                    }
                                 } else {
-                                    item.name
+                                    File(item.path).relativeTo(File(projectUri)).path
                                 }
-                            } else {
-                                File(item.path).relativeTo(File(projectUri)).path
-                            }
-                            
+
                             Logger.d("HomeViewModel", "Calculated relative path for deletion: $relativePath")
 
                             // 1. Record pending deletion

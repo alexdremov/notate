@@ -37,6 +37,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import java.util.LinkedList
 
 class OnyxCanvasView
@@ -93,7 +94,7 @@ class OnyxCanvasView
                 },
             )
 
-        private val selectionInteractor = SelectionInteractor(this, canvasController, matrix, inverseMatrix)
+        private val selectionInteractor = SelectionInteractor(this, canvasController, viewScope, matrix, inverseMatrix)
 
         // --- Pen Input ---
         private val penInputHandler: PenInputHandler
@@ -130,6 +131,16 @@ class OnyxCanvasView
             holder.addCallback(this)
             setZOrderOnTop(false)
             holder.setFormat(android.graphics.PixelFormat.OPAQUE)
+
+            viewScope.launch {
+                while (isActive) {
+                    if (CanvasConfig.DEBUG_ENABLE_PROFILING) {
+                        com.alexdremov.notate.util.PerformanceProfiler
+                            .printReport()
+                    }
+                    delay(CanvasConfig.PROFILING_INTERVAL_MS)
+                }
+            }
 
             viewScope.launch {
                 while (isActive) {
@@ -180,6 +191,7 @@ class OnyxCanvasView
                 PenInputHandler(
                     canvasController,
                     this,
+                    viewScope,
                     matrix,
                     inverseMatrix,
                     onStrokeStarted = { onStrokeStarted?.invoke() },
@@ -205,33 +217,36 @@ class OnyxCanvasView
                         override fun onLongPress(e: MotionEvent) {
                             if (viewportInteractor.isBusy()) return
 
-                            // Compute fresh inverse to ensure hit test is accurate
-                            val inv = Matrix()
-                            matrix.invert(inv)
-                            val pts = floatArrayOf(e.x, e.y)
-                            inv.mapPoints(pts)
-                            val worldX = pts[0]
-                            val worldY = pts[1]
+                            viewScope.launch {
+                                // Compute fresh inverse to ensure hit test is accurate
+                                val inv = Matrix()
+                                matrix.invert(inv)
+                                val pts = floatArrayOf(e.x, e.y)
+                                inv.mapPoints(pts)
+                                val worldX = pts[0]
+                                val worldY = pts[1]
 
-                            val item = canvasController.getItemAt(worldX, worldY)
+                                val item = canvasController.getItemAt(worldX, worldY)
 
-                            if (item != null) {
-                                canvasController.clearSelection()
-                                canvasController.selectItem(item)
-                                // Hand off to Interactor to start drag
-                                selectionInteractor.onLongPressDragStart(e.x, e.y)
-                                performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
-                            } else {
-                                // Show Contextual Menu (Paste / Insert Image)
-                                // ALWAYS recreate popup to capture fresh worldX/worldY in the closure
-                                pastePopup =
-                                    com.alexdremov.notate.ui.dialog.PasteActionPopup(
-                                        context,
-                                        onPaste = { canvasController.paste(worldX, worldY) },
-                                        onPasteImage = { onRequestInsertImage?.invoke() },
-                                    )
-                                pastePopup?.show(this@OnyxCanvasView, e.x, e.y)
-                                performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
+                                if (item != null) {
+                                    canvasController.clearSelection()
+                                    canvasController.selectItem(item)
+                                    // Hand off to Interactor to start drag
+                                    selectionInteractor.onLongPressDragStart(e.x, e.y)
+                                    performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
+                                } else {
+                                    // Show Contextual Menu (Paste / Insert Image)
+                                    pastePopup =
+                                        com.alexdremov.notate.ui.dialog.PasteActionPopup(
+                                            context,
+                                            onPaste = {
+                                                viewScope.launch { canvasController.paste(worldX, worldY) }
+                                            },
+                                            onPasteImage = { onRequestInsertImage?.invoke() },
+                                        )
+                                    pastePopup?.show(this@OnyxCanvasView, e.x, e.y)
+                                    performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
+                                }
                             }
                         }
                     },
@@ -292,8 +307,8 @@ class OnyxCanvasView
                     if (duration < CanvasConfig.TWO_FINGER_TAP_MAX_DELAY) {
                         if (!isTapSlopExceeded(event)) {
                             if (now - lastTwoFingerTapTime < CanvasConfig.TWO_FINGER_TAP_DOUBLE_TIMEOUT) {
-                                undo()
-                                lastTwoFingerTapTime = 0L // Reset to prevent a 3rd tap from pairing with the 2nd to trigger another undo
+                                viewScope.launch { undo() }
+                                lastTwoFingerTapTime = 0L
                             } else {
                                 lastTwoFingerTapTime = now
                             }
@@ -318,7 +333,7 @@ class OnyxCanvasView
             val index1 = event.findPointerIndex(twoFingerPointerId1)
             val index2 = event.findPointerIndex(twoFingerPointerId2)
 
-            if (index1 == -1 || index2 == -1) return true // Pointers lost, invalidate tap
+            if (index1 == -1 || index2 == -1) return true
 
             val d1 = distSq(event.getX(index1), event.getY(index1), twoFingerStartPt1[0], twoFingerStartPt1[1])
             val d2 = distSq(event.getX(index2), event.getY(index2), twoFingerStartPt2[0], twoFingerStartPt2[1])
@@ -391,8 +406,6 @@ class OnyxCanvasView
 
         private fun drawContent() {
             com.alexdremov.notate.util.PerformanceProfiler.trace("OnyxCanvasView.drawContent") {
-                // Use hardware canvas for GPU acceleration (API 26+)
-                // Critical for smooth zoom/pan with bitmap scaling
                 val cv =
                     try {
                         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
@@ -408,9 +421,7 @@ class OnyxCanvasView
 
                 try {
                     val bgColor =
-                        if (canvasModel.canvasType ==
-                            CanvasType.FIXED_PAGES
-                        ) {
+                        if (canvasModel.canvasType == CanvasType.FIXED_PAGES) {
                             CanvasConfig.FIXED_PAGE_CANVAS_BG_COLOR
                         } else {
                             Color.WHITE
@@ -421,7 +432,6 @@ class OnyxCanvasView
                     matrix.invert(inverseMatrix)
                     inverseMatrix.mapRect(visibleRect)
 
-                    // Calculate scale directly from matrix to ensure consistency with visibleRect
                     val values = FloatArray(9)
                     matrix.getValues(values)
                     val currentScale = values[Matrix.MSCALE_X]
@@ -441,7 +451,6 @@ class OnyxCanvasView
                             }
                         cv.drawText(text, 20f, height - 130f, debugPaint)
 
-                        // Draw Graph
                         val graphWidth = 300f
                         val graphHeight = 100f
                         val graphX = 20f
@@ -457,12 +466,9 @@ class OnyxCanvasView
                         if (debugRamHistory.isNotEmpty()) {
                             val path = Path()
                             val stepX = graphWidth / MAX_RAM_HISTORY_POINTS
-
                             debugPaint.style = Paint.Style.STROKE
                             debugPaint.strokeWidth = 3f
-
                             var first = true
-                            // Create a copy to avoid concurrent modification exception
                             val historySnapshot = ArrayList(debugRamHistory)
                             historySnapshot.forEachIndexed { index, percent ->
                                 val x = graphX + index * stepX
@@ -477,11 +483,6 @@ class OnyxCanvasView
                             cv.drawPath(path, debugPaint)
                         }
                     }
-
-                    com.alexdremov.notate.util.Logger.d("OnyxCanvasView", "View Size: ${width}x${height}")
-
-                    com.alexdremov.notate.util.PerformanceProfiler
-                        .printReportIfNeeded()
                 } finally {
                     holder.unlockCanvasAndPost(cv)
                 }
@@ -516,10 +517,14 @@ class OnyxCanvasView
             canvasModel.viewportOffsetX = values[Matrix.MTRANS_X]
             canvasModel.viewportOffsetY = values[Matrix.MTRANS_Y]
             canvasModel.viewportScale = viewportInteractor.getCurrentScale()
-            return canvasModel.toCanvasData()
+            // CRITICAL: Since we can't make this suspend without breaking Activity callers,
+            // and getCanvasData is mostly used for saving, we'll use runBlocking for this leaf call.
+            // This is ONLY okay because toCanvasData is now mutex-protected and very fast
+            // (it just captures state, doesn't do IO).
+            return runBlocking { canvasModel.toCanvasData() }
         }
 
-        fun loadMetadata(data: CanvasData) {
+        suspend fun loadMetadata(data: CanvasData) {
             canvasModel.loadFromCanvasData(data)
             matrix.reset()
             matrix.postScale(data.zoomLevel, data.zoomLevel)
@@ -528,7 +533,6 @@ class OnyxCanvasView
 
             canvasRenderer.updateLayoutStrategy()
             canvasRenderer.clearTiles()
-
             drawContent()
         }
 
@@ -546,7 +550,7 @@ class OnyxCanvasView
             penInputHandler.setCursorView(view)
         }
 
-        fun setBackgroundStyle(style: com.alexdremov.notate.model.BackgroundStyle) {
+        suspend fun setBackgroundStyle(style: com.alexdremov.notate.model.BackgroundStyle) {
             canvasModel.setBackground(style)
             invalidateCanvas()
             performHardRefresh()
@@ -575,23 +579,22 @@ class OnyxCanvasView
             }
         }
 
-        fun clear() {
+        suspend fun clear() {
             canvasModel.clear()
             canvasRenderer.clearTiles()
             minimapDrawer?.setDirty()
             drawContent()
-
             performHardRefresh()
             onContentChanged?.invoke()
         }
 
-        fun undo() {
+        suspend fun undo() {
             canvasModel.undo()?.let { canvasRenderer.invalidateTiles(it) }
             refreshAfterEdit()
             onContentChanged?.invoke()
         }
 
-        fun redo() {
+        suspend fun redo() {
             canvasModel.redo()?.let { canvasRenderer.invalidateTiles(it) }
             refreshAfterEdit()
             onContentChanged?.invoke()
@@ -604,9 +607,9 @@ class OnyxCanvasView
                     actionPopup =
                         com.alexdremov.notate.ui.dialog.SelectionActionPopup(
                             context,
-                            onCopy = { canvasController.copySelection() },
-                            onDelete = { canvasController.deleteSelection() },
-                            onDismiss = { /* handled by outside touch */ },
+                            onCopy = { viewScope.launch { canvasController.copySelection() } },
+                            onDelete = { viewScope.launch { canvasController.deleteSelection() } },
+                            onDismiss = { },
                         )
                 }
                 if (!selectionInteractor.isInteracting()) {
@@ -636,17 +639,13 @@ class OnyxCanvasView
         }
 
         private fun performHardRefresh() {
-            // Toggle Raw Drawing to ensure refresh works (mirrors Lasso Lift logic)
             val wasEnabled = touchHelper?.isRawDrawingInputEnabled() == true
             if (wasEnabled) {
                 touchHelper?.setRawDrawingEnabled(false)
             }
-
             EpdController.invalidate(this, UpdateMode.GC)
-
             if (wasEnabled) {
                 touchHelper?.setRawDrawingEnabled(true)
-                // Re-apply tool config after toggling
                 updateTouchHelperTool()
             }
         }
@@ -673,17 +672,11 @@ class OnyxCanvasView
 
         private fun refreshAfterEdit() {
             val visibleRect = RectF(0f, 0f, width.toFloat(), height.toFloat())
-
             matrix.invert(inverseMatrix)
-
             inverseMatrix.mapRect(visibleRect)
-
             canvasRenderer.refreshTiles(viewportInteractor.getCurrentScale(), visibleRect)
-
             minimapDrawer?.setDirty()
-
             drawContent()
-
             performHardRefresh()
         }
     }

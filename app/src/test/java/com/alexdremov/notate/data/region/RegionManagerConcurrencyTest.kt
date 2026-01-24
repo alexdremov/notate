@@ -6,6 +6,9 @@ import android.graphics.RectF
 import com.alexdremov.notate.model.Stroke
 import com.alexdremov.notate.model.StrokeType
 import com.onyx.android.sdk.data.note.TouchPoint
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -45,207 +48,155 @@ class RegionManagerConcurrencyTest {
 
     /**
      * Test that concurrent getRegion calls for the same region don't cause data loss.
-     * Before the fix, two threads could simultaneously:
-     * 1. See cache miss
-     * 2. Both load from disk (or create new)
-     * 3. Both put to cache (second overwrites first)
-     *
-     * With the fix, only one thread loads and caches, others wait.
      */
     @Test
-    fun `concurrent getRegion for same region returns consistent data`() {
-        val threadCount = 10
-        val executor = Executors.newFixedThreadPool(threadCount)
-        val latch = CountDownLatch(1)
-        val startedCount = AtomicInteger(0)
+    fun `concurrent getRegion for same region returns consistent data`() =
+        runTest {
+            val threadCount = 10
+            val regions = ConcurrentHashMap<Int, RegionData>()
 
-        // All regions returned should be the same instance
-        val regions = ConcurrentHashMap<Int, RegionData>()
+            val regionId = RegionId(0, 0)
 
-        val regionId = RegionId(0, 0)
+            // First, add an item to the region so it has content
+            val testStroke = createTestStroke(0f, 0f)
+            manager.addItem(testStroke)
+            manager.saveAll()
 
-        // First, add an item to the region so it has content
-        val testStroke = createTestStroke(0f, 0f)
-        manager.addItem(testStroke)
-        manager.saveAll()
+            // Clear cache to force reload
+            manager.clear()
 
-        // Clear cache to force reload
-        manager.clear()
+            // Now have multiple threads try to get the same region simultaneously
+            val jobs =
+                (0 until threadCount).map { i ->
+                    launch {
+                        val region = manager.getRegion(regionId)
+                        regions[i] = region
+                    }
+                }
+            jobs.forEach { it.join() }
 
-        // Now have multiple threads try to get the same region simultaneously
-        for (i in 0 until threadCount) {
-            executor.execute {
-                startedCount.incrementAndGet()
-                latch.await() // Wait for all threads to be ready
-
-                val region = manager.getRegion(regionId)
-                regions[i] = region
-            }
+            // All threads should have received the same RegionData instance
+            val uniqueRegions = regions.values.toSet()
+            assertEquals("All threads should get the same region instance", 1, uniqueRegions.size)
         }
-
-        // Wait for all threads to be ready
-        while (startedCount.get() < threadCount) {
-            Thread.sleep(10)
-        }
-
-        // Start all threads simultaneously
-        latch.countDown()
-
-        executor.shutdown()
-        assertTrue("Executor should terminate", executor.awaitTermination(10, TimeUnit.SECONDS))
-
-        // All threads should have received the same RegionData instance
-        val uniqueRegions = regions.values.toSet()
-        assertEquals("All threads should get the same region instance", 1, uniqueRegions.size)
-    }
 
     /**
      * Test that concurrent addItem operations don't corrupt data.
      */
     @Test
-    fun `concurrent addItem operations preserve all items`() {
-        val threadCount = 10
-        val itemsPerThread = 100
-        val executor = Executors.newFixedThreadPool(threadCount)
-        val latch = CountDownLatch(1)
-        val completedCount = AtomicInteger(0)
+    fun `concurrent addItem operations preserve all items`() =
+        runTest {
+            val threadCount = 10
+            val itemsPerThread = 100
 
-        for (i in 0 until threadCount) {
-            executor.execute {
-                latch.await()
-
-                for (j in 0 until itemsPerThread) {
-                    // Each thread adds items in a different area to stress the system
-                    val x = (i * 100 + j).toFloat()
-                    val y = (i * 100 + j).toFloat()
-                    val stroke = createTestStroke(x, y)
-                    manager.addItem(stroke)
+            val jobs =
+                (0 until threadCount).map { i ->
+                    launch {
+                        for (j in 0 until itemsPerThread) {
+                            val x = (i * 100 + j).toFloat()
+                            val y = (i * 100 + j).toFloat()
+                            val stroke = createTestStroke(x, y)
+                            manager.addItem(stroke)
+                        }
+                    }
                 }
+            jobs.forEach { it.join() }
 
-                completedCount.incrementAndGet()
-            }
+            // Verify all items were added
+            val allItems =
+                manager
+                    .getRegionsInRect(RectF(-10000f, -10000f, 10000f, 10000f))
+                    .flatMap { it.items }
+
+            assertEquals("All items should be present", threadCount * itemsPerThread, allItems.size)
         }
-
-        latch.countDown()
-
-        executor.shutdown()
-        assertTrue("Executor should terminate", executor.awaitTermination(30, TimeUnit.SECONDS))
-
-        assertEquals("All threads should complete", threadCount, completedCount.get())
-
-        // Verify all items were added
-        val allItems =
-            manager
-                .getRegionsInRect(RectF(-10000f, -10000f, 10000f, 10000f))
-                .flatMap { it.items }
-
-        assertEquals("All items should be present", threadCount * itemsPerThread, allItems.size)
-    }
 
     /**
      * Test that concurrent read and write operations don't corrupt data.
      */
     @Test
-    fun `concurrent read and write operations`() {
-        val iterations = 50
-        val executor = Executors.newFixedThreadPool(4)
-        val errors = AtomicInteger(0)
+    fun `concurrent read and write operations`() =
+        runTest {
+            val iterations = 50
+            val errors = AtomicInteger(0)
 
-        // Add some initial data
-        for (i in 0 until 10) {
-            manager.addItem(createTestStroke(i.toFloat() * 10, i.toFloat() * 10))
-        }
-
-        val latch = CountDownLatch(iterations * 2)
-
-        // Mix of readers and writers
-        for (i in 0 until iterations) {
-            // Writer
-            executor.execute {
-                try {
-                    val stroke = createTestStroke(i.toFloat() * 100, i.toFloat() * 100)
-                    manager.addItem(stroke)
-                } catch (e: Exception) {
-                    errors.incrementAndGet()
-                } finally {
-                    latch.countDown()
-                }
+            // Add some initial data
+            for (i in 0 until 10) {
+                manager.addItem(createTestStroke(i.toFloat() * 10, i.toFloat() * 10))
             }
 
-            // Reader
-            executor.execute {
-                try {
-                    val regions = manager.getRegionsInRect(RectF(-10000f, -10000f, 10000f, 10000f))
-                    // Just verify we can read without exceptions
-                    regions.forEach { region ->
-                        region.items.size // Access items
-                    }
-                } catch (e: Exception) {
-                    errors.incrementAndGet()
-                } finally {
-                    latch.countDown()
+            // Mix of readers and writers
+            val jobs =
+                (0 until iterations).flatMap { i ->
+                    listOf(
+                        launch {
+                            try {
+                                val stroke = createTestStroke(i.toFloat() * 100, i.toFloat() * 100)
+                                manager.addItem(stroke)
+                            } catch (e: Exception) {
+                                errors.incrementAndGet()
+                            }
+                        },
+                        launch {
+                            try {
+                                val regions = manager.getRegionsInRect(RectF(-10000f, -10000f, 10000f, 10000f))
+                                regions.forEach { region ->
+                                    region.items.size
+                                }
+                            } catch (e: Exception) {
+                                errors.incrementAndGet()
+                            }
+                        },
+                    )
                 }
-            }
+            jobs.forEach { it.join() }
+
+            assertEquals("No errors should occur", 0, errors.get())
         }
-
-        assertTrue("Operations should complete", latch.await(30, TimeUnit.SECONDS))
-        executor.shutdown()
-
-        assertEquals("No errors should occur", 0, errors.get())
-    }
 
     /**
      * Test that saveAll during concurrent modifications doesn't lose data.
      */
     @Test
-    fun `saveAll during concurrent modifications preserves data integrity`() {
-        val threadCount = 4
-        val executor = Executors.newFixedThreadPool(threadCount)
-        val itemsAdded = AtomicInteger(0)
-        val latch = CountDownLatch(threadCount)
+    fun `saveAll during concurrent modifications preserves data integrity`() =
+        runTest {
+            val threadCount = 4
+            val itemsAdded = AtomicInteger(0)
 
-        // One thread does saves
-        executor.execute {
-            try {
-                for (i in 0 until 10) {
-                    Thread.sleep(10)
-                    manager.saveAll()
-                }
-            } finally {
-                latch.countDown()
-            }
-        }
-
-        // Other threads add items
-        for (t in 1 until threadCount) {
-            executor.execute {
-                try {
-                    for (i in 0 until 50) {
-                        val stroke = createTestStroke((t * 1000 + i).toFloat(), 0f)
-                        manager.addItem(stroke)
-                        itemsAdded.incrementAndGet()
-                        Thread.sleep(1)
+            val saveJob =
+                launch {
+                    for (i in 0 until 10) {
+                        kotlinx.coroutines.delay(10)
+                        manager.saveAll()
                     }
-                } finally {
-                    latch.countDown()
                 }
-            }
+
+            val addJobs =
+                (1 until threadCount).map { t ->
+                    launch {
+                        for (i in 0 until 50) {
+                            val stroke = createTestStroke((t * 1000 + i).toFloat(), 0f)
+                            manager.addItem(stroke)
+                            itemsAdded.incrementAndGet()
+                            kotlinx.coroutines.delay(1)
+                        }
+                    }
+                }
+
+            saveJob.join()
+            addJobs.forEach { it.join() }
+
+            // Final save
+            manager.saveAll()
+
+            // Verify all items are present
+            val allItems =
+                manager
+                    .getRegionsInRect(RectF(-100000f, -100000f, 100000f, 100000f))
+                    .flatMap { it.items }
+
+            assertEquals("All items should be saved", itemsAdded.get(), allItems.size)
         }
-
-        assertTrue("Operations should complete", latch.await(30, TimeUnit.SECONDS))
-        executor.shutdown()
-
-        // Final save
-        manager.saveAll()
-
-        // Verify all items are present
-        val allItems =
-            manager
-                .getRegionsInRect(RectF(-100000f, -100000f, 100000f, 100000f))
-                .flatMap { it.items }
-
-        assertEquals("All items should be saved", itemsAdded.get(), allItems.size)
-    }
 
     private fun createTestStroke(
         x: Float,

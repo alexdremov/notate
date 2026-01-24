@@ -25,7 +25,7 @@ object ThumbnailGenerator {
     private val THUMB_HEIGHT = CanvasConfig.THUMBNAIL_RESOLUTION.toInt()
     private const val PADDING = 4f
 
-    fun generateBase64(
+    suspend fun generateBase64(
         regionManager: RegionManager,
         metadata: CanvasData,
         context: android.content.Context,
@@ -42,7 +42,7 @@ object ThumbnailGenerator {
             null
         }
 
-    private fun generateBitmapFromRegions(
+    private suspend fun generateBitmapFromRegions(
         regionManager: RegionManager,
         metadata: CanvasData,
         context: android.content.Context,
@@ -60,8 +60,6 @@ object ThumbnailGenerator {
                 }
 
                 CanvasType.INFINITE -> {
-                    // Optimization: For infinite canvas, capture only the latest viewport
-                    // to preserve detail and avoid rendering massive empty areas.
                     val dm = context.resources.displayMetrics
                     val vW = dm.widthPixels.toFloat()
                     val vH = dm.heightPixels.toFloat()
@@ -79,7 +77,6 @@ object ThumbnailGenerator {
                 }
             }
 
-        // Setup Transform
         val scaleX = (THUMB_WIDTH - PADDING * 2) / bounds.width()
         val scaleY = (THUMB_HEIGHT - PADDING * 2) / bounds.height()
         val scale = min(scaleX, scaleY).takeIf { it.isFinite() && it > 0 } ?: 1f
@@ -98,18 +95,13 @@ object ThumbnailGenerator {
                 strokeJoin = Paint.Join.ROUND
             }
 
-        // Use region-aware rendering to avoid OOM
         renderThumbnailFromRegions(canvas, regionManager, bounds, paint, scale, context)
 
         canvas.restore()
         return bitmap
     }
 
-    /**
-     * Region-aware thumbnail rendering that processes regions incrementally
-     * to avoid loading all strokes into memory at once.
-     */
-    private fun renderThumbnailFromRegions(
+    private suspend fun renderThumbnailFromRegions(
         canvas: Canvas,
         regionManager: RegionManager,
         bounds: RectF,
@@ -117,20 +109,13 @@ object ThumbnailGenerator {
         scale: Float,
         context: android.content.Context,
     ) {
-        // Get regions that intersect with our thumbnail bounds
         val regionIds = regionManager.getRegionIdsInRect(bounds)
+        if (regionIds.isEmpty()) return
 
-        if (regionIds.isEmpty()) {
-            return
-        }
-
-        val regionsToProcess = regionIds.size
         val regionSize = regionManager.regionSize
 
-        // Process each region individually to avoid memory spikes
         for ((index, regionId) in regionIds.withIndex()) {
             val bitmap = regionManager.getRegionThumbnail(regionId, context) ?: continue
-
             val dstRect =
                 RectF(
                     regionId.x * regionSize,
@@ -138,15 +123,10 @@ object ThumbnailGenerator {
                     (regionId.x + 1) * regionSize,
                     (regionId.y + 1) * regionSize,
                 )
-
-            // Draw the cached bitmap directly
-            // Canvas is already transformed to World->Thumbnail space
             canvas.drawBitmap(bitmap, null, dstRect, null)
 
-            // Yield periodically to avoid blocking and allow GC
             if (index % 5 == 0) {
-                Thread.yield()
-                System.gc() // Suggest GC to clean up temporary objects
+                kotlinx.coroutines.yield()
             }
         }
     }

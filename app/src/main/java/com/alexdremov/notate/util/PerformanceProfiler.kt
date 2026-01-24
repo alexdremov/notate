@@ -82,7 +82,19 @@ object PerformanceProfiler {
         }
     }
 
-    private fun printReport() {
+    fun getAllMemoryStats(): Map<String, Map<String, String>> {
+        val snapshot = mutableMapOf<String, Map<String, String>>()
+        memoryProviders.forEach { (name, provider) ->
+            try {
+                snapshot[name] = provider.getStats()
+            } catch (e: Exception) {
+                snapshot[name] = mapOf("Error" to (e.message ?: "Unknown"))
+            }
+        }
+        return snapshot
+    }
+
+    fun printReport() {
         val sb = StringBuilder()
         sb.append("\n=== Performance Report (").append(CanvasConfig.PROFILING_INTERVAL_MS).append("ms) ===\n")
         sb.append(String.format("%-30s | %-6s | %-8s | %-8s | %-8s | %-6s\n", "Section", "Count", "Avg(ms)", "Max(ms)", "Total(ms)", "%"))

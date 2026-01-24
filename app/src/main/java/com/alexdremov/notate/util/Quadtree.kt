@@ -251,4 +251,19 @@ class Quadtree(
         }
         return false
     }
+
+    /**
+     * Estimates the memory usage of the Quadtree structure itself (excluding the actual Item objects).
+     */
+    fun sizeBytes(): Long {
+        var size = 128L // Base node overhead (Header + Refs + RectF)
+        size += 32L + (items.size * 8L) // ArrayList overhead
+
+        for (node in nodes) {
+            if (node != null) {
+                size += node.sizeBytes()
+            }
+        }
+        return size
+    }
 }

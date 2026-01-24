@@ -100,12 +100,14 @@ class RegionStorage(
     @OptIn(ExperimentalSerializationApi::class)
     fun loadRegion(id: RegionId): RegionData? {
         val file = getRegionFile(id)
-        
+
         // JIT Extraction Strategy
         if (!file.exists() && zipSource != null && zipSource.exists()) {
             // Attempt to extract from ZIP
             val entryName = file.name // "r_X_Y.bin"
-            if (com.alexdremov.notate.util.ZipUtils.extractFile(zipSource, entryName, file)) {
+            if (com.alexdremov.notate.util.ZipUtils
+                    .extractFile(zipSource, entryName, file)
+            ) {
                 Logger.d("RegionStorage", "JIT Extracted region $id from ZIP")
             }
         }
@@ -248,12 +250,14 @@ class RegionStorage(
     @OptIn(ExperimentalSerializationApi::class)
     fun loadIndex(): Map<RegionId, RectF> {
         val file = File(baseDir, "index.bin")
-        
+
         // JIT Extraction for Index
         if (!file.exists() && zipSource != null && zipSource.exists()) {
-             if (com.alexdremov.notate.util.ZipUtils.extractFile(zipSource, "index.bin", file)) {
-                 Logger.i("RegionStorage", "JIT Extracted index.bin from ZIP")
-             }
+            if (com.alexdremov.notate.util.ZipUtils
+                    .extractFile(zipSource, "index.bin", file)
+            ) {
+                Logger.i("RegionStorage", "JIT Extracted index.bin from ZIP")
+            }
         }
 
         if (!file.exists()) {

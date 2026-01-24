@@ -200,15 +200,21 @@ class CanvasRepository(
                                 if (!path.startsWith("content://")) {
                                     val sourceFile = File(path)
                                     // Try optimized load
-                                    val manifest = com.alexdremov.notate.util.ZipUtils.readManifest(sourceFile)
+                                    val manifest =
+                                        com.alexdremov.notate.util.ZipUtils
+                                            .readManifest(sourceFile)
                                     if (manifest != null) {
                                         Logger.i("CanvasRepository", "Using Optimized JIT Load for: $path")
-                                        
+
                                         // We need to extract manifest.bin to disk so RegionStorage sees it?
                                         // Actually RegionManager loads metadata passed to constructor.
                                         // But we should extract it for consistency if we save later.
-                                        com.alexdremov.notate.util.ZipUtils.extractFile(sourceFile, "manifest.bin", File(sessionDir, "manifest.bin"))
-                                        
+                                        com.alexdremov.notate.util.ZipUtils.extractFile(
+                                            sourceFile,
+                                            "manifest.bin",
+                                            File(sessionDir, "manifest.bin"),
+                                        )
+
                                         metadata = manifest
                                         storage = RegionStorage(sessionDir, zipSource = sourceFile)
                                         storage.init()
@@ -245,7 +251,7 @@ class CanvasRepository(
                                     storage = RegionStorage(sessionDir) // No zipSource fallback needed
                                     storage.init()
                                 }
-                                
+
                                 val regionManager = RegionManager(storage!!, metadata!!.regionSize)
 
                                 finalSession =
@@ -257,19 +263,21 @@ class CanvasRepository(
                                         metadata = metadata,
                                         lockHandle = fileLock,
                                     )
-                                    
+
                                 if (useOptimizedPath && !path.startsWith("content://")) {
                                     // Launch background unzip to ensure full session integrity for saving
                                     val sourceFile = File(path)
-                                    finalSession.initializationJob = repositoryScope.launch {
-                                        try {
-                                            Logger.i("CanvasRepository", "Starting background unzip for remainder of session...")
-                                            com.alexdremov.notate.util.ZipUtils.unzipSkippingExisting(sourceFile, sessionDir)
-                                            Logger.i("CanvasRepository", "Background unzip complete.")
-                                        } catch (e: Exception) {
-                                            Logger.e("CanvasRepository", "Background unzip failed", e)
+                                    finalSession.initializationJob =
+                                        repositoryScope.launch {
+                                            try {
+                                                Logger.i("CanvasRepository", "Starting background unzip for remainder of session...")
+                                                com.alexdremov.notate.util.ZipUtils
+                                                    .unzipSkippingExisting(sourceFile, sessionDir)
+                                                Logger.i("CanvasRepository", "Background unzip complete.")
+                                            } catch (e: Exception) {
+                                                Logger.e("CanvasRepository", "Background unzip failed", e)
+                                            }
                                         }
-                                    }
                                 }
                             }
                         }

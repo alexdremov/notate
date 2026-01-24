@@ -119,7 +119,8 @@ object ZipUtils {
                 return true
             }
         } catch (e: Exception) {
-            com.alexdremov.notate.util.Logger.e("ZipUtils", "Failed to extract $entryName from ${zipFile.name}", e)
+            com.alexdremov.notate.util.Logger
+                .e("ZipUtils", "Failed to extract $entryName from ${zipFile.name}", e)
             return false
         }
     }
@@ -136,11 +137,16 @@ object ZipUtils {
                 zip.getInputStream(entry).use { input ->
                     val bytes = input.readBytes()
                     return kotlinx.serialization.protobuf.ProtoBuf
-                        .decodeFromByteArray(com.alexdremov.notate.data.CanvasData.serializer(), bytes)
+                        .decodeFromByteArray(
+                            com.alexdremov.notate.data.CanvasData
+                                .serializer(),
+                            bytes,
+                        )
                 }
             }
         } catch (e: Exception) {
-            com.alexdremov.notate.util.Logger.e("ZipUtils", "Failed to read manifest from ${zipFile.name}", e)
+            com.alexdremov.notate.util.Logger
+                .e("ZipUtils", "Failed to read manifest from ${zipFile.name}", e)
             return null
         }
     }
@@ -148,7 +154,10 @@ object ZipUtils {
     /**
      * Robustly find an entry by name, handling common ZIP structure variations.
      */
-    private fun findEntry(zip: java.util.zip.ZipFile, name: String): java.util.zip.ZipEntry? {
+    private fun findEntry(
+        zip: java.util.zip.ZipFile,
+        name: String,
+    ): java.util.zip.ZipEntry? {
         // 1. Direct match
         zip.getEntry(name)?.let { return it }
 
@@ -199,7 +208,8 @@ object ZipUtils {
                 }
             }
         } catch (e: Exception) {
-            com.alexdremov.notate.util.Logger.e("ZipUtils", "Failed to unzip skipping existing: ${zipFile.name}", e)
+            com.alexdremov.notate.util.Logger
+                .e("ZipUtils", "Failed to unzip skipping existing: ${zipFile.name}", e)
         }
     }
 }

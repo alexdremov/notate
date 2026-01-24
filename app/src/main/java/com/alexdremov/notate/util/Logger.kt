@@ -49,19 +49,28 @@ object Logger {
         _userEvents.tryEmit(UserEvent(message, Level.INFO))
     }
 
-    fun d(tag: String, msg: String) {
+    fun d(
+        tag: String,
+        msg: String,
+    ) {
         if (CanvasConfig.DEBUG_SHOW_TILES || CanvasConfig.DEBUG_SHOW_REGIONS || CanvasConfig.DEBUG_ENABLE_PROFILING) {
             Log.d(formatTag(tag), msg)
         }
     }
 
-    fun v(tag: String, msg: String) {
+    fun v(
+        tag: String,
+        msg: String,
+    ) {
         if (CanvasConfig.DEBUG_SHOW_TILES) {
             Log.v(formatTag(tag), msg)
         }
     }
 
-    fun i(tag: String, msg: String) {
+    fun i(
+        tag: String,
+        msg: String,
+    ) {
         Log.i(formatTag(tag), msg)
     }
 

@@ -35,4 +35,13 @@ data class Stroke(
      */
     @Transient
     var renderCache: RenderCache? = null
+
+    /**
+     * Explicitly releases native resources (Path).
+     * Call this when the Stroke is no longer needed (e.g. evicted from cache).
+     */
+    fun recycle() {
+        path.reset()
+        renderCache = null
+    }
 }

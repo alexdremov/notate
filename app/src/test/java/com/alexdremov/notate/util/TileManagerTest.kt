@@ -66,14 +66,14 @@ class TileManagerTest {
             val scale = 1.0f
 
             // Mock querying strokes
-            every { mockModel.queryItems(any()) } returns ArrayList<CanvasItem>()
+            io.mockk.coEvery { mockModel.queryItems(any()) } returns ArrayList<CanvasItem>()
 
             // Act
             tileManager.render(canvas, visibleRect, scale)
             advanceUntilIdle()
 
             // Verify
-            verify(atLeast = 4) { mockModel.queryItems(any()) }
+            io.mockk.coVerify(atLeast = 4) { mockModel.queryItems(any()) }
         }
 
     @Test
@@ -93,7 +93,7 @@ class TileManagerTest {
             advanceUntilIdle()
 
             // Verify: Should trigger regeneration (queryItems) again
-            verify(atLeast = 1) { mockModel.queryItems(any()) }
+            io.mockk.coVerify(atLeast = 1) { mockModel.queryItems(any()) }
         }
 
     @Test
@@ -134,14 +134,15 @@ class TileManagerTest {
 
             val stroke = mockk<Stroke>(relaxed = true)
             every { stroke.bounds } returns RectF(10f, 10f, 50f, 50f)
-            every { stroke.style } returns com.alexdremov.notate.model.StrokeType.FOUNTAIN
+            every { stroke.style } returns com.alexdremov.notate.model.StrokeType.HIGHLIGHTER // Use highlighter to force refresh
 
             // Act
             tileManager.updateTilesWithItem(stroke)
 
             // Verify
-            // Should call renderer to draw stroke onto the cached bitmap
-            verify { mockRenderer.drawItemToCanvas(any(), stroke, any()) }
+            // Should trigger re-query for highlighters
+            advanceUntilIdle()
+            io.mockk.coVerify(atLeast = 1) { mockModel.queryItems(any()) }
         }
 
     @Test
@@ -151,7 +152,7 @@ class TileManagerTest {
             tileManager.forceRefreshVisibleTiles(visibleRect, 1.0f)
             advanceUntilIdle()
 
-            verify(atLeast = 1) { mockModel.queryItems(any()) }
+            io.mockk.coVerify(atLeast = 1) { mockModel.queryItems(any()) }
         }
 
     @Test
@@ -171,7 +172,7 @@ class TileManagerTest {
             tileManager.render(canvas, visibleRect, 1.0f)
             advanceUntilIdle()
 
-            verify(atLeast = 1) { mockModel.queryItems(any()) }
+            io.mockk.coVerify(atLeast = 1) { mockModel.queryItems(any()) }
         }
 
     @Test
@@ -182,13 +183,13 @@ class TileManagerTest {
             val canvas = mockk<Canvas>(relaxed = true)
 
             // Force error
-            every { mockModel.queryItems(any()) } throws RuntimeException("Generation failed")
+            io.mockk.coEvery { mockModel.queryItems(any()) } throws RuntimeException("Generation failed")
 
             // Act
             tileManager.render(canvas, visibleRect, 1.0f)
             advanceUntilIdle()
 
             // Verify that it tried to generate
-            verify { mockModel.queryItems(any()) }
+            io.mockk.coVerify { mockModel.queryItems(any()) }
         }
 }

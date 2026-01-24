@@ -106,7 +106,7 @@ class PdfExporterTest {
             val model = mockk<InfiniteCanvasModel>()
             val stroke = createTestStroke(100f, 100f)
 
-            every { model.queryItems(any()) } returns arrayListOf(stroke)
+            io.mockk.coEvery { model.queryItems(any()) } returns arrayListOf(stroke)
             every { model.getRegionManager() } returns null
             every { model.getContentBounds() } returns RectF(100f, 100f, 200f, 200f)
             every { model.canvasType } returns CanvasType.INFINITE
@@ -116,11 +116,6 @@ class PdfExporterTest {
 
             val outputStream = ByteArrayOutputStream()
             val mockDoc = createMockPdfDocumentWrapper()
-
-            // PDFBox init might fail in unit tests if not mocked or handled,
-            // but let's try assuming Robolectric context is enough or it fails gracefully/we catch it.
-            // Actually, PDFBoxResourceLoader.init() calls Context.getAssets().
-            // Robolectric provides assets.
 
             try {
                 PdfExporter.export(
@@ -132,18 +127,8 @@ class PdfExporterTest {
                     pdfDocumentFactory = { mockDoc },
                 )
 
-                // For Infinite Canvas Vector, we use PDFBox, so mockDoc (Android PdfDocument) is NOT used.
                 verify(exactly = 0) { mockDoc.startPage(any()) }
-
-                // Verify output was written
-                // Note: Output might be empty if PDFBox fails silently or produces 0 bytes on error (if swallowed)
-                // But export throws on error.
-
-                // Assert.assertTrue(outputStream.size() > 0)
-                // We assume it writes SOMETHING (header at least)
             } catch (e: Exception) {
-                // If PDFBox crashes in test (e.g. loader init), we ignore for now as we can't easily mock it without PowerMock
-                // But we should verify mockDoc was NOT touched
                 verify(exactly = 0) { mockDoc.startPage(any()) }
             }
         }
@@ -155,7 +140,7 @@ class PdfExporterTest {
             val stroke = createTestStroke(100f, 100f)
             val callback = mockk<PdfExporter.ProgressCallback>(relaxed = true)
 
-            every { model.queryItems(any()) } returns arrayListOf(stroke)
+            io.mockk.coEvery { model.queryItems(any()) } returns arrayListOf(stroke)
             every { model.getRegionManager() } returns null
             every { model.getContentBounds() } returns RectF(100f, 100f, 200f, 200f)
             every { model.canvasType } returns CanvasType.INFINITE
@@ -185,7 +170,7 @@ class PdfExporterTest {
             val stroke1 = createTestStroke(100f, 100f)
             val stroke2 = createTestStroke(100f, 2000f) // Should be on second page
 
-            every { model.queryItems(any()) } returns arrayListOf(stroke1, stroke2)
+            io.mockk.coEvery { model.queryItems(any()) } returns arrayListOf(stroke1, stroke2)
             every { model.getContentBounds() } returns RectF(100f, 100f, 200f, 2100f)
             every { model.canvasType } returns CanvasType.FIXED_PAGES
             every { model.pageWidth } returns CanvasConfig.PAGE_A4_WIDTH
@@ -217,7 +202,7 @@ class PdfExporterTest {
             val model = mockk<InfiniteCanvasModel>()
             val stroke1 = createTestStroke(100f, 100f)
 
-            every { model.queryItems(any()) } returns arrayListOf(stroke1)
+            io.mockk.coEvery { model.queryItems(any()) } returns arrayListOf(stroke1)
             every { model.getContentBounds() } returns RectF(100f, 100f, 200f, 200f)
             every { model.canvasType } returns CanvasType.FIXED_PAGES
             every { model.pageWidth } returns CanvasConfig.PAGE_A4_WIDTH

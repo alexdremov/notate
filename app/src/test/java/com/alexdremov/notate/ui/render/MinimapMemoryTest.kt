@@ -44,8 +44,8 @@ class MinimapMemoryTest {
         val largeContext = RectF(0f, 0f, 10000f, 10000f)
 
         // Mock the region manager to return some regions
-        every { mockRegionManager.getRegionIdsInRect(any()) } returns listOf(RegionId(0, 0))
-        every { mockRegionManager.getRegionThumbnail(any(), any()) } returns mockk(relaxed = true)
+        io.mockk.coEvery { mockRegionManager.getRegionIdsInRect(any()) } returns listOf(RegionId(0, 0))
+        io.mockk.coEvery { mockRegionManager.getRegionThumbnail(any(), any()) } returns mockk(relaxed = true)
 
         // Create minimap drawer
         val minimapDrawer = MinimapDrawer(mockView, mockModel, mockRenderer) {}
@@ -60,8 +60,8 @@ class MinimapMemoryTest {
         val smallContext = RectF(0f, 0f, 100f, 100f)
 
         // Mock the region manager
-        every { mockRegionManager.getRegionIdsInRect(any()) } returns listOf(RegionId(0, 0))
-        every { mockRegionManager.getRegionThumbnail(any(), any()) } returns mockk(relaxed = true)
+        io.mockk.coEvery { mockRegionManager.getRegionIdsInRect(any()) } returns listOf(RegionId(0, 0))
+        io.mockk.coEvery { mockRegionManager.getRegionThumbnail(any(), any()) } returns mockk(relaxed = true)
 
         // Create minimap drawer
         val minimapDrawer = MinimapDrawer(mockView, mockModel, mockRenderer) {}

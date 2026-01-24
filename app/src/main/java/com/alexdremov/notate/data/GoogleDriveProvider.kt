@@ -116,7 +116,7 @@ class GoogleDriveProvider(
             // findFolderId handles empty/root logic? check implementation.
             // findFolderId("notate/epfl") returns ID of epfl.
             // If remotePath is "notate/epfl/b", folderPath is "notate/epfl".
-            
+
             val folderId = if (folderPath.isEmpty()) "root" else findFolderId(folderPath)
 
             if (folderId == null) {

@@ -22,12 +22,15 @@ import com.onyx.android.sdk.pen.EpdPenManager
 import com.onyx.android.sdk.pen.RawInputCallback
 import com.onyx.android.sdk.pen.TouchHelper
 import com.onyx.android.sdk.pen.data.TouchPointList
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.launch
 import java.util.Timer
 import kotlin.concurrent.schedule
 
 class PenInputHandler(
     private val controller: CanvasController,
     private val view: android.view.View,
+    private val scope: CoroutineScope,
     private val matrix: Matrix,
     private val inverseMatrix: Matrix,
     private val onStrokeStarted: () -> Unit = {},
@@ -303,8 +306,7 @@ class PenInputHandler(
         isIgnoringCurrentStroke = false
 
         // Always clear previous selection when starting a new stylus interaction
-        // This ensures "Tap anywhere outside" deselects, and prevents multiple selections confusion.
-        controller.clearSelection()
+        scope.launch { controller.clearSelection() }
         view.post { (view as? com.alexdremov.notate.ui.OnyxCanvasView)?.dismissActionPopup() }
 
         if (currentTool.type == ToolType.SELECT) {
@@ -338,17 +340,16 @@ class PenInputHandler(
         }
 
         // Logic for specialized modes (Eraser or Large Stroke)
-        // If we are erasing (but not lasso) or drawing a large stroke, we need High Speed Mode (Animation)
         if (currentTool.type == ToolType.ERASER || currentTool.type == ToolType.SELECT) {
             com.onyx.android.sdk.api.device.EpdDeviceManager
                 .enterAnimationUpdate(true)
 
             if (currentTool.type == ToolType.ERASER) {
-                controller.startBatchSession()
+                scope.launch { controller.startBatchSession() }
                 eraserHandler.reset()
             }
         } else {
-            // Standard Pen Start: Ensure Eraser Channel is DEAD (User Fix)
+            // Standard Pen Start: Ensure Eraser Channel is DEAD
             Device.currentDevice().setEraserRawDrawingEnabled(false)
 
             if (isLargeStrokeMode) {
@@ -382,7 +383,7 @@ class PenInputHandler(
         cursorView?.hideShapePreview()
         pendingPerfectShape = null
 
-        dwellDetector.onStart(touchPoint, currentTool) // Note: using raw touchPoint for screen coords logic
+        dwellDetector.onStart(touchPoint, currentTool)
 
         if (currentTool.type == ToolType.ERASER && currentTool.eraserType == EraserType.LASSO) {
             lassoPath.reset()
@@ -422,65 +423,49 @@ class PenInputHandler(
         // Handle Select Tool Finalization
         if (currentTool.type == ToolType.SELECT && isSelecting) {
             isStrokeInProgress = false
-            if (currentTool.selectionType == com.alexdremov.notate.model.SelectionType.LASSO) {
-                lassoPath.lineTo(touchPoint.x, touchPoint.y)
-                lassoPath.close()
-                // Transform path to World
-                val worldPath = Path()
-                lassoPath.transform(inverseMatrix, worldPath)
-                val items = controller.getItemsInPath(worldPath)
-                controller.selectItems(items)
+            val currentLasso = Path(lassoPath)
+            val currentStartX = selectionStartX
+            val currentStartY = selectionStartY
+            val curX = touchPoint.x
+            val curY = touchPoint.y
 
-                // Trigger refresh to clear the HW drawn dashed line
-                refreshHandler.postDelayed(refreshRunnable, 50)
-            } else {
-                // Rectangle Select Finalize
-                val startX = selectionStartX ?: touchPoint.x
-                val startY = selectionStartY ?: touchPoint.y
+            scope.launch {
+                if (currentTool.selectionType == com.alexdremov.notate.model.SelectionType.LASSO) {
+                    currentLasso.lineTo(curX, curY)
+                    currentLasso.close()
+                    val worldPath = Path()
+                    currentLasso.transform(inverseMatrix, worldPath)
+                    val items = controller.getItemsInPath(worldPath)
+                    controller.selectItems(items)
+                    refreshHandler.postDelayed(refreshRunnable, 50)
+                } else {
+                    val left = minOf(currentStartX ?: curX, curX)
+                    val top = minOf(currentStartY ?: curY, curY)
+                    val right = maxOf(currentStartX ?: curX, curX)
+                    val bottom = maxOf(currentStartY ?: curY, curY)
+                    val screenRect = RectF(left, top, right, bottom)
+                    val worldRect = RectF()
+                    inverseMatrix.mapRect(worldRect, screenRect)
+                    val items = controller.getItemsInRect(worldRect)
+                    controller.selectItems(items)
+                }
 
-                val left = minOf(startX, touchPoint.x)
-                val top = minOf(startY, touchPoint.y)
-                val right = maxOf(startX, touchPoint.x)
-                val bottom = maxOf(startY, touchPoint.y)
-
-                val screenRect = RectF(left, top, right, bottom)
-                // Map to World
-                val worldRect = RectF()
-                val pts = floatArrayOf(screenRect.left, screenRect.top, screenRect.right, screenRect.bottom)
-                inverseMatrix.mapPoints(pts)
-
-                // Note: mapPoints maps [x0,y0, x1,y1].
-                // Since matrix might have rotation (though unlikely in this app), simple mapping might be unsafe if rotated.
-                // But we only support scale/pan.
-                // However, mapRect is safer.
-                val m = Matrix()
-                inverseMatrix.invert(m) // Wait, inverseMatrix IS Screen->World. No, matrix is World->Screen.
-                // matrix: World -> Screen.
-                // inverseMatrix: Screen -> World.
-                inverseMatrix.mapRect(worldRect, screenRect)
-
-                val items = controller.getItemsInRect(worldRect)
-                controller.selectItems(items)
-
-                selectionStartX = null
-                selectionStartY = null
-                cursorView?.hideSelectionRect()
-            }
-
-            lassoPath.reset()
-            isSelecting = false
-
-            // Show Actions for the new selection
-            view.post {
-                if (view is com.alexdremov.notate.ui.OnyxCanvasView) {
-                    view.showActionPopup()
+                view.post {
+                    if (view is com.alexdremov.notate.ui.OnyxCanvasView) {
+                        view.showActionPopup()
+                    }
                 }
             }
+
+            selectionStartX = null
+            selectionStartY = null
+            cursorView?.hideSelectionRect()
+            lassoPath.reset()
+            isSelecting = false
             return
         }
 
         val worldPts = mapPoint(touchPoint.x, touchPoint.y)
-        // Track bounds
         currentStrokeScreenBounds.union(touchPoint.x, touchPoint.y)
 
         val endPoint =
@@ -494,72 +479,66 @@ class PenInputHandler(
                 touchPoint.timestamp,
             )
 
-        synchronized(strokeBuilder) {
-            if (!dwellDetector.isShapeRecognized) {
-                strokeBuilder.addPoint(endPoint)
+        val toolSnapshot = currentTool // Snapshot tool for coroutine
+        val eraserToolSnapshot = eraserTool
+        val tempShape = pendingPerfectShape
+        val isEraser = isCurrentStrokeEraser || toolSnapshot.type == ToolType.ERASER || b
+
+        scope.launch {
+            var builtEraserStroke: com.alexdremov.notate.model.Stroke? = null
+            var builtOriginalStroke: com.alexdremov.notate.model.Stroke? = null
+            var hasPoints = false
+
+            synchronized(strokeBuilder) {
+                if (!dwellDetector.isShapeRecognized) {
+                    strokeBuilder.addPoint(endPoint)
+                }
+
+                hasPoints = strokeBuilder.hasPoints()
+                if (hasPoints) {
+                    if (isEraser) {
+                        builtEraserStroke = strokeBuilder.build(android.graphics.Color.BLACK, toolSnapshot.width, StrokeType.FINELINER)
+                    } else {
+                        builtOriginalStroke = strokeBuilder.build(toolSnapshot.color, toolSnapshot.width, toolSnapshot.strokeType)
+                    }
+                }
             }
 
-            if (strokeBuilder.hasPoints()) {
-                if (isCurrentStrokeEraser || currentTool.type == ToolType.ERASER || b) {
-                    // Determine eraser type
+            if (hasPoints) {
+                if (isEraser) {
                     val effectiveEraserType =
-                        if (currentTool.type == ToolType.ERASER) {
-                            currentTool.eraserType
+                        if (toolSnapshot.type == ToolType.ERASER) {
+                            toolSnapshot.eraserType
                         } else {
-                            eraserTool?.eraserType ?: EraserType.STANDARD
+                            eraserToolSnapshot?.eraserType ?: EraserType.STANDARD
                         }
 
-                    // Construct stroke for erasure
-                    val stroke =
-                        strokeBuilder.build(
-                            android.graphics.Color.BLACK,
-                            currentTool.width,
-                            StrokeType.FINELINER,
-                        )
-
-                    stroke?.let { s ->
+                    builtEraserStroke?.let { s ->
                         controller.commitEraser(s, effectiveEraserType)
                         if (effectiveEraserType == EraserType.LASSO) {
                             refreshHandler.post { performRefresh(true) }
                         }
                     }
                 } else {
-                    // Ink Stroke (Potential Scribble or Shape)
-                    val originalStroke =
-                        strokeBuilder.build(
-                            currentTool.color,
-                            currentTool.width,
-                            currentTool.strokeType,
-                        )
-
+                    val originalStroke = builtOriginalStroke
                     val isScribble =
                         originalStroke != null &&
-                            currentTool.strokeType != StrokeType.HIGHLIGHTER &&
+                            toolSnapshot.strokeType != StrokeType.HIGHLIGHTER &&
                             com.alexdremov.notate.data.PreferencesManager
                                 .isScribbleToEraseEnabled(view.context) &&
                             com.alexdremov.notate.util.ScribbleDetector
                                 .isScribble(originalStroke.points)
 
                     if (isScribble) {
-                        // Treat as Object Eraser (delete crossed strokes)
-                        // originalStroke is non-null here because isScribble checks it
                         controller.commitEraser(originalStroke!!, EraserType.STROKE)
                     } else {
-                        // --- Shape Perfection Logic ---
                         val shapeEnabled =
                             com.alexdremov.notate.data.PreferencesManager
                                 .isShapePerfectionEnabled(view.context)
-
-                        val result = pendingPerfectShape
-                        Logger.d("PenInputHandler", "onEndRawDrawing: pendingPerfectShape=$result")
-
-                        if (shapeEnabled && originalStroke != null && result != null &&
-                            result.shape != ShapeRecognizer.RecognizedShape.NONE
+                        if (shapeEnabled && originalStroke != null && tempShape != null &&
+                            tempShape.shape != ShapeRecognizer.RecognizedShape.NONE
                         ) {
-                            // Start a batch session for the entire shape creation
                             controller.startBatchSession()
-
-                            // Calculate average properties from original stroke
                             val avgPressure =
                                 originalStroke.points
                                     .map { it.pressure }
@@ -570,7 +549,6 @@ class PenInputHandler(
                                     .map { it.size }
                                     .average()
                                     .toFloat()
-                            // Tilt is Float for our internal logic, cast to Int for SDK
                             val avgTiltX =
                                 originalStroke.points
                                     .map { it.tiltX }
@@ -582,7 +560,7 @@ class PenInputHandler(
                                     .average()
                                     .toFloat()
 
-                            for (segmentPoints in result.segments) {
+                            for (segmentPoints in tempShape.segments) {
                                 val newTouchPoints =
                                     segmentPoints.map { p ->
                                         TouchPoint(
@@ -595,54 +573,48 @@ class PenInputHandler(
                                             System.currentTimeMillis(),
                                         )
                                     }
-
-                                // Build Path for this segment
                                 val segmentPath = Path()
                                 if (newTouchPoints.isNotEmpty()) {
                                     segmentPath.moveTo(newTouchPoints[0].x, newTouchPoints[0].y)
-                                    for (i in 1 until newTouchPoints.size) {
-                                        segmentPath.lineTo(newTouchPoints[i].x, newTouchPoints[i].y)
-                                    }
+                                    for (i in 1 until newTouchPoints.size) segmentPath.lineTo(newTouchPoints[i].x, newTouchPoints[i].y)
                                 }
-
                                 val perfectedStroke =
                                     com.alexdremov.notate.model.Stroke(
                                         path = segmentPath,
                                         points = newTouchPoints,
-                                        color = currentTool.color,
-                                        width = currentTool.width,
-                                        style = currentTool.strokeType,
+                                        color = toolSnapshot.color,
+                                        width = toolSnapshot.width,
+                                        style = toolSnapshot.strokeType,
                                         bounds =
                                             com.alexdremov.notate.util.StrokeGeometry.computeStrokeBounds(
                                                 segmentPath,
-                                                currentTool.width,
-                                                currentTool.strokeType,
+                                                toolSnapshot.width,
+                                                toolSnapshot.strokeType,
                                             ),
                                     )
                                 controller.commitStroke(perfectedStroke)
                             }
-
-                            // End the batch session
                             controller.endBatchSession()
                         } else {
-                            originalStroke?.let { s ->
-                                controller.commitStroke(s)
-                            }
+                            originalStroke?.let { s -> controller.commitStroke(s) }
                         }
                     }
                 }
             }
-            if (currentTool.type == ToolType.ERASER) {
+
+            if (toolSnapshot.type == ToolType.ERASER) {
                 controller.endBatchSession()
             }
 
-            strokeBuilder.clear()
-        }
-        eraserHandler.reset()
-        isCurrentStrokeEraser = false
-        isStrokeInProgress = false // Reset here
+            synchronized(strokeBuilder) {
+                strokeBuilder.clear()
+            }
 
-        onStrokeFinished()
+            eraserHandler.reset()
+            isCurrentStrokeEraser = false
+            isStrokeInProgress = false
+            onStrokeFinished()
+        }
     }
 
     /**
@@ -664,62 +636,21 @@ class PenInputHandler(
                 touchPoint.timestamp,
             )
 
-        if (dwellDetector.isShapeRecognized) {
-            // Ignore points after recognition to prevent trailing dots
-            return
-        }
+        if (dwellDetector.isShapeRecognized) return
 
         synchronized(strokeBuilder) {
             strokeBuilder.addPoint(newPoint)
         }
 
-        // Dwell Logic (Using Screen Coordinates)
         dwellDetector.onMove(touchPoint, currentTool)
 
-        if (pendingPerfectShape != null && !dwellDetector.isShapeRecognized) {
-            // If we moved and broke dwell (DwellDetector handles reset, but we need to clear UI preview)
-            // DwellDetector sets isShapeRecognized=false on move unless it was already recognized?
-            // Actually, DwellDetector::onMove resets if threshold exceeded.
-            // If DwellDetector resets, pendingPerfectShape should be cleared.
-            // We can check if dwellDetector cancelled logic?
-            // Simpler: DwellDetector resets lastDwellPoint.
-            // Let's rely on the fact that if we move significantly, we clear preview.
-            // Since DwellDetector manages the timer, we just need to know if we should hide preview.
-            // If user moves pen far, DwellDetector resets timer.
-            // Ideally DwellDetector has a callback for "Dwell Broken".
-            // For now, let's keep it simple: if movement occurs, clear preview if not recognized.
-
-            // Wait, if isShapeRecognized is true, we returned above. So we are here only if NOT recognized.
-            // So if we have a pending shape but haven't recognized (wait, pending comes FROM recognition?)
-            // Ah, pendingPerfectShape is set inside the callback.
-            // If we move after recognition, we return early.
-            // If we move BEFORE recognition, timer resets.
-            // So pendingPerfectShape is only non-null IF recognized.
-            // So this check is redundant?
-            // Actually, if we had a previous recognition from a previous stroke? No, onStart clears it.
-            // If we dwell, recognize, then move?
-            // If we dwell -> callback -> pending=Set, isRecognized=True.
-            // Next move -> isRecognized=True -> Return.
-            // So we never reach here if recognized.
-
-            // What if we want to cancel the shape by moving?
-            // The user requirement was "hold to recognize".
-            // If they hold, it recognizes. If they then continue writing?
-            // If isShapeRecognized is true, we ignore input.
-            // This means they MUST lift pen to commit.
-            // This seems to be the desired behavior to prevent "trailing dots".
-        }
-
-        // Track bounds
         currentStrokeScreenBounds.union(touchPoint.x, touchPoint.y)
 
-        // Realtime Eraser Logic / Lasso Path Update
         if (currentTool.type == ToolType.ERASER || currentTool.type == ToolType.SELECT) {
             if (currentTool.type == ToolType.SELECT) {
                 if (currentTool.selectionType == com.alexdremov.notate.model.SelectionType.LASSO) {
                     lassoPath.lineTo(touchPoint.x, touchPoint.y)
                 } else {
-                    // Update Rectangle Preview
                     val startX = selectionStartX
                     val startY = selectionStartY
                     if (startX != null && startY != null) {
@@ -733,7 +664,9 @@ class PenInputHandler(
             } else if (currentTool.eraserType == EraserType.LASSO) {
                 lassoPath.lineTo(touchPoint.x, touchPoint.y)
             } else {
-                eraserHandler.processMove(newPoint, currentTool.width, currentTool.eraserType)
+                val toolWidth = currentTool.width
+                val eraserType = currentTool.eraserType
+                scope.launch { eraserHandler.processMove(newPoint, toolWidth, eraserType) }
             }
         }
 
@@ -743,7 +676,6 @@ class PenInputHandler(
     private fun updateCursor(touchPoint: TouchPoint) {
         if (currentTool.type == ToolType.ERASER) {
             if (currentTool.eraserType == EraserType.LASSO) {
-                // Hardware handles the dash, so clear/hide software cursor
                 cursorView?.hide()
             } else {
                 val radius = (currentTool.width * currentScale) / 2f

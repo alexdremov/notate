@@ -16,7 +16,7 @@ object CanvasConfig {
     const val MIN_ZOOM_LEVEL = -10
     const val MAX_ZOOM_LEVEL = 10
     const val LOD_BIAS = 0.0f // Switch to lower resolution sooner
-    const val CACHE_MEMORY_PERCENT = 0.30 // of heap
+    const val CACHE_MEMORY_PERCENT = 0.50 // of heap
     const val IMAGE_CACHE_MEMORY_PERCENT = 0.10 // of heap
     const val REGIONS_CACHE_MEMORY_PERCENT = 0.30 // of heap
     const val IMAGE_METADATA_CACHE_SIZE = 200

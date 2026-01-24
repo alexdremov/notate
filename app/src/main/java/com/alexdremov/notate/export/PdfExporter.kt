@@ -594,7 +594,7 @@ object PdfExporter {
     /**
      * Region-aware vector rendering for infinite canvas export to avoid OOM.
      */
-    private fun renderVectorItemsFromRegions(
+    private suspend fun renderVectorItemsFromRegions(
         canvas: Canvas,
         model: InfiniteCanvasModel,
         bounds: RectF,

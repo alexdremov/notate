@@ -80,6 +80,20 @@ data class RegionData(
         quadtree = qt
     }
 
+    /**
+     * Releases resources held by this region's items.
+     */
+    fun recycle() {
+        items.forEach { item ->
+            if (item is Stroke) {
+                item.recycle()
+            }
+        }
+        items.clear()
+        quadtree?.clear()
+        quadtree = null
+    }
+
     fun sizeBytes(): Long {
         // More precise size calculation for LRU
         // Object Headers (~16 bytes) + References (4-8 bytes) are accounted for.
@@ -90,6 +104,11 @@ data class RegionData(
                     is Stroke -> {
                         // Base Stroke object (~64) + RectF (~32) + references
                         var itemSize = 128L
+
+                        // Native Path Overhead Estimation:
+                        // A simple line might be small, but a complex handwriting stroke has many verbs.
+                        // We add a safety buffer of 1KB per stroke for Native Path backing.
+                        itemSize += 1024L
 
                         // Points: List<TouchPoint>
                         // TouchPoint is an object.
@@ -129,6 +148,8 @@ data class RegionData(
                 }
         }
 
-        return size + 128L + 128L // Base RegionData overhead + ArrayList overhead
+        size += 128L + 128L // Base RegionData overhead + ArrayList overhead
+        size += quadtree?.sizeBytes() ?: 0L
+        return size
     }
 }

@@ -8,6 +8,8 @@ import com.alexdremov.notate.model.EraserType
 import com.alexdremov.notate.model.InfiniteCanvasModel
 import com.alexdremov.notate.model.Stroke
 import com.alexdremov.notate.ui.render.CanvasRenderer
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.util.ArrayList
 import java.util.stream.Collectors
 
@@ -29,26 +31,26 @@ class CanvasControllerImpl(
         this.viewportController = controller
     }
 
-    override fun startBatchSession() = model.startBatchSession()
+    override suspend fun startBatchSession() = model.startBatchSession()
 
-    override fun endBatchSession() = model.endBatchSession()
+    override suspend fun endBatchSession() = model.endBatchSession()
 
-    override fun commitStroke(stroke: Stroke) {
+    override suspend fun commitStroke(stroke: Stroke) {
         val added = model.addStroke(stroke)
         if (added != null) {
-            runOnUi {
+            withContext(Dispatchers.Main) {
                 renderer.updateTilesWithStroke(added)
                 onContentChangedListener?.invoke()
             }
         }
     }
 
-    override fun previewEraser(
+    override suspend fun previewEraser(
         stroke: Stroke,
         type: EraserType,
     ) {
         val invalidated = model.erase(stroke, type)
-        runOnUi {
+        withContext(Dispatchers.Main) {
             if (type == EraserType.STANDARD) {
                 renderer.updateTilesWithErasure(stroke)
             } else if (invalidated != null) {
@@ -57,12 +59,12 @@ class CanvasControllerImpl(
         }
     }
 
-    override fun commitEraser(
+    override suspend fun commitEraser(
         stroke: Stroke,
         type: EraserType,
     ) {
         val invalidated = model.erase(stroke, type)
-        runOnUi {
+        withContext(Dispatchers.Main) {
             if ((type == EraserType.LASSO || type == EraserType.STROKE) && invalidated != null) {
                 renderer.invalidateTiles(invalidated)
             } else if (type == EraserType.STANDARD) {
@@ -75,7 +77,7 @@ class CanvasControllerImpl(
     override fun setStrokeWidth(width: Float) {}
 
     // --- Page Navigation ---
-    override fun getCurrentPageIndex(): Int {
+    override suspend fun getCurrentPageIndex(): Int {
         val offsetY = viewportController?.getViewportOffset()?.second ?: return 0
         val pageFullHeight = model.pageHeight + com.alexdremov.notate.config.CanvasConfig.PAGE_SPACING
         return kotlin.math
@@ -84,138 +86,133 @@ class CanvasControllerImpl(
             .coerceAtLeast(0)
     }
 
-    override fun getTotalPages(): Int {
+    override suspend fun getTotalPages(): Int {
         val contentPages = model.getTotalPages()
         val current = getCurrentPageIndex() + 1
         return kotlin.math.max(contentPages, current)
     }
 
-    override fun jumpToPage(index: Int) {
+    override suspend fun jumpToPage(index: Int) {
         if (index < 0) return
         val bounds = model.getPageBounds(index)
-        runOnUi { viewportController?.scrollTo(0f, bounds.top) }
+        withContext(Dispatchers.Main) {
+            viewportController?.scrollTo(0f, bounds.top)
+        }
     }
 
-    override fun nextPage() = jumpToPage(getCurrentPageIndex() + 1)
+    override suspend fun nextPage() = jumpToPage(getCurrentPageIndex() + 1)
 
-    override fun prevPage() = if (getCurrentPageIndex() > 0) jumpToPage(getCurrentPageIndex() - 1) else Unit
+    override suspend fun prevPage() = if (getCurrentPageIndex() > 0) jumpToPage(getCurrentPageIndex() - 1) else Unit
 
     // --- Selection & Queries ---
     override fun getSelectionManager(): SelectionManager = selectionManager
 
-    override fun getItemAt(
+    override suspend fun getItemAt(
         x: Float,
         y: Float,
     ): com.alexdremov.notate.model.CanvasItem? = model.hitTest(x, y, 20f)
 
-    override fun getItemsInRect(rect: android.graphics.RectF): List<com.alexdremov.notate.model.CanvasItem> {
+    override fun getItemAtSync(
+        x: Float,
+        y: Float,
+    ): com.alexdremov.notate.model.CanvasItem? = model.hitTestSync(x, y, 20f)
+
+    override suspend fun getItemsInRect(rect: android.graphics.RectF): List<com.alexdremov.notate.model.CanvasItem> {
         val items = model.queryItems(rect)
 
         // Optimized Precise Rect Selection
-        return items
-            .parallelStream()
-            .filter { item ->
-                // 1. Fast Accept: If item is fully contained, select it.
-                if (rect.contains(item.bounds)) return@filter true
-
-                // 2. Precise Intersection Check
-                if (item is Stroke) {
-                    com.alexdremov.notate.util.StrokeGeometry
-                        .strokeIntersectsRect(item, rect)
-                } else {
-                    // For Images (and other non-stroke items), bounds intersection is sufficient
-                    // (since model.queryItems already filters by bounds, this is technically redundant but safe)
-                    android.graphics.RectF.intersects(rect, item.bounds)
-                }
-            }.collect(Collectors.toList())
+        return withContext(Dispatchers.Default) {
+            items
+                .parallelStream()
+                .filter { item ->
+                    if (rect.contains(item.bounds)) return@filter true
+                    if (item is Stroke) {
+                        com.alexdremov.notate.util.StrokeGeometry
+                            .strokeIntersectsRect(item, rect)
+                    } else {
+                        android.graphics.RectF.intersects(rect, item.bounds)
+                    }
+                }.collect(Collectors.toList())
+        }
     }
 
-    override fun getItemsInPath(path: android.graphics.Path): List<com.alexdremov.notate.model.CanvasItem> {
+    override suspend fun getItemsInPath(path: android.graphics.Path): List<com.alexdremov.notate.model.CanvasItem> {
         val bounds = android.graphics.RectF()
         path.computeBounds(bounds, true)
         val items = model.queryItems(bounds)
 
-        // Strict Lasso Logic: Convert path to polygon points
-        // Use a coarser step (15f) for faster polygon construction without losing much precision for selection
-        var pathPoints =
-            com.alexdremov.notate.util.StrokeGeometry
-                .flattenPath(path, 15f)
+        return withContext(Dispatchers.Default) {
+            var pathPoints =
+                com.alexdremov.notate.util.StrokeGeometry
+                    .flattenPath(path, 15f)
+            pathPoints =
+                com.alexdremov.notate.util.StrokeGeometry
+                    .simplifyPoints(pathPoints, 5.0f)
 
-        // OPTIMIZATION: Simplify polygon to reduce vertex count (Ramer-Douglas-Peucker)
-        // Epsilon of 5.0f removes jitter but keeps shape.
-        pathPoints =
-            com.alexdremov.notate.util.StrokeGeometry
-                .simplifyPoints(pathPoints, 5.0f)
-
-        // Parallel processing for heavy geometric checks
-        return items
-            .parallelStream()
-            .filter { item ->
-                if (!bounds.contains(item.bounds)) return@filter false
-
-                // OPTIMIZATION: Fast Geometric Check
-                // If the item's bounding box is strictly inside the polygon (and no edges cross), it's selected.
-                // This avoids checking every single point of the stroke against every single edge of the polygon.
-                if (com.alexdremov.notate.util.StrokeGeometry
-                        .isRectFullyInPolygon(item.bounds, pathPoints)
-                ) {
-                    return@filter true
-                }
-
-                if (item is Stroke) {
-                    item.points.all { p ->
-                        com.alexdremov.notate.util.StrokeGeometry
-                            .isPointInPolygon(p.x, p.y, pathPoints)
+            items
+                .parallelStream()
+                .filter { item ->
+                    if (!bounds.contains(item.bounds)) return@filter false
+                    if (com.alexdremov.notate.util.StrokeGeometry
+                            .isRectFullyInPolygon(item.bounds, pathPoints)
+                    ) {
+                        return@filter true
                     }
-                } else {
-                    // For images, check corners
-                    val b = item.bounds
-                    com.alexdremov.notate.util.StrokeGeometry
-                        .isPointInPolygon(b.left, b.top, pathPoints) &&
-                        com.alexdremov.notate.util.StrokeGeometry
-                            .isPointInPolygon(b.right, b.top, pathPoints) &&
-                        com.alexdremov.notate.util.StrokeGeometry
-                            .isPointInPolygon(b.right, b.bottom, pathPoints) &&
-                        com.alexdremov.notate.util.StrokeGeometry
-                            .isPointInPolygon(b.left, b.bottom, pathPoints)
-                }
-            }.collect(Collectors.toList())
-    }
 
-    override fun selectItem(item: com.alexdremov.notate.model.CanvasItem) {
-        selectionManager.select(item)
-        runOnUi { renderer.invalidate() }
-    }
-
-    override fun selectItems(items: List<com.alexdremov.notate.model.CanvasItem>) {
-        selectionManager.selectAll(items)
-        runOnUi { renderer.invalidate() }
-    }
-
-    override fun clearSelection() {
-        if (selectionManager.hasSelection()) {
-            selectionManager.clearSelection()
-            runOnUi { renderer.invalidate() }
+                    if (item is Stroke) {
+                        item.points.all { p ->
+                            com.alexdremov.notate.util.StrokeGeometry
+                                .isPointInPolygon(p.x, p.y, pathPoints)
+                        }
+                    } else {
+                        val b = item.bounds
+                        com.alexdremov.notate.util.StrokeGeometry
+                            .isPointInPolygon(b.left, b.top, pathPoints) &&
+                            com.alexdremov.notate.util.StrokeGeometry
+                                .isPointInPolygon(b.right, b.top, pathPoints) &&
+                            com.alexdremov.notate.util.StrokeGeometry
+                                .isPointInPolygon(b.right, b.bottom, pathPoints) &&
+                            com.alexdremov.notate.util.StrokeGeometry
+                                .isPointInPolygon(b.left, b.bottom, pathPoints)
+                    }
+                }.collect(Collectors.toList())
         }
     }
 
-    override fun deleteSelection() {
+    override suspend fun selectItem(item: com.alexdremov.notate.model.CanvasItem) {
+        selectionManager.select(item)
+        withContext(Dispatchers.Main) { renderer.invalidate() }
+    }
+
+    override suspend fun selectItems(items: List<com.alexdremov.notate.model.CanvasItem>) {
+        selectionManager.selectAll(items)
+        withContext(Dispatchers.Main) { renderer.invalidate() }
+    }
+
+    override suspend fun clearSelection() {
+        if (selectionManager.hasSelection()) {
+            selectionManager.clearSelection()
+            withContext(Dispatchers.Main) { renderer.invalidate() }
+        }
+    }
+
+    override suspend fun deleteSelection() {
         if (selectionManager.hasSelection()) {
             val toRemove = selectionManager.selectedItems.toList()
             selectionManager.clearSelection()
             deleteItemsFromModel(toRemove)
-            runOnUi { onContentChangedListener?.invoke() }
+            withContext(Dispatchers.Main) { onContentChangedListener?.invoke() }
         }
     }
 
-    override fun copySelection() {
+    override suspend fun copySelection() {
         if (selectionManager.hasSelection()) {
             com.alexdremov.notate.util.ClipboardManager
                 .copy(selectionManager.selectedItems)
         }
     }
 
-    override fun paste(
+    override suspend fun paste(
         x: Float,
         y: Float,
     ) {
@@ -274,7 +271,7 @@ class CanvasControllerImpl(
             }
             endBatchSession()
 
-            runOnUi {
+            withContext(Dispatchers.Main) {
                 renderer.updateTilesWithItems(pastedItems)
                 selectionManager.clearSelection()
                 selectionManager.selectAll(pastedItems)
@@ -284,16 +281,14 @@ class CanvasControllerImpl(
         }
     }
 
-    override fun pasteImage(
+    override suspend fun pasteImage(
         uri: String,
         x: Float,
         y: Float,
         width: Float,
         height: Float,
     ) {
-        // Import image to session storage first
         val importedPath = model.importImage(Uri.parse(uri), context) ?: uri
-
         val bounds = android.graphics.RectF(x - width / 2, y - height / 2, x + width / 2, y + height / 2)
         val image =
             com.alexdremov.notate.model.CanvasImage(
@@ -305,7 +300,7 @@ class CanvasControllerImpl(
 
         val added = model.addItem(image)
         if (added != null) {
-            runOnUi {
+            withContext(Dispatchers.Main) {
                 renderer.updateTilesWithItem(added)
                 selectionManager.clearSelection()
                 selectionManager.select(added)
@@ -315,28 +310,27 @@ class CanvasControllerImpl(
         }
     }
 
-    override fun startMoveSelection() {
+    override suspend fun startMoveSelection() {
         if (!selectionManager.hasSelection()) return
         startBatchSession()
-        // Visual Lift
         deleteItemsFromModel(selectionManager.selectedItems.toList())
-        runOnUi { renderer.invalidate() }
+        withContext(Dispatchers.Main) { renderer.invalidate() }
     }
 
-    override fun moveSelection(
+    override suspend fun moveSelection(
         dx: Float,
         dy: Float,
     ) {
         selectionManager.translate(dx, dy)
-        runOnUi { renderer.invalidate() }
+        withContext(Dispatchers.Main) { renderer.invalidate() }
     }
 
-    override fun transformSelection(matrix: android.graphics.Matrix) {
+    override suspend fun transformSelection(matrix: android.graphics.Matrix) {
         selectionManager.applyTransform(matrix)
-        runOnUi { renderer.invalidate() }
+        withContext(Dispatchers.Main) { renderer.invalidate() }
     }
 
-    override fun commitMoveSelection() {
+    override suspend fun commitMoveSelection() {
         if (!selectionManager.hasSelection()) return
 
         val originals = selectionManager.selectedItems.toList()
@@ -347,11 +341,9 @@ class CanvasControllerImpl(
         val scaleX = values[android.graphics.Matrix.MSCALE_X]
         val skewY = values[android.graphics.Matrix.MSKEW_Y]
         val scale = kotlin.math.sqrt(scaleX * scaleX + skewY * skewY)
-        val rotation = kotlin.math.atan2(skewY.toDouble(), scaleX.toDouble()).toFloat() // approximate
+        val rotation = kotlin.math.atan2(skewY.toDouble(), scaleX.toDouble()).toFloat()
 
         val newSelected = ArrayList<com.alexdremov.notate.model.CanvasItem>()
-
-        // Note: startBatchSession called in startMoveSelection
 
         originals.forEach { item ->
             val newItem =
@@ -382,10 +374,6 @@ class CanvasControllerImpl(
                     is com.alexdremov.notate.model.CanvasImage -> {
                         val newBounds = android.graphics.RectF(item.bounds)
                         transform.mapRect(newBounds)
-                        // Simple transform of bounds might skew if rotation is involved for images.
-                        // But CanvasImage just holds bounds and rotation.
-                        // Ideally we should update item.rotation too.
-                        // For now, let's just update bounds.
                         item.copy(bounds = newBounds, rotation = item.rotation + Math.toDegrees(rotation.toDouble()).toFloat())
                     }
 
@@ -397,7 +385,7 @@ class CanvasControllerImpl(
             val added = model.addItem(newItem)
             if (added != null) {
                 newSelected.add(added)
-                runOnUi { renderer.updateTilesWithItem(added) }
+                withContext(Dispatchers.Main) { renderer.updateTilesWithItem(added) }
             }
         }
 
@@ -407,22 +395,18 @@ class CanvasControllerImpl(
         selectionManager.selectAll(newSelected)
         selectionManager.resetTransform()
 
-        runOnUi {
+        withContext(Dispatchers.Main) {
             renderer.invalidate()
             onContentChangedListener?.invoke()
         }
     }
 
-    private fun deleteItemsFromModel(items: List<com.alexdremov.notate.model.CanvasItem>) {
+    private suspend fun deleteItemsFromModel(items: List<com.alexdremov.notate.model.CanvasItem>) {
         model.deleteItems(items)
         if (items.isNotEmpty()) {
             val bounds = android.graphics.RectF(items[0].bounds)
             items.forEach { bounds.union(it.bounds) }
-            runOnUi { renderer.invalidateTiles(bounds) }
+            withContext(Dispatchers.Main) { renderer.invalidateTiles(bounds) }
         }
-    }
-
-    private fun runOnUi(block: () -> Unit) {
-        if (Looper.myLooper() == Looper.getMainLooper()) block() else uiHandler.post(block)
     }
 }

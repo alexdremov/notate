@@ -13,3 +13,6 @@ release.keystore
 temp_*
 local.properties
 .geminiignore
+memory_dumps
+.idea
+profile_memory.sh

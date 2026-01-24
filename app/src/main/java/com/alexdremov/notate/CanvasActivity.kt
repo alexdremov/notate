@@ -164,9 +164,10 @@ class CanvasActivity : AppCompatActivity() {
             if (session != null && path != null && !session.isClosed()) {
                 // Update metadata from UI one last time to capture final viewport for thumbnail
                 try {
-                    val finalMetadata = binding.canvasView.getCanvasData().copy(
-                        toolbarItems = viewModel.toolbarItems.value
-                    )
+                    val finalMetadata =
+                        binding.canvasView.getCanvasData().copy(
+                            toolbarItems = viewModel.toolbarItems.value,
+                        )
                     session.updateMetadata(finalMetadata)
                 } catch (e: Exception) {
                     Logger.e("CanvasActivity", "Failed to capture final metadata on exit", e)
@@ -303,11 +304,11 @@ class CanvasActivity : AppCompatActivity() {
                         onActionClick = { action ->
                             when (action) {
                                 com.alexdremov.notate.model.ActionType.UNDO -> {
-                                    binding.canvasView.undo()
+                                    lifecycleScope.launch { binding.canvasView.undo() }
                                 }
 
                                 com.alexdremov.notate.model.ActionType.REDO -> {
-                                    binding.canvasView.redo()
+                                    lifecycleScope.launch { binding.canvasView.redo() }
                                 }
 
                                 com.alexdremov.notate.model.ActionType.INSERT_IMAGE -> {
@@ -332,7 +333,7 @@ class CanvasActivity : AppCompatActivity() {
 
         binding.toolbarContainer.setOnTouchListener { _, event ->
             if (event.action == android.view.MotionEvent.ACTION_DOWN) {
-                binding.canvasView.getController().clearSelection()
+                lifecycleScope.launch { binding.canvasView.getController().clearSelection() }
                 binding.canvasView.dismissActionPopup()
             }
             false
@@ -347,7 +348,9 @@ class CanvasActivity : AppCompatActivity() {
                 isFixedPageMode = {
                     binding.canvasView.getModel().canvasType == com.alexdremov.notate.data.CanvasType.FIXED_PAGES
                 },
-                onStyleUpdate = { newStyle -> binding.canvasView.setBackgroundStyle(newStyle) },
+                onStyleUpdate = { newStyle ->
+                    lifecycleScope.launch { binding.canvasView.setBackgroundStyle(newStyle) }
+                },
                 onExportRequest = { action ->
                     when (action) {
                         is ExportAction.Export -> {
@@ -640,7 +643,7 @@ class CanvasActivity : AppCompatActivity() {
         targetRect: android.graphics.Rect,
     ) {
         Logger.d("NotateDebug", "handleToolClick ID=$toolId")
-        binding.canvasView.getController().clearSelection()
+        lifecycleScope.launch { binding.canvasView.getController().clearSelection() }
         binding.canvasView.dismissActionPopup()
 
         if (viewModel.activeToolId.value == toolId) {

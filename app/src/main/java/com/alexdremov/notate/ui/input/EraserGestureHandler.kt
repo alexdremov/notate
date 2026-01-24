@@ -20,7 +20,7 @@ class EraserGestureHandler(
         lastErasedPoint = point
     }
 
-    fun processMove(
+    suspend fun processMove(
         currentPoint: TouchPoint,
         width: Float,
         eraserType: EraserType,

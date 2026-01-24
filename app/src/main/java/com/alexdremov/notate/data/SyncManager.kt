@@ -164,25 +164,28 @@ class SyncManager(
             if (pendingDeletions.isNotEmpty()) {
                 Logger.d("SyncManager", "Processing ${pendingDeletions.size} pending deletions")
                 progressCallback?.invoke(12, "Processing deletions...")
-                
+
                 for (deletion in pendingDeletions) {
                     try {
                         val cleanRelativePath = deletion.relativePath.replace("\\", "/")
-                        
-                        // CRITICAL FIX: If local file exists, the user re-created it. 
+
+                        // CRITICAL FIX: If local file exists, the user re-created it.
                         // Do NOT delete from remote. Instead, clear the pending deletion and let Upload logic handle it.
                         val localExists = localFiles.any { it.relativePath.replace("\\", "/") == cleanRelativePath }
-                        
+
                         if (localExists) {
-                            Logger.i("SyncManager", "Pending deletion for $cleanRelativePath skipped because local file exists (Superseded).")
+                            Logger.i(
+                                "SyncManager",
+                                "Pending deletion for $cleanRelativePath skipped because local file exists (Superseded).",
+                            )
                             SyncPreferencesManager.removePendingDeletion(context, projectId, deletion.relativePath)
                             continue
                         }
 
                         val remotePath = "${config.remotePath.trimEnd('/')}/$cleanRelativePath"
-                        
+
                         Logger.d("SyncManager", "Deleting pending remote file: $remotePath")
-                        
+
                         try {
                             provider.deleteFile(remotePath)
                             if (config.syncPdf && deletion.relativePath.endsWith(".notate")) {
@@ -190,9 +193,10 @@ class SyncManager(
                                 val remotePdfPath = "${config.remotePath.trimEnd('/')}/$pdfRelativePath"
                                 try {
                                     provider.deleteFile(remotePdfPath)
-                                } catch (ignored: Exception) {}
+                                } catch (ignored: Exception) {
+                                }
                             }
-                            
+
                             // Success! Remove from pending and metadata
                             SyncPreferencesManager.removePendingDeletion(context, projectId, deletion.relativePath)
                             fileStates.remove(cleanRelativePath)
@@ -209,22 +213,25 @@ class SyncManager(
                     }
                 }
             }
-            
+
             // Reload pending deletions in case some failed - we must filter them out from download list
-            val remainingPendingDeletions = SyncPreferencesManager.getPendingDeletions(context)
-                .filter { it.projectId == projectId }
-                .map { it.relativePath.replace("\\", "/") }
-                .toSet()
+            val remainingPendingDeletions =
+                SyncPreferencesManager
+                    .getPendingDeletions(context)
+                    .filter { it.projectId == projectId }
+                    .map { it.relativePath.replace("\\", "/") }
+                    .toSet()
 
             progressCallback?.invoke(15, "Listing remote files recursively...")
             Logger.d("SyncManager", "Scanning remote files at ${config.remotePath}")
             val allRemoteFilesRaw = scanRemoteFilesRecursively(provider, config.remotePath, "")
-            
+
             // Filter out files that are pending deletion
-            val allRemoteFiles = allRemoteFilesRaw.filter { 
-                val cleanPath = it.relativePath.replace("\\", "/")
-                !remainingPendingDeletions.contains(cleanPath)
-            }
+            val allRemoteFiles =
+                allRemoteFilesRaw.filter {
+                    val cleanPath = it.relativePath.replace("\\", "/")
+                    !remainingPendingDeletions.contains(cleanPath)
+                }
 
             Logger.d("SyncManager", "Found ${localFiles.size} local files and ${allRemoteFiles.size} remote files")
 
@@ -237,24 +244,24 @@ class SyncManager(
             for (localFile in localFiles) {
                 val cleanRelativePath = localFile.relativePath.replace("\\", "/")
                 val fileState = fileStates[cleanRelativePath]
-                
+
                 // Logic:
                 // - If no state (new file), upload.
                 // - If local modified > stored last local modified, upload.
                 // - Ignore remote timestamp here; we handle conflicts by preferring local if it changed
-                
+
                 val shouldUpload = fileState == null || localFile.lastModified > fileState.lastLocalModified
-                
+
                 if (shouldUpload) {
                     val remoteEntry = allRemoteFiles.find { it.relativePath.replace("\\", "/") == cleanRelativePath }
                     val remoteFile = remoteEntry?.file
-                    
+
                     Logger.d(
                         "SyncManager",
                         "Uploading ${localFile.name} (Local: ${localFile.lastModified}, LastSyncedLocal: ${fileState?.lastLocalModified})",
                     )
                     progressCallback?.invoke((20 + (currentStep++ * 60 / totalSteps)), "Uploading ${localFile.name}...")
-                    
+
                     val remotePath = "${config.remotePath.trimEnd('/')}/$cleanRelativePath"
                     localFile.openInputStream()?.use { input ->
                         provider.uploadFile(remotePath, input)
@@ -265,32 +272,33 @@ class SyncManager(
                         Logger.d("SyncManager", "Generating/Uploading PDF for ${localFile.name}")
                         syncPdf(localFile, config.remotePath, provider)
                     }
-                    
+
                     // Update State
-                    // Since we don't get the new remote timestamp easily without another network call, 
-                    // we can't perfectly set lastRemoteModified. 
+                    // Since we don't get the new remote timestamp easily without another network call,
+                    // we can't perfectly set lastRemoteModified.
                     // However, we can set lastLocalModified to what we just uploaded.
                     // Ideally, we'd list the file to get the new remote timestamp to avoid re-downloading next time.
                     // For now, let's assume if we uploaded, the remote is now "newer" or equal to what we have.
                     // We will set lastRemoteModified to effectively "infinite" or just not update it yet?
-                    // No, if we don't update lastRemoteModified, the download logic might see the new remote file (with new timestamp) 
+                    // No, if we don't update lastRemoteModified, the download logic might see the new remote file (with new timestamp)
                     // as a "remote change" next time.
-                    // 
+                    //
                     // HEURISTIC: We must know the timestamp of the file we just put on the server.
                     // Since we can't easily get it, we'll try to fetch metadata for this single file if provider supports it, or List it.
                     // Fallback: We can ignore the download if remote timestamp is close to now? No, risky.
                     // Best: List the single file to get its new timestamp.
-                    
+
                     try {
                         val updatedRemoteItems = provider.listFiles(remotePath.substringBeforeLast('/'))
                         val updatedRemoteFile = updatedRemoteItems.find { it.name == localFile.name }
-                        
+
                         if (updatedRemoteFile != null) {
-                            fileStates[cleanRelativePath] = FileSyncState(
-                                lastLocalModified = localFile.lastModified,
-                                lastRemoteModified = updatedRemoteFile.lastModified,
-                                lastSyncTime = System.currentTimeMillis()
-                            )
+                            fileStates[cleanRelativePath] =
+                                FileSyncState(
+                                    lastLocalModified = localFile.lastModified,
+                                    lastRemoteModified = updatedRemoteFile.lastModified,
+                                    lastSyncTime = System.currentTimeMillis(),
+                                )
                         } else {
                             // Weird, we just uploaded it.
                             Logger.w("SyncManager", "Uploaded file not found immediately after upload: $cleanRelativePath")
@@ -306,7 +314,7 @@ class SyncManager(
                 val remoteFile = remoteEntry.file
                 if (remoteFile.isDirectory || !remoteFile.name.endsWith(".notate")) continue
                 val cleanRelativePath = remoteEntry.relativePath.replace("\\", "/")
-                
+
                 val localFile = localFiles.find { it.relativePath.replace("\\", "/") == cleanRelativePath }
                 val fileState = fileStates[cleanRelativePath]
 
@@ -315,20 +323,20 @@ class SyncManager(
                 // - If remote timestamp > stored last remote modified, it's a remote change -> Download.
                 // - BUT if local also changed (conflict), we currently prefer local (handled in step 1).
                 //   So here, we only download if we DID NOT just upload.
-                
+
                 // If we just uploaded, fileState.lastLocalModified should equal localFile.lastModified
                 val localChanged = localFile != null && (fileState == null || localFile.lastModified > fileState.lastLocalModified)
-                
+
                 if (localChanged) {
-                    // We have local changes that haven't been synced (or we just synced them). 
+                    // We have local changes that haven't been synced (or we just synced them).
                     // In either case, don't overwrite with remote unless we implement conflict resolution.
                     continue
                 }
 
                 val isNewRemote = fileState == null || remoteFile.lastModified > fileState.lastRemoteModified
-                
+
                 if (localFile == null || isNewRemote) {
-                     Logger.d(
+                    Logger.d(
                         "SyncManager",
                         "Downloading ${remoteFile.name} (Remote: ${remoteFile.lastModified}, LastSyncedRemote: ${fileState?.lastRemoteModified})",
                     )
@@ -360,37 +368,38 @@ class SyncManager(
                             file.setLastModified(remoteFile.lastModified)
                         }
                     }
-                    
+
                     // Update State after download
                     // We need to know the local file's new timestamp.
                     // For SAF, getting lastModified immediately might be tricky or same as remote?
                     // Usually we set it to remote timestamp if possible, or just read what it is.
-                    
+
                     var newLocalTimestamp = remoteFile.lastModified
                     if (projectConfig.uri.startsWith("content://")) {
-                         // Re-query SAF to get actual timestamp
-                         // Simplified: assume it might update to 'now' or 'remote timestamp' depending on impl.
-                         // Let's try to get it.
-                         // For now, we update state with remoteFile.lastModified for both, assuming we tried to set it or it matches.
-                         // Ideally we should re-stat the local file.
+                        // Re-query SAF to get actual timestamp
+                        // Simplified: assume it might update to 'now' or 'remote timestamp' depending on impl.
+                        // Let's try to get it.
+                        // For now, we update state with remoteFile.lastModified for both, assuming we tried to set it or it matches.
+                        // Ideally we should re-stat the local file.
                     } else {
-                         // We called file.setLastModified(remoteFile.lastModified)
-                         newLocalTimestamp = remoteFile.lastModified
+                        // We called file.setLastModified(remoteFile.lastModified)
+                        newLocalTimestamp = remoteFile.lastModified
                     }
 
-                    fileStates[cleanRelativePath] = FileSyncState(
-                        lastLocalModified = newLocalTimestamp,
-                        lastRemoteModified = remoteFile.lastModified,
-                        lastSyncTime = System.currentTimeMillis()
-                    )
+                    fileStates[cleanRelativePath] =
+                        FileSyncState(
+                            lastLocalModified = newLocalTimestamp,
+                            lastRemoteModified = remoteFile.lastModified,
+                            lastSyncTime = System.currentTimeMillis(),
+                        )
                 }
             }
-            
+
             // Save updated metadata
             SyncPreferencesManager.saveProjectSyncMetadata(
-                context, 
-                projectId, 
-                syncMetadata.copy(files = fileStates)
+                context,
+                projectId,
+                syncMetadata.copy(files = fileStates),
             )
 
             // Update last sync time
@@ -508,7 +517,7 @@ class SyncManager(
                         Logger.w("SyncManager", "Failed to delete remote PDF", e)
                     }
                 }
-                
+
                 // Also remove from metadata
                 if (success) {
                     val metadata = SyncPreferencesManager.getProjectSyncMetadata(context, projectId)
@@ -516,7 +525,7 @@ class SyncManager(
                     newFiles.remove(cleanRelativePath)
                     SyncPreferencesManager.saveProjectSyncMetadata(context, projectId, metadata.copy(files = newFiles))
                 }
-                
+
                 return@withContext success
             } catch (e: Exception) {
                 Logger.e("SyncManager", "Failed to delete remote file", e)
@@ -591,4 +600,3 @@ class SyncManager(
         }
     }
 }
-

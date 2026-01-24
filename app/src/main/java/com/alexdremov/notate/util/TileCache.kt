@@ -155,7 +155,7 @@ class TileCache(
             "Size (MB)" to "$sizeMb / $maxMb",
             "Entries" to "$entries",
             "Pool Size" to "$pool",
-            "Hit Rate" to String.format("%.1f%%", hitRate)
+            "Hit Rate" to String.format("%.1f%%", hitRate),
         )
     }
 }

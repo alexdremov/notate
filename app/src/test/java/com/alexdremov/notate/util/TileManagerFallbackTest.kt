@@ -39,7 +39,7 @@ class TileManagerFallbackTest {
         every { mockModel.events } returns kotlinx.coroutines.flow.MutableSharedFlow()
         every { mockModel.getRegionManager() } returns null
         // Mock queryItems to return empty list so generation produces blank tiles quickly
-        every { mockModel.queryItems(any()) } returns ArrayList()
+        io.mockk.coEvery { mockModel.queryItems(any()) } returns ArrayList()
 
         tileManager =
             TileManager(

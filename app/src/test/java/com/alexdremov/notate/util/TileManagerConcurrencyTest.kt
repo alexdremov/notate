@@ -98,7 +98,7 @@ class TileManagerConcurrencyTest {
             advanceUntilIdle()
 
             // Verify: Should trigger regeneration (queryItems)
-            verify(atLeast = 1) { mockModel.queryItems(any()) }
+            io.mockk.coVerify(atLeast = 1) { mockModel.queryItems(any()) }
         }
 
     @Test
@@ -149,7 +149,7 @@ class TileManagerConcurrencyTest {
                 val latch = CountDownLatch(2) // Wait for 2 tiles
 
                 // Mock queryItems to block for 100ms
-                every { mockModel.queryItems(any()) } answers {
+                io.mockk.coEvery { mockModel.queryItems(any()) } coAnswers {
                     Thread.sleep(100)
                     latch.countDown()
                     ArrayList()
@@ -195,7 +195,7 @@ class TileManagerConcurrencyTest {
             advanceUntilIdle()
 
             // Verify: Should only have queried model once for that specific tile (since it's in generatingKeys)
-            verify(exactly = 1) { mockModel.queryItems(any()) }
+            io.mockk.coVerify(exactly = 1) { mockModel.queryItems(any()) }
         }
 
     @Test
@@ -206,7 +206,7 @@ class TileManagerConcurrencyTest {
             val canvas = mockk<Canvas>(relaxed = true)
 
             // Mock model to suspend
-            every { mockModel.queryItems(any()) } coAnswers {
+            io.mockk.coEvery { mockModel.queryItems(any()) } coAnswers {
                 delay(1000)
                 ArrayList()
             }
