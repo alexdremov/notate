@@ -306,7 +306,12 @@ class SyncManager(
                     // Also sync PDF if enabled
                     if (config.syncPdf) {
                         Logger.d("SyncManager", "Generating/Uploading PDF for ${localFile.name}")
-                        syncPdf(localFile, config.remotePath, provider)
+                        val baseProgress = 20 + ((currentStep - 1) * 60 / totalSteps)
+                        val stepSize = 60.0 / totalSteps
+                        syncPdf(localFile, config.remotePath, provider) { p, m ->
+                            val pdfProgress = (baseProgress + (p / 100.0) * stepSize).toInt()
+                            updateProgress(pdfProgress, "PDF ${localFile.name}: $m")
+                        }
                     }
 
                     // Update State
@@ -553,6 +558,7 @@ class SyncManager(
         localFile: LocalFile,
         remoteDir: String,
         provider: RemoteStorageProvider,
+        progressCallback: ((Int, String) -> Unit)? = null,
     ) {
         var session: CanvasSession? = null
         try {
@@ -569,8 +575,22 @@ class SyncManager(
             val pdfRelativePath = cleanRelativePath.substringBeforeLast(".") + ".pdf"
             val remotePdfPath = "${remoteDir.trimEnd('/')}/$pdfRelativePath"
 
+            val pdfCallback =
+                if (progressCallback != null) {
+                    object : PdfExporter.ProgressCallback {
+                        override fun onProgress(
+                            progress: Int,
+                            message: String,
+                        ) {
+                            progressCallback(progress, message)
+                        }
+                    }
+                } else {
+                    null
+                }
+
             val out = ByteArrayOutputStream()
-            PdfExporter.export(context, model, out, isVector = true, callback = null)
+            PdfExporter.export(context, model, out, isVector = true, callback = pdfCallback)
 
             val pdfInput = ByteArrayInputStream(out.toByteArray())
             provider.uploadFile(remotePdfPath, pdfInput)
