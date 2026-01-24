@@ -23,6 +23,7 @@
         android:layout_width="2dp"
         android:layout_height="match_parent"
         android:layout_marginVertical="8dp"
+        android:layout_marginHorizontal="2dp"
         android:background="@android:color/black" />
 
     <TextView
