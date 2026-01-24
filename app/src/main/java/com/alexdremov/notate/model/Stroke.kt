@@ -51,25 +51,32 @@ data class Stroke(
 
         other as Stroke
 
-        if (points != other.points) return false
+        // Identity check based on unique ID for persisted items
+        if (strokeOrder != 0L && strokeOrder == other.strokeOrder) return true
+
+        // If orders differ (and one is not 0), they are different
+        if (strokeOrder != other.strokeOrder) return false
+
+        // Value equality for transient items (Order == 0)
+        // Explicitly IGNORING Path and RenderCache as they are transient/reconstructed
         if (color != other.color) return false
         if (width != other.width) return false
         if (style != other.style) return false
         if (bounds != other.bounds) return false
-        if (strokeOrder != other.strokeOrder) return false
         if (zIndex != other.zIndex) return false
+        if (points != other.points) return false
 
         return true
     }
 
     override fun hashCode(): Int {
-        var result = points.hashCode()
-        result = 31 * result + color
+        if (strokeOrder != 0L) return strokeOrder.hashCode()
+        var result = color
         result = 31 * result + width.hashCode()
         result = 31 * result + style.hashCode()
         result = 31 * result + bounds.hashCode()
-        result = 31 * result + strokeOrder.hashCode()
         result = 31 * result + zIndex.hashCode()
+        result = 31 * result + points.hashCode()
         return result
     }
 }

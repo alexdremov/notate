@@ -43,6 +43,20 @@ class SelectionOverlayDrawer(
             isAntiAlias = true
         }
 
+    private val bitmapPaint =
+        Paint().apply {
+            isAntiAlias = true
+            isFilterBitmap = true
+            isDither = true
+        }
+
+    private val loadingPaint =
+        Paint().apply {
+            color = Color.argb(128, 255, 255, 255) // Semi-transparent white
+            style = Paint.Style.FILL
+            isAntiAlias = true
+        }
+
     // Reuse objects to avoid allocation
     private val screenMatrix = Matrix()
     private val path = Path()
@@ -56,19 +70,39 @@ class SelectionOverlayDrawer(
     ) {
         if (!selectionManager.hasSelection()) return
 
-        // 1. Draw Transformed Strokes (Visual Lift)
-        // We draw them here because they are temporarily removed from the main tile model during interaction
-        if (selectionManager.selectedStrokes.isNotEmpty()) {
+        val imposter = selectionManager.getImposter()
+        if (imposter != null) {
+            // Draw Imposter Bitmap (High Performance)
+            val (bitmap, offsetMatrix) = imposter
             canvas.save()
             // Apply View Matrix (World -> Screen)
             canvas.concat(viewMatrix)
             // Apply Selection Transform (Original -> Current)
             canvas.concat(selectionManager.getTransform())
+            // Apply Imposter Offset (Bitmap -> World)
+            canvas.concat(offsetMatrix)
 
-            selectionManager.selectedStrokes.forEach { stroke ->
-                renderer.drawStrokeToCanvas(canvas, stroke)
-            }
+            canvas.drawBitmap(bitmap, 0f, 0f, bitmapPaint)
             canvas.restore()
+        } else if (selectionManager.isGeneratingImposter) {
+            // Draw Loading State (Skip rendering heavy strokes)
+            // The box drawing code below will handle the visual feedback bounds.
+            // We can optionally draw a fill here if we calculate the path first.
+        } else {
+            // Fallback: Draw Transformed Strokes (Visual Lift)
+            // We draw them here because they are temporarily removed from the main tile model during interaction
+            if (selectionManager.selectedStrokes.isNotEmpty()) {
+                canvas.save()
+                // Apply View Matrix (World -> Screen)
+                canvas.concat(viewMatrix)
+                // Apply Selection Transform (Original -> Current)
+                canvas.concat(selectionManager.getTransform())
+
+                selectionManager.selectedStrokes.forEach { stroke ->
+                    renderer.drawStrokeToCanvas(canvas, stroke)
+                }
+                canvas.restore()
+            }
         }
 
         // 2. Draw Selection Box & Handles
@@ -84,6 +118,10 @@ class SelectionOverlayDrawer(
         path.lineTo(screenCorners[4], screenCorners[5])
         path.lineTo(screenCorners[6], screenCorners[7])
         path.close()
+
+        if (selectionManager.isGeneratingImposter) {
+            canvas.drawPath(path, loadingPaint)
+        }
 
         // Scale stroke width relative to screen, usually fixed size is better for UI
         boxPaint.strokeWidth = 2f // Fixed screen pixels

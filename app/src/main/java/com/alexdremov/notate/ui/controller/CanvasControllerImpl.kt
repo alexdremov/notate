@@ -118,28 +118,32 @@ class CanvasControllerImpl(
     ): com.alexdremov.notate.model.CanvasItem? = model.hitTestSync(x, y, 20f)
 
     override suspend fun getItemsInRect(rect: android.graphics.RectF): List<com.alexdremov.notate.model.CanvasItem> {
-        val items = model.queryItems(rect)
-
-        // Optimized Precise Rect Selection
+        // Optimized Precise Rect Selection using Visitor (No intermediate list)
         return withContext(Dispatchers.Default) {
-            items
-                .parallelStream()
-                .filter { item ->
-                    if (rect.contains(item.bounds)) return@filter true
-                    if (item is Stroke) {
+            val result = ArrayList<com.alexdremov.notate.model.CanvasItem>()
+
+            model.visitItemsInRect(rect) { item ->
+                val matches =
+                    if (rect.contains(item.bounds)) {
+                        true
+                    } else if (item is Stroke) {
                         com.alexdremov.notate.util.StrokeGeometry
                             .strokeIntersectsRect(item, rect)
                     } else {
                         android.graphics.RectF.intersects(rect, item.bounds)
                     }
-                }.collect(Collectors.toList())
+
+                if (matches) {
+                    result.add(item)
+                }
+            }
+            result
         }
     }
 
     override suspend fun getItemsInPath(path: android.graphics.Path): List<com.alexdremov.notate.model.CanvasItem> {
         val bounds = android.graphics.RectF()
         path.computeBounds(bounds, true)
-        val items = model.queryItems(bounds)
 
         return withContext(Dispatchers.Default) {
             var pathPoints =
@@ -149,17 +153,17 @@ class CanvasControllerImpl(
                 com.alexdremov.notate.util.StrokeGeometry
                     .simplifyPoints(pathPoints, 5.0f)
 
-            items
-                .parallelStream()
-                .filter { item ->
-                    if (!bounds.contains(item.bounds)) return@filter false
+            val result = ArrayList<com.alexdremov.notate.model.CanvasItem>()
+
+            model.visitItemsInRect(bounds) { item ->
+                if (!bounds.contains(item.bounds)) return@visitItemsInRect
+
+                val matches =
                     if (com.alexdremov.notate.util.StrokeGeometry
                             .isRectFullyInPolygon(item.bounds, pathPoints)
                     ) {
-                        return@filter true
-                    }
-
-                    if (item is Stroke) {
+                        true
+                    } else if (item is Stroke) {
                         item.points.all { p ->
                             com.alexdremov.notate.util.StrokeGeometry
                                 .isPointInPolygon(p.x, p.y, pathPoints)
@@ -175,7 +179,12 @@ class CanvasControllerImpl(
                             com.alexdremov.notate.util.StrokeGeometry
                                 .isPointInPolygon(b.left, b.bottom, pathPoints)
                     }
-                }.collect(Collectors.toList())
+
+                if (matches) {
+                    result.add(item)
+                }
+            }
+            result
         }
     }
 
@@ -317,8 +326,57 @@ class CanvasControllerImpl(
     override suspend fun startMoveSelection() {
         if (!selectionManager.hasSelection()) return
         startBatchSession()
-        deleteItemsFromModel(selectionManager.selectedItems.toList())
+
+        // 1. Immediate Visual Lift (On Caller Thread/Main)
+        // Visually remove items from the canvas tiles.
+        // We need to do this first so the user sees the "lift" even if the bitmap isn't ready.
+        val itemsToList = selectionManager.selectedItems.toList()
+        deleteItemsFromModel(itemsToList)
+
+        selectionManager.isGeneratingImposter = true
         withContext(Dispatchers.Main) { renderer.invalidate() }
+
+        // 2. Async Imposter Generation (Background)
+        withContext(Dispatchers.Default) {
+            try {
+                val bounds = selectionManager.getTransformedBounds()
+                val padding = 5
+                val width = bounds.width().toInt() + (padding * 2)
+                val height = bounds.height().toInt() + (padding * 2)
+
+                // Limit size to prevent OOM
+                if (width in 1..4096 && height in 1..4096) {
+                    val bitmap = android.graphics.Bitmap.createBitmap(width, height, android.graphics.Bitmap.Config.ARGB_8888)
+                    val canvas = android.graphics.Canvas(bitmap)
+
+                    canvas.translate(-(bounds.left - padding), -(bounds.top - padding))
+
+                    model.visitItemsInRect(bounds) { item ->
+                        if (selectionManager.isSelected(item)) {
+                            renderer.drawItemToCanvas(canvas, item)
+                        }
+                    }
+
+                    val matrix = android.graphics.Matrix()
+                    matrix.setTranslate(bounds.left - padding, bounds.top - padding)
+
+                    withContext(Dispatchers.Main) {
+                        if (selectionManager.hasSelection()) {
+                            selectionManager.setImposter(bitmap, matrix)
+                        } else {
+                            bitmap.recycle() // Cancelled
+                        }
+                    }
+                }
+            } catch (e: Throwable) {
+                android.util.Log.w("CanvasController", "Async imposter generation failed: ${e.message}")
+            } finally {
+                withContext(Dispatchers.Main) {
+                    selectionManager.isGeneratingImposter = false
+                    renderer.invalidate()
+                }
+            }
+        }
     }
 
     override suspend fun moveSelection(

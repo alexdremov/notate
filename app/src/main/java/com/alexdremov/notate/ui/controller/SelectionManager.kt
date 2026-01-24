@@ -11,19 +11,26 @@ import com.alexdremov.notate.model.CanvasItem
  */
 class SelectionManager {
     private val lock = Any()
-    private val _selectedItems = HashSet<CanvasItem>()
-    val selectedItems: Set<CanvasItem>
-        get() = synchronized(lock) { _selectedItems.toSet() }
 
-    // Backwards compatibility for callers expecting Stroke
-    val selectedStrokes: Set<com.alexdremov.notate.model.Stroke>
-        get() = synchronized(lock) { _selectedItems.filterIsInstance<com.alexdremov.notate.model.Stroke>().toSet() }
+    // Virtualized Selection: Store IDs instead of objects to prevent OOM
+    private val _selectedIds = HashSet<Long>()
 
     // Current transformation applied to the selection (transient)
     private val transformMatrix = Matrix()
 
     // Bounding box of the original selection (before transform)
     private val selectionBounds = RectF()
+
+    // Imposter Bitmap for High-Performance Rendering
+    private var imposterBitmap: android.graphics.Bitmap? = null
+    private val imposterMatrix = Matrix()
+    private var _isGeneratingImposter = false
+
+    var isGeneratingImposter: Boolean
+        get() = synchronized(lock) { _isGeneratingImposter }
+        set(value) = synchronized(lock) { _isGeneratingImposter = value }
+
+    fun getSelectedIds(): Set<Long> = synchronized(lock) { _selectedIds.toSet() }
 
     /**
      * Returns a defensive copy of the current transformation matrix.
@@ -56,63 +63,100 @@ class SelectionManager {
         }
     }
 
+    fun setImposter(
+        bitmap: android.graphics.Bitmap,
+        matrix: Matrix,
+    ) {
+        synchronized(lock) {
+            // Recycle old bitmap if strictly different
+            if (imposterBitmap != null && imposterBitmap !== bitmap) {
+                imposterBitmap?.recycle()
+            }
+            imposterBitmap = bitmap
+            imposterMatrix.set(matrix)
+        }
+    }
+
+    fun getImposter(): Pair<android.graphics.Bitmap, Matrix>? {
+        synchronized(lock) {
+            val bmp = imposterBitmap ?: return null
+            return Pair(bmp, Matrix(imposterMatrix))
+        }
+    }
+
+    fun clearImposter() {
+        synchronized(lock) {
+            imposterBitmap?.recycle()
+            imposterBitmap = null
+            imposterMatrix.reset()
+        }
+    }
+
     fun select(item: CanvasItem) {
         synchronized(lock) {
-            _selectedItems.add(item)
-            recomputeBoundsInternal()
+            if (_selectedIds.isEmpty()) {
+                selectionBounds.set(item.bounds)
+            } else {
+                selectionBounds.union(item.bounds)
+            }
+            _selectedIds.add(item.order)
         }
     }
 
     fun selectAll(items: List<CanvasItem>) {
         synchronized(lock) {
-            _selectedItems.addAll(items)
-            recomputeBoundsInternal()
+            items.forEach { item ->
+                if (_selectedIds.isEmpty()) {
+                    selectionBounds.set(item.bounds)
+                } else {
+                    selectionBounds.union(item.bounds)
+                }
+                _selectedIds.add(item.order)
+            }
+        }
+    }
+
+    // Optimized for direct ID addition when bounds are known
+    fun addSelection(
+        id: Long,
+        bounds: RectF,
+    ) {
+        synchronized(lock) {
+            if (_selectedIds.isEmpty()) {
+                selectionBounds.set(bounds)
+            } else {
+                selectionBounds.union(bounds)
+            }
+            _selectedIds.add(id)
         }
     }
 
     fun deselect(item: CanvasItem) {
         synchronized(lock) {
-            _selectedItems.remove(item)
-            recomputeBoundsInternal()
+            _selectedIds.remove(item.order)
+            // Note: We do not shrink bounds on deselect to avoid OOM from re-querying.
+            // Bounds will be conservative (larger than necessary) until cleared.
+            if (_selectedIds.isEmpty()) {
+                selectionBounds.setEmpty()
+            }
         }
     }
 
     fun clearSelection() {
         synchronized(lock) {
-            _selectedItems.clear()
+            _selectedIds.clear()
             transformMatrix.reset()
             selectionBounds.setEmpty()
+            clearImposter()
+            _isGeneratingImposter = false
         }
     }
 
-    fun hasSelection(): Boolean = synchronized(lock) { _selectedItems.isNotEmpty() }
+    fun hasSelection(): Boolean = synchronized(lock) { _selectedIds.isNotEmpty() }
 
-    fun isSelected(item: CanvasItem): Boolean = synchronized(lock) { _selectedItems.contains(item) }
+    fun isSelected(item: CanvasItem): Boolean = synchronized(lock) { _selectedIds.contains(item.order) }
 
-    private fun recomputeBounds() {
-        synchronized(lock) {
-            recomputeBoundsInternal()
-        }
-    }
-
-    private fun recomputeBoundsInternal() {
-        if (_selectedItems.isEmpty()) {
-            selectionBounds.setEmpty()
-            return
-        }
-
-        val tempBounds = RectF()
-        var first = true
-        for (item in _selectedItems) {
-            if (first) {
-                tempBounds.set(item.bounds)
-                first = false
-            } else {
-                tempBounds.union(item.bounds)
-            }
-        }
-        selectionBounds.set(tempBounds)
-    }
+    fun isSelected(id: Long): Boolean = synchronized(lock) { _selectedIds.contains(id) }
 
     /**
      * Returns the bounding box of the selection with the current transform applied.

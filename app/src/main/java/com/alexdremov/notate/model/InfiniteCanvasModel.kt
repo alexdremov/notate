@@ -412,6 +412,15 @@ class InfiniteCanvasModel {
         return result
     }
 
+    suspend fun visitItemsInRect(
+        rect: RectF,
+        visitor: (CanvasItem) -> Unit,
+    ) {
+        mutex.withLock {
+            regionManager?.visitItemsInRect(rect, visitor)
+        }
+    }
+
     suspend fun queryStrokes(rect: RectF): ArrayList<Stroke> {
         val items = queryItems(rect)
         val strokes = ArrayList<Stroke>()

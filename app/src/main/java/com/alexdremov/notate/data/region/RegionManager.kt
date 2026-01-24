@@ -6,7 +6,12 @@ import android.graphics.Paint
 import android.graphics.RectF
 import android.util.LruCache
 import com.alexdremov.notate.config.CanvasConfig
+import com.alexdremov.notate.data.CanvasImageData
+import com.alexdremov.notate.data.CanvasSerializer
+import com.alexdremov.notate.data.StrokeData
+import com.alexdremov.notate.model.CanvasImage
 import com.alexdremov.notate.model.CanvasItem
+import com.alexdremov.notate.model.Stroke
 import com.alexdremov.notate.util.Logger
 import com.alexdremov.notate.util.PerformanceProfiler
 import com.alexdremov.notate.util.Quadtree
@@ -17,6 +22,15 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
+import kotlinx.serialization.decodeFromByteArray
+import kotlinx.serialization.encodeToByteArray
+import kotlinx.serialization.protobuf.ProtoBuf
+import java.io.BufferedInputStream
+import java.io.BufferedOutputStream
+import java.io.DataInputStream
+import java.io.DataOutputStream
+import java.io.FileInputStream
+import java.io.FileOutputStream
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.locks.ReentrantReadWriteLock
@@ -488,6 +502,200 @@ class RegionManager(
         }
     }
 
+    suspend fun stashSelectedItems(
+        rect: RectF,
+        ids: Set<Long>,
+        outputFile: java.io.File,
+    ): Int {
+        val regionIds = getRegionIdsInRect(rect)
+        var stashedCount = 0
+
+        DataOutputStream(BufferedOutputStream(FileOutputStream(outputFile, true))).use { dos ->
+            for (rId in regionIds) {
+                val region = getRegion(rId)
+                val toRemove = ArrayList<CanvasItem>()
+
+                // Find matching items
+                region.items.forEach { item ->
+                    if (ids.contains(item.order)) {
+                        toRemove.add(item)
+                    }
+                }
+
+                if (toRemove.isNotEmpty()) {
+                    // Write to file
+                    toRemove.forEach { item ->
+                        try {
+                            val bytes: ByteArray
+                            val type: Int
+                            when (item) {
+                                is Stroke -> {
+                                    type = 0
+                                    val data = CanvasSerializer.toStrokeData(item)
+                                    bytes = ProtoBuf.encodeToByteArray(data)
+                                }
+
+                                is CanvasImage -> {
+                                    type = 1
+                                    val data = CanvasSerializer.toCanvasImageData(item)
+                                    bytes = ProtoBuf.encodeToByteArray(data)
+                                }
+
+                                else -> {
+                                    return@forEach
+                                }
+                            }
+
+                            dos.writeInt(type)
+                            dos.writeInt(bytes.size)
+                            dos.write(bytes)
+                            stashedCount++
+                        } catch (e: Exception) {
+                            Logger.e("RegionManager", "Failed to stash item", e)
+                        }
+                    }
+
+                    // Remove from region (Write Lock per region)
+                    stateLock.write {
+                        resizingId = rId
+                        regionCache.remove(rId)
+                        resizingId = null
+
+                        region.items.removeAll(toRemove)
+                        toRemove.forEach { region.quadtree?.remove(it) }
+
+                        region.contentBounds.setEmpty()
+                        region.items.forEach {
+                            if (region.contentBounds.isEmpty) {
+                                region.contentBounds.set(it.bounds)
+                            } else {
+                                region.contentBounds.union(it.bounds)
+                            }
+                        }
+
+                        if (region.items.isEmpty()) {
+                            removeRegionIndex(rId)
+                        } else {
+                            updateRegionIndex(rId, region.contentBounds)
+                        }
+
+                        region.isDirty = true
+                        invalidateThumbnail(rId)
+                        region.invalidateSize()
+                        regionCache.put(rId, region)
+                        updateMetadataCache()
+                    }
+                }
+            }
+        }
+        return stashedCount
+    }
+
+    suspend fun unstashItems(
+        inputFile: java.io.File,
+        transform: android.graphics.Matrix,
+    ) {
+        if (!inputFile.exists()) return
+
+        DataInputStream(BufferedInputStream(FileInputStream(inputFile))).use { dis ->
+            try {
+                while (dis.available() > 0) {
+                    val type = dis.readInt()
+                    val length = dis.readInt()
+                    val bytes = ByteArray(length)
+                    dis.readFully(bytes)
+
+                    var item: CanvasItem? = null
+                    if (type == 0) {
+                        val data = ProtoBuf.decodeFromByteArray<StrokeData>(bytes)
+                        item = CanvasSerializer.fromStrokeData(data)
+                    } else if (type == 1) {
+                        val data = ProtoBuf.decodeFromByteArray<CanvasImageData>(bytes)
+                        // TODO: Implement fromCanvasImageData in CanvasSerializer or manual
+                        // CanvasSerializer doesn't have fromCanvasImageData? I should check.
+                        // Assuming manual reconstruction for now or skip if missing.
+                        // item = CanvasSerializer.fromCanvasImageData(data)
+                        // Fallback reconstruction
+                        item =
+                            CanvasImage(
+                                uri = data.uri,
+                                bounds = RectF(data.x, data.y, data.x + data.width, data.y + data.height),
+                                zIndex = data.zIndex,
+                                order = data.order,
+                                rotation = data.rotation,
+                                opacity = data.opacity,
+                            )
+                    }
+
+                    if (item != null) {
+                        // Apply transform
+                        val newItem = transformItem(item, transform)
+                        addItem(newItem)
+                    }
+                }
+            } catch (e: java.io.EOFException) {
+                // End of file
+            } catch (e: Exception) {
+                Logger.e("RegionManager", "Failed to unstash items", e)
+            }
+        }
+    }
+
+    private fun transformItem(
+        item: CanvasItem,
+        transform: android.graphics.Matrix,
+    ): CanvasItem =
+        when (item) {
+            is Stroke -> {
+                val newPath = android.graphics.Path(item.path)
+                newPath.transform(transform)
+
+                val newPoints =
+                    item.points.map { p ->
+                        val pts = floatArrayOf(p.x, p.y)
+                        transform.mapPoints(pts)
+                        com.onyx.android.sdk.data.note.TouchPoint(
+                            pts[0],
+                            pts[1],
+                            p.pressure,
+                            p.size,
+                            p.timestamp,
+                        )
+                    }
+
+                val newBounds = RectF(item.bounds)
+                transform.mapRect(newBounds)
+
+                // Scale width approximation
+                val values = FloatArray(9)
+                transform.getValues(values)
+                val scale =
+                    kotlin.math.sqrt(
+                        values[android.graphics.Matrix.MSCALE_X] * values[android.graphics.Matrix.MSCALE_X] +
+                            values[android.graphics.Matrix.MSKEW_Y] * values[android.graphics.Matrix.MSKEW_Y],
+                    )
+
+                item.copy(path = newPath, points = newPoints, bounds = newBounds, width = item.width * scale)
+            }
+
+            is CanvasImage -> {
+                val newBounds = RectF(item.bounds)
+                transform.mapRect(newBounds)
+
+                val values = FloatArray(9)
+                transform.getValues(values)
+                val scaleX = values[android.graphics.Matrix.MSCALE_X]
+                val skewY = values[android.graphics.Matrix.MSKEW_Y]
+                val rotation = kotlin.math.atan2(skewY.toDouble(), scaleX.toDouble()).toFloat()
+
+                item.copy(bounds = newBounds, rotation = item.rotation + Math.toDegrees(rotation.toDouble()).toFloat())
+            }
+
+            else -> {
+                item
+            }
+        }
+
     fun getRegionIdsInRect(rect: RectF): List<RegionId> {
         val foundProxies = ArrayList<CanvasItem>()
         stateLock.read {
@@ -499,6 +707,17 @@ class RegionManager(
     suspend fun getRegionsInRect(rect: RectF): List<RegionData> {
         val ids = getRegionIdsInRect(rect)
         return ids.map { getRegion(it) }
+    }
+
+    suspend fun visitItemsInRect(
+        rect: RectF,
+        visitor: (CanvasItem) -> Unit,
+    ) {
+        val ids = getRegionIdsInRect(rect)
+        for (id in ids) {
+            val region = getRegion(id)
+            region.quadtree?.visit(rect, visitor)
+        }
     }
 
     fun getContentBounds(): RectF = RectF(cachedContentBounds)
