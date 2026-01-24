@@ -77,6 +77,7 @@ class HomeViewModel(
         loadSortOption()
         startIndexing()
         observeSaveStatus()
+        observeGlobalSync()
     }
 
     private fun observeSaveStatus() {
@@ -90,6 +91,51 @@ class HomeViewModel(
                 if (finished.isNotEmpty()) {
                     Logger.d("HomeViewModel", "Detected background save completion for $finished. Refreshing UI.")
                     refresh()
+                }
+            }
+        }
+    }
+
+    private fun observeGlobalSync() {
+        viewModelScope.launch {
+            SyncManager.globalSyncProgress.collect { progressMap ->
+                val currentIds = _syncingProjectIds.value
+                val newIds = progressMap.keys
+
+                // Detect completions (in current but not in new)
+                val completed = currentIds - newIds
+                if (completed.isNotEmpty()) {
+                    refresh()
+                }
+
+                if (progressMap.isEmpty()) {
+                    _syncProgress.value = null
+                    _syncingProjectIds.value = emptySet()
+                } else {
+                    // Show the first active sync
+                    val (id, status) = progressMap.entries.first()
+                    _syncProgress.value = status
+                    _syncingProjectIds.value = newIds
+                }
+            }
+        }
+    }
+
+    private fun resumeInterruptedSyncs() {
+        val interrupted = SyncManager.getInterruptedProjects()
+        if (interrupted.isNotEmpty()) {
+            Logger.d("HomeViewModel", "Resuming interrupted syncs for: $interrupted")
+            interrupted.forEach { projectId ->
+                // Don't call syncProject directly to avoid double-checking existing IDs or UI logic
+                // Just launch the sync via manager, let global observer handle UI
+                viewModelScope.launch {
+                    try {
+                        withContext(Dispatchers.IO) {
+                            syncManager.syncProject(projectId)
+                        }
+                    } catch (e: Exception) {
+                        Logger.e("HomeViewModel", "Failed to resume sync for $projectId", e)
+                    }
                 }
             }
         }

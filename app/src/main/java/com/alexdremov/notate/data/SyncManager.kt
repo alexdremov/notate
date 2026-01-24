@@ -7,6 +7,8 @@ import com.alexdremov.notate.export.PdfExporter
 import com.alexdremov.notate.model.InfiniteCanvasModel
 import com.alexdremov.notate.util.Logger
 import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.File
@@ -15,6 +17,12 @@ import java.io.InputStream
 class SyncManager(
     private val context: Context,
     private val canvasRepository: CanvasRepository,
+    private val providerFactory: (Context, RemoteStorageConfig, String) -> RemoteStorageProvider = { ctx, config, pass ->
+        when (config.type) {
+            RemoteStorageType.WEBDAV -> WebDavProvider(config, pass)
+            RemoteStorageType.GOOGLE_DRIVE -> GoogleDriveProvider(ctx, config)
+        }
+    },
 ) {
     interface LocalFile {
         val name: String
@@ -63,14 +71,34 @@ class SyncManager(
     companion object {
         @Volatile
         var isCanvasOpen: Boolean = false
-        private val activeSyncJobs = java.util.Collections.newSetFromMap(java.util.concurrent.ConcurrentHashMap<Job, Boolean>())
+
+        // Track active jobs by project ID
+        private val activeSyncJobs = java.util.concurrent.ConcurrentHashMap<String, Job>()
+
+        // Track projects that were syncing when cancelled
+        private val interruptedProjects = java.util.Collections.newSetFromMap(java.util.concurrent.ConcurrentHashMap<String, Boolean>())
+
+        // Global progress flow: ProjectID -> (Progress, Message)
+        private val _globalSyncProgress = kotlinx.coroutines.flow.MutableStateFlow<Map<String, Pair<Int, String>>>(emptyMap())
+        val globalSyncProgress = _globalSyncProgress.asStateFlow()
 
         fun cancelAllSyncs() {
             Logger.i("SyncManager", "Cancelling all active sync jobs due to canvas activity")
             synchronized(activeSyncJobs) {
-                activeSyncJobs.forEach { it.cancel() }
+                activeSyncJobs.forEach { (projectId, job) ->
+                    interruptedProjects.add(projectId)
+                    job.cancel()
+                }
                 activeSyncJobs.clear()
             }
+            // Clear progress for cancelled jobs
+            _globalSyncProgress.value = emptyMap()
+        }
+
+        fun getInterruptedProjects(): Set<String> {
+            val set = HashSet(interruptedProjects)
+            interruptedProjects.clear()
+            return set
         }
     }
 
@@ -85,41 +113,49 @@ class SyncManager(
 
         val job = currentCoroutineContext()[Job]
         if (job != null) {
-            activeSyncJobs.add(job)
+            activeSyncJobs[projectId] = job
             job.invokeOnCompletion {
-                activeSyncJobs.remove(job)
+                activeSyncJobs.remove(projectId)
             }
         }
+
+        // Remove from interrupted if we are restarting it
+        interruptedProjects.remove(projectId)
 
         Logger.d("SyncManager", "Starting sync for project ID: $projectId")
-        val config = SyncPreferencesManager.getProjectSyncConfig(context, projectId)
 
-        if (config == null) {
-            Logger.w("SyncManager", "No sync config found for project $projectId")
-            return@withContext
+        // Helper to update both global and local callback
+        val updateProgress: (Int, String) -> Unit = { p, m ->
+            _globalSyncProgress.update { it + (projectId to (p to m)) }
+            progressCallback?.invoke(p, m)
         }
-
-        if (!config.isEnabled) {
-            Logger.d("SyncManager", "Sync disabled for project $projectId")
-            return@withContext
-        }
-
-        val storageConfig = SyncPreferencesManager.getRemoteStorages(context).find { it.id == config.remoteStorageId }
-        if (storageConfig == null) {
-            Logger.e("SyncManager", "Storage config not found for ID: ${config.remoteStorageId}", showToUser = true)
-            return@withContext
-        }
-
-        val password = SyncPreferencesManager.getPassword(context, storageConfig.id) ?: ""
-
-        val provider: RemoteStorageProvider =
-            when (storageConfig.type) {
-                RemoteStorageType.WEBDAV -> WebDavProvider(storageConfig, password)
-                RemoteStorageType.GOOGLE_DRIVE -> GoogleDriveProvider(context, storageConfig)
-            }
 
         try {
-            progressCallback?.invoke(0, "Initializing sync...")
+            updateProgress(0, "Initializing sync...")
+
+            val config = SyncPreferencesManager.getProjectSyncConfig(context, projectId)
+
+            if (config == null) {
+                Logger.w("SyncManager", "No sync config found for project $projectId")
+                return@withContext
+            }
+
+            if (!config.isEnabled) {
+                Logger.d("SyncManager", "Sync disabled for project $projectId")
+                return@withContext
+            }
+
+            val storageConfig = SyncPreferencesManager.getRemoteStorages(context).find { it.id == config.remoteStorageId }
+            if (storageConfig == null) {
+                Logger.e("SyncManager", "Storage config not found for ID: ${config.remoteStorageId}", showToUser = true)
+                return@withContext
+            }
+
+            val password = SyncPreferencesManager.getPassword(context, storageConfig.id) ?: ""
+
+            val provider: RemoteStorageProvider = providerFactory(context, storageConfig, password)
+
+            updateProgress(0, "Initializing sync...")
 
             // Check/Create Root Directory
             try {
@@ -127,7 +163,7 @@ class SyncManager(
                 provider.listFiles(config.remotePath)
             } catch (e: java.io.FileNotFoundException) {
                 Logger.w("SyncManager", "Remote directory not found, creating: ${config.remotePath}")
-                progressCallback?.invoke(5, "Creating remote directory...")
+                updateProgress(5, "Creating remote directory...")
                 if (!provider.createDirectory(config.remotePath)) {
                     throw java.io.IOException("Failed to create remote directory: ${config.remotePath}")
                 }
@@ -141,7 +177,7 @@ class SyncManager(
             val fileStates = syncMetadata.files.toMutableMap()
 
             // 1. Scan Local Project (Moved up to validate pending deletions)
-            progressCallback?.invoke(10, "Scanning local project...")
+            updateProgress(10, "Scanning local project...")
             val projects = PreferencesManager.getProjects(context)
             val projectConfig = projects.find { it.id == projectId } ?: return@withContext
             Logger.d("SyncManager", "Syncing local project at ${projectConfig.uri}")
@@ -163,7 +199,7 @@ class SyncManager(
             val pendingDeletions = SyncPreferencesManager.getPendingDeletions(context).filter { it.projectId == projectId }
             if (pendingDeletions.isNotEmpty()) {
                 Logger.d("SyncManager", "Processing ${pendingDeletions.size} pending deletions")
-                progressCallback?.invoke(12, "Processing deletions...")
+                updateProgress(12, "Processing deletions...")
 
                 for (deletion in pendingDeletions) {
                     try {
@@ -222,7 +258,7 @@ class SyncManager(
                     .map { it.relativePath.replace("\\", "/") }
                     .toSet()
 
-            progressCallback?.invoke(15, "Listing remote files recursively...")
+            updateProgress(15, "Listing remote files recursively...")
             Logger.d("SyncManager", "Scanning remote files at ${config.remotePath}")
             val allRemoteFilesRaw = scanRemoteFilesRecursively(provider, config.remotePath, "")
 
@@ -238,7 +274,7 @@ class SyncManager(
             val totalSteps = localFiles.size + allRemoteFiles.size
             var currentStep = 0
 
-            progressCallback?.invoke(20, "Synchronizing files...")
+            updateProgress(20, "Synchronizing files...")
 
             // 1. Upload/Update local files to remote
             for (localFile in localFiles) {
@@ -260,7 +296,7 @@ class SyncManager(
                         "SyncManager",
                         "Uploading ${localFile.name} (Local: ${localFile.lastModified}, LastSyncedLocal: ${fileState?.lastLocalModified})",
                     )
-                    progressCallback?.invoke((20 + (currentStep++ * 60 / totalSteps)), "Uploading ${localFile.name}...")
+                    updateProgress((20 + (currentStep++ * 60 / totalSteps)), "Uploading ${localFile.name}...")
 
                     val remotePath = "${config.remotePath.trimEnd('/')}/$cleanRelativePath"
                     localFile.openInputStream()?.use { input ->
@@ -274,20 +310,6 @@ class SyncManager(
                     }
 
                     // Update State
-                    // Since we don't get the new remote timestamp easily without another network call,
-                    // we can't perfectly set lastRemoteModified.
-                    // However, we can set lastLocalModified to what we just uploaded.
-                    // Ideally, we'd list the file to get the new remote timestamp to avoid re-downloading next time.
-                    // For now, let's assume if we uploaded, the remote is now "newer" or equal to what we have.
-                    // We will set lastRemoteModified to effectively "infinite" or just not update it yet?
-                    // No, if we don't update lastRemoteModified, the download logic might see the new remote file (with new timestamp)
-                    // as a "remote change" next time.
-                    //
-                    // HEURISTIC: We must know the timestamp of the file we just put on the server.
-                    // Since we can't easily get it, we'll try to fetch metadata for this single file if provider supports it, or List it.
-                    // Fallback: We can ignore the download if remote timestamp is close to now? No, risky.
-                    // Best: List the single file to get its new timestamp.
-
                     try {
                         val updatedRemoteItems = provider.listFiles(remotePath.substringBeforeLast('/'))
                         val updatedRemoteFile = updatedRemoteItems.find { it.name == localFile.name }
@@ -340,7 +362,7 @@ class SyncManager(
                         "SyncManager",
                         "Downloading ${remoteFile.name} (Remote: ${remoteFile.lastModified}, LastSyncedRemote: ${fileState?.lastRemoteModified})",
                     )
-                    progressCallback?.invoke((20 + (currentStep++ * 60 / totalSteps)), "Downloading ${remoteFile.name}...")
+                    updateProgress((20 + (currentStep++ * 60 / totalSteps)), "Downloading ${remoteFile.name}...")
 
                     provider.downloadFile(remoteFile.path)?.use { input ->
                         if (projectConfig.uri.startsWith("content://")) {
@@ -370,17 +392,9 @@ class SyncManager(
                     }
 
                     // Update State after download
-                    // We need to know the local file's new timestamp.
-                    // For SAF, getting lastModified immediately might be tricky or same as remote?
-                    // Usually we set it to remote timestamp if possible, or just read what it is.
-
                     var newLocalTimestamp = remoteFile.lastModified
                     if (projectConfig.uri.startsWith("content://")) {
                         // Re-query SAF to get actual timestamp
-                        // Simplified: assume it might update to 'now' or 'remote timestamp' depending on impl.
-                        // Let's try to get it.
-                        // For now, we update state with remoteFile.lastModified for both, assuming we tried to set it or it matches.
-                        // Ideally we should re-stat the local file.
                     } else {
                         // We called file.setLastModified(remoteFile.lastModified)
                         newLocalTimestamp = remoteFile.lastModified
@@ -404,14 +418,16 @@ class SyncManager(
 
             // Update last sync time
             SyncPreferencesManager.updateProjectSyncConfig(context, config.copy(lastSyncTimestamp = System.currentTimeMillis()))
-            progressCallback?.invoke(100, "Sync complete")
+            updateProgress(100, "Sync complete")
             Logger.d("SyncManager", "Sync finished successfully")
         } catch (e: CancellationException) {
             Logger.d("SyncManager", "Sync cancelled")
-            progressCallback?.invoke(0, "Sync cancelled: ${e.message}")
+            updateProgress(0, "Sync cancelled: ${e.message}")
         } catch (e: Exception) {
             Logger.e("SyncManager", "Sync failed", e, showToUser = true)
-            progressCallback?.invoke(0, "Sync failed: ${e.message}")
+            updateProgress(0, "Sync failed: ${e.message}")
+        } finally {
+            _globalSyncProgress.update { it - projectId }
         }
     }
 
