@@ -544,6 +544,10 @@ class CanvasActivity : AppCompatActivity() {
     private suspend fun saveCanvasSuspend(commit: Boolean = true) {
         val path = currentCanvasPath ?: return
 
+        // Fast path: If session is already cleared (e.g. via Back Press), skip save.
+        // This prevents redundant operations and potential crashes when accessing UI from background.
+        if (currentSessionRef.get() == null) return
+
         com.alexdremov.notate.data.SaveStatusManager
             .startSaving(path)
 
