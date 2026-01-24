@@ -7,11 +7,10 @@ import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.Path
 import com.alexdremov.notate.controller.SelectionManager
-import com.alexdremov.notate.util.StrokeRenderer
 
 /**
  * Responsible for rendering the selection visual state:
- * 1. The "lifted" strokes (transformed).
+ * 1. The "lifted" items (via Imposter Bitmap).
  * 2. The bounding box.
  * 3. The manipulation handles.
  */
@@ -52,16 +51,14 @@ class SelectionOverlayDrawer(
 
     private val loadingPaint =
         Paint().apply {
-            color = Color.argb(128, 255, 255, 255) // Semi-transparent white
+            color = Color.argb(64, 0, 0, 255) // Semi-transparent blue
             style = Paint.Style.FILL
             isAntiAlias = true
         }
 
     // Reuse objects to avoid allocation
-    private val screenMatrix = Matrix()
     private val path = Path()
     private val screenCorners = FloatArray(8)
-    private val screenCenter = FloatArray(2)
 
     fun draw(
         canvas: Canvas,
@@ -70,39 +67,20 @@ class SelectionOverlayDrawer(
     ) {
         if (!selectionManager.hasSelection()) return
 
+        // 1. Draw Imposter Bitmap (High Performance)
         val imposter = selectionManager.getImposter()
         if (imposter != null) {
-            // Draw Imposter Bitmap (High Performance)
             val (bitmap, offsetMatrix) = imposter
             canvas.save()
-            // Apply View Matrix (World -> Screen)
+            // World -> Screen
             canvas.concat(viewMatrix)
-            // Apply Selection Transform (Original -> Current)
+            // Original -> Transformed
             canvas.concat(selectionManager.getTransform())
-            // Apply Imposter Offset (Bitmap -> World)
+            // Bitmap -> Original
             canvas.concat(offsetMatrix)
 
             canvas.drawBitmap(bitmap, 0f, 0f, bitmapPaint)
             canvas.restore()
-        } else if (selectionManager.isGeneratingImposter) {
-            // Draw Loading State (Skip rendering heavy strokes)
-            // The box drawing code below will handle the visual feedback bounds.
-            // We can optionally draw a fill here if we calculate the path first.
-        } else {
-            // Fallback: Draw Transformed Strokes (Visual Lift)
-            // We draw them here because they are temporarily removed from the main tile model during interaction
-            if (selectionManager.selectedStrokes.isNotEmpty()) {
-                canvas.save()
-                // Apply View Matrix (World -> Screen)
-                canvas.concat(viewMatrix)
-                // Apply Selection Transform (Original -> Current)
-                canvas.concat(selectionManager.getTransform())
-
-                selectionManager.selectedStrokes.forEach { stroke ->
-                    renderer.drawStrokeToCanvas(canvas, stroke)
-                }
-                canvas.restore()
-            }
         }
 
         // 2. Draw Selection Box & Handles
@@ -119,16 +97,16 @@ class SelectionOverlayDrawer(
         path.lineTo(screenCorners[6], screenCorners[7])
         path.close()
 
-        if (selectionManager.isGeneratingImposter) {
+        if (selectionManager.isGeneratingImposter && imposter == null) {
             canvas.drawPath(path, loadingPaint)
         }
 
-        // Scale stroke width relative to screen, usually fixed size is better for UI
-        boxPaint.strokeWidth = 2f // Fixed screen pixels
+        // Scale stroke width relative to screen
+        boxPaint.strokeWidth = 2f
         canvas.drawPath(path, boxPaint)
 
         // Draw Handles
-        val handleRadius = 15f // Fixed screen pixels
+        val handleRadius = 15f
 
         for (i in 0 until 4) {
             val hx = screenCorners[i * 2]
@@ -146,21 +124,15 @@ class SelectionOverlayDrawer(
         corners: FloatArray,
         radius: Float,
     ) {
-        // Midpoint of Top-Left (0,1) and Top-Right (2,3)
         val mx = (corners[0] + corners[2]) / 2f
         val my = (corners[1] + corners[3]) / 2f
 
-        // Vector along top edge
         val dx = corners[2] - corners[0]
         val dy = corners[3] - corners[1]
         val len = kotlin.math.hypot(dx, dy)
 
         if (len < 0.1f) return
 
-        // Perpendicular vector (pointing "up" / away from center)
-        // In screen coords, Y is down.
-        // If unrotated: TL(0,0) -> TR(10,0). dx=10, dy=0. Up is (0, -1).
-        // (dy, -dx) = (0, -10). Normalized: (0, -1). Correct.
         val ux = dy / len
         val uy = -dx / len
 
@@ -168,9 +140,7 @@ class SelectionOverlayDrawer(
         val rhx = mx + ux * handleOffset
         val rhy = my + uy * handleOffset
 
-        // Line to handle
         canvas.drawLine(mx, my, rhx, rhy, boxPaint)
-        // Handle circle
         canvas.drawCircle(rhx, rhy, radius, handlePaint)
         canvas.drawCircle(rhx, rhy, radius, handleBorderPaint)
     }

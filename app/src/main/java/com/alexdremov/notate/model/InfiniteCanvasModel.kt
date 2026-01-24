@@ -430,6 +430,37 @@ class InfiniteCanvasModel {
         return strokes
     }
 
+    suspend fun stashItems(
+        rect: RectF,
+        ids: Set<Long>,
+        file: java.io.File,
+    ): Int =
+        mutex.withLock {
+            regionManager?.stashSelectedItems(rect, ids, file) ?: 0
+        }
+
+    suspend fun unstashItems(
+        file: java.io.File,
+        transform: android.graphics.Matrix,
+    ) {
+        mutex.withLock {
+            regionManager?.unstashItems(file, transform)
+            recalculateContentBounds()
+        }
+    }
+
+    suspend fun deleteItemsByIds(
+        rect: RectF,
+        ids: Set<Long>,
+    ) {
+        mutex.withLock {
+            regionManager?.removeItemsByIds(rect, ids)
+            recalculateContentBounds()
+            // History support for virtualized deletion could be added here
+            // by stashing items to a temp file and creating a HistoryAction.RemoveVirtual(file)
+        }
+    }
+
     private fun updateContentBounds(bounds: RectF) {
         if (contentBounds.isEmpty) {
             contentBounds.set(bounds)
