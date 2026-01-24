@@ -100,6 +100,7 @@ object PdfExporter {
         outputStream: OutputStream,
         isVector: Boolean,
         callback: ProgressCallback?,
+        bitmapScale: Float = 1.0f,
         pdfDocumentFactory: () -> PdfDocumentWrapper = { AndroidPdfDocumentWrapper() },
     ) = withContext(Dispatchers.IO) {
         val isFixedPages = model.canvasType == CanvasType.FIXED_PAGES
@@ -111,7 +112,7 @@ object PdfExporter {
             if (isVector) {
                 exportInfiniteCanvasVectorStreaming(context, model, outputStream, callback)
             } else {
-                exportBitmapStreaming(context, model, outputStream, callback)
+                exportBitmapStreaming(context, model, outputStream, callback, bitmapScale)
             }
         } else {
             // Use standard PdfDocument for Fixed Pages
@@ -452,6 +453,7 @@ object PdfExporter {
         model: InfiniteCanvasModel,
         outputStream: OutputStream,
         callback: ProgressCallback?,
+        bitmapScale: Float,
     ) = withContext(Dispatchers.IO) {
         // Use temp file buffering to avoid OOM on large exports
         val document = PDDocument(MemoryUsageSetting.setupTempFileOnly())
@@ -484,7 +486,7 @@ object PdfExporter {
             // Actually, for simplicity in Bitmap mode, we include background in the tiles.
 
             // Render Tiles and stream them into the PDF
-            renderTilesToPdfBox(document, contentStream, model, bounds, context, callback)
+            renderTilesToPdfBox(document, contentStream, model, bounds, context, callback, bitmapScale)
 
             contentStream.close()
 
@@ -696,6 +698,7 @@ object PdfExporter {
         bounds: RectF,
         context: android.content.Context,
         callback: ProgressCallback?,
+        bitmapScale: Float,
     ) = withContext(Dispatchers.Default) {
         val tileSize = 2048
         val cols = ceil(bounds.width() / tileSize).toInt()
@@ -726,8 +729,8 @@ object PdfExporter {
             .map { tileRect ->
                 async(Dispatchers.Default) {
                     semaphore.withPermit {
-                        val w = tileRect.width().toInt().coerceAtLeast(1)
-                        val h = tileRect.height().toInt().coerceAtLeast(1)
+                        val w = (tileRect.width() * bitmapScale).toInt().coerceAtLeast(1)
+                        val h = (tileRect.height() * bitmapScale).toInt().coerceAtLeast(1)
 
                         var bitmap: Bitmap? = null
                         try {
@@ -735,6 +738,7 @@ object PdfExporter {
                             // Tiles are opaque (filled with white), so alpha is not needed for the final PDF image.
                             bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.RGB_565)
                             val canvas = Canvas(bitmap)
+                            canvas.scale(bitmapScale, bitmapScale)
                             canvas.drawColor(Color.WHITE)
                             canvas.translate(-tileRect.left, -tileRect.top)
 

@@ -22,6 +22,7 @@ import androidx.compose.material.icons.filled.Brush
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.CloudSync
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.ViewQuilt
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.HorizontalDivider
@@ -53,6 +54,8 @@ import com.alexdremov.notate.ui.settings.InputSettingsPanel
 import com.alexdremov.notate.ui.settings.InputSettingsState
 import com.alexdremov.notate.ui.settings.InterfaceSettingsPanel
 import com.alexdremov.notate.ui.settings.InterfaceSettingsState
+import com.alexdremov.notate.ui.settings.PdfSettingsPanel
+import com.alexdremov.notate.ui.settings.PdfSettingsState
 
 @Composable
 fun SettingsDialog(
@@ -90,6 +93,7 @@ fun SettingsDialog(
                             SettingsScreen.MAIN -> "Settings"
                             SettingsScreen.INPUT -> "Input & Gestures"
                             SettingsScreen.INTERFACE -> "Interface"
+                            SettingsScreen.PDF -> "PDF Export"
                             SettingsScreen.ABOUT -> "About"
                         },
                 )
@@ -122,6 +126,12 @@ fun SettingsDialog(
                             subtitle = "Toolbar and visual settings",
                             icon = Icons.Default.ViewQuilt,
                             onClick = { currentScreen = SettingsScreen.INTERFACE },
+                        )
+                        SettingsMenuItem(
+                            title = "PDF Export",
+                            subtitle = "Quality and scale settings",
+                            icon = Icons.Default.PictureAsPdf,
+                            onClick = { currentScreen = SettingsScreen.PDF },
                         )
                         SettingsMenuItem(
                             title = "About",
@@ -184,6 +194,24 @@ fun SettingsDialog(
                         )
                     }
 
+                    SettingsScreen.PDF -> {
+                        var exportScale by remember { mutableFloatStateOf(PreferencesManager.getPdfExportScale(context)) }
+                        var syncPdfType by remember { mutableStateOf(PreferencesManager.getSyncPdfType(context)) }
+
+                        PdfSettingsPanel(
+                            state = PdfSettingsState(exportScale, syncPdfType),
+                            onScaleChange = { exportScale = it },
+                            onScaleFinished = {
+                                PreferencesManager.setPdfExportScale(context, exportScale)
+                            },
+                            onSyncTypeChange = {
+                                syncPdfType = it
+                                PreferencesManager.setSyncPdfType(context, it)
+                            },
+                            showSyncSettings = true,
+                        )
+                    }
+
                     SettingsScreen.ABOUT -> {
                         AboutSettings()
                     }
@@ -197,6 +225,7 @@ enum class SettingsScreen {
     MAIN,
     INPUT,
     INTERFACE,
+    PDF,
     ABOUT,
 }
 

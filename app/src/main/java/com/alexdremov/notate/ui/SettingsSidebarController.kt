@@ -215,6 +215,38 @@ class SettingsSidebarController(
         val rgMode: RadioGroup = exportView.findViewById(R.id.rg_export_mode)
         val btnExport: Button = exportView.findViewById(R.id.btn_export_action)
         val btnShare: Button = exportView.findViewById(R.id.btn_share_action)
+        val composeSettings: ComposeView = exportView.findViewById(R.id.compose_pdf_settings)
+
+        val updateVisibility = {
+            val isBitmap = rgMode.checkedRadioButtonId == R.id.rb_bitmap
+            composeSettings.visibility = if (isBitmap) View.VISIBLE else View.GONE
+        }
+
+        rgMode.setOnCheckedChangeListener { _, _ -> updateVisibility() }
+        updateVisibility()
+
+        composeSettings.setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed)
+        composeSettings.setContent {
+            NotateTheme {
+                Surface(color = Color.White) {
+                    val initialScale =
+                        com.alexdremov.notate.data.PreferencesManager
+                            .getPdfExportScale(context)
+                    val (scale, setScale) = androidx.compose.runtime.remember { androidx.compose.runtime.mutableFloatStateOf(initialScale) }
+
+                    com.alexdremov.notate.ui.settings.PdfSettingsPanel(
+                        state =
+                            com.alexdremov.notate.ui.settings
+                                .PdfSettingsState(scale),
+                        onScaleChange = { setScale(it) },
+                        onScaleFinished = {
+                            com.alexdremov.notate.data.PreferencesManager
+                                .setPdfExportScale(context, scale)
+                        },
+                    )
+                }
+            }
+        }
 
         btnExport.setOnClickListener {
             val isVector = rgMode.checkedRadioButtonId == R.id.rb_vector

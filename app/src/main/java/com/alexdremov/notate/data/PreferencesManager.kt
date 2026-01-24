@@ -56,6 +56,8 @@ object PreferencesManager {
     private const val KEY_COLLAPSIBLE_TOOLBAR = "collapsible_toolbar_enabled"
     private const val KEY_TOOLBAR_COLLAPSE_TIMEOUT = "toolbar_collapse_timeout"
     private const val KEY_MIN_LOG_LEVEL = "min_log_level_to_show"
+    private const val KEY_PDF_EXPORT_SCALE = "pdf_export_scale"
+    private const val KEY_SYNC_PDF_TYPE = "sync_pdf_type"
 
     // Debug Preferences
     private const val KEY_DEBUG_USE_SIMPLE_RENDERER = "debug_use_simple_renderer"
@@ -83,6 +85,24 @@ object PreferencesManager {
         option: SortOption,
     ) {
         getPrefs(context).edit().putString(KEY_SORT_OPTION, option.name).apply()
+    }
+
+    fun getPdfExportScale(context: Context): Float = getPrefs(context).getFloat(KEY_PDF_EXPORT_SCALE, 2.0f)
+
+    fun setPdfExportScale(
+        context: Context,
+        scale: Float,
+    ) {
+        getPrefs(context).edit().putFloat(KEY_PDF_EXPORT_SCALE, scale).apply()
+    }
+
+    fun getSyncPdfType(context: Context): String = getPrefs(context).getString(KEY_SYNC_PDF_TYPE, "VECTOR") ?: "VECTOR"
+
+    fun setSyncPdfType(
+        context: Context,
+        type: String,
+    ) {
+        getPrefs(context).edit().putString(KEY_SYNC_PDF_TYPE, type).apply()
     }
 
     fun getMinLogLevel(context: Context): Int = getPrefs(context).getInt(KEY_MIN_LOG_LEVEL, 4) // Default to NONE (4)
