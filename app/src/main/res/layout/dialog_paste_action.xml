@@ -3,35 +3,35 @@
     android:layout_width="wrap_content"
     android:layout_height="wrap_content"
     android:background="@drawable/bg_tool_active"
-    android:elevation="8dp"
+    android:elevation="0dp"
     android:orientation="horizontal"
-    android:padding="8dp">
+    android:clipToOutline="true">
 
     <TextView
         android:id="@+id/btn_paste"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:background="?attr/selectableItemBackground"
-        android:paddingHorizontal="12dp"
-        android:paddingVertical="8dp"
+        android:paddingHorizontal="16dp"
+        android:paddingVertical="12dp"
         android:text="Paste"
         android:textColor="@android:color/black"
         android:textSize="16sp"
         android:textStyle="bold" />
 
     <View
-        android:layout_width="1dp"
+        android:layout_width="2dp"
         android:layout_height="match_parent"
-        android:layout_marginHorizontal="8dp"
-        android:background="#CCCCCC" />
+        android:layout_marginVertical="8dp"
+        android:background="@android:color/black" />
 
     <TextView
         android:id="@+id/btn_paste_image"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:background="?attr/selectableItemBackground"
-        android:paddingHorizontal="12dp"
-        android:paddingVertical="8dp"
+        android:paddingHorizontal="16dp"
+        android:paddingVertical="12dp"
         android:text="Paste Image"
         android:textColor="@android:color/black"
         android:textSize="16sp"
