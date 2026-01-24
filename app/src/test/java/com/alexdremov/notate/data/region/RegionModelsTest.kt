@@ -55,8 +55,8 @@ class RegionModelsTest {
         val stroke = createTestStroke(strokePointsCount)
         region.items.add(stroke)
 
-        // Expected size: Base(128) + StrokeBase(128) + Points(10 * 52)
-        val expectedSize = 128L + 128L + (strokePointsCount * 52L)
+        // Expected size: Base(128) + StrokeBase(128) + PathBuffer(1024) + Points(10 * 52)
+        val expectedSize = 128L + 128L + 1024L + (strokePointsCount * 52L)
         assertEquals(expectedSize, region.sizeBytes())
 
         // Add an image

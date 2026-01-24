@@ -140,8 +140,19 @@ class RegionManager(
                     newValue: RegionData?,
                 ) {
                     if (key == resizingId) return
-                    if (evicted) handleEviction(key, oldValue)
-                    if (oldValue.isDirty) saveRegionInternal(oldValue)
+
+                    if (evicted) {
+                        handleEviction(key, oldValue)
+                    }
+
+                    // If it was moved to overflow, don't save or recycle yet
+                    val inOverflow = stateLock.read { overflowRegions.containsKey(key) }
+                    if (inOverflow) return
+
+                    if (oldValue.isDirty) {
+                        saveRegionInternal(oldValue)
+                    }
+
                     oldValue.recycle()
                 }
             }
@@ -174,11 +185,26 @@ class RegionManager(
         key: RegionId,
         region: RegionData,
     ) {
-        if (pinnedIds.contains(key)) {
-            val size = region.getSizeCached()
-            if (currentOverflowBytes + size <= maxOverflowBytes) {
-                overflowRegions[key] = region
-                currentOverflowBytes += size
+        stateLock.write {
+            if (pinnedIds.contains(key)) {
+                val size = region.getSizeCached()
+
+                while (currentOverflowBytes + size > maxOverflowBytes && overflowRegions.isNotEmpty()) {
+                    val oldestKey = overflowRegions.keys.first()
+                    val oldestRegion = overflowRegions.remove(oldestKey)
+                    if (oldestRegion != null) {
+                        currentOverflowBytes -= oldestRegion.getSizeCached()
+                        if (oldestRegion.isDirty) saveRegionInternal(oldestRegion)
+                        oldestRegion.recycle()
+                    }
+                }
+
+                if (currentOverflowBytes + size <= maxOverflowBytes) {
+                    overflowRegions[key] = region
+                    currentOverflowBytes += size
+                } else {
+                    if (region.isDirty) saveRegionInternal(region)
+                }
             }
         }
     }
@@ -440,7 +466,17 @@ class RegionManager(
     fun getActiveRegionIds(): Set<RegionId> = cachedActiveIds
 
     fun setPinnedRegions(ids: Set<RegionId>) {
-        stateLock.write { pinnedIds = ids }
+        stateLock.write {
+            val unpinned = pinnedIds - ids
+            pinnedIds = ids
+
+            unpinned.forEach { id ->
+                overflowRegions.remove(id)?.let {
+                    currentOverflowBytes -= it.getSizeCached()
+                    regionCache.put(id, it)
+                }
+            }
+        }
     }
 
     fun clear() {

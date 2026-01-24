@@ -148,7 +148,7 @@ data class RegionData(
                 }
         }
 
-        size += 128L + 128L // Base RegionData overhead + ArrayList overhead
+        size += 128L // Base RegionData overhead
         size += quadtree?.sizeBytes() ?: 0L
         return size
     }

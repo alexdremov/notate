@@ -48,9 +48,6 @@ class PdfExporterTest {
     fun setup() {
         context = RuntimeEnvironment.getApplication()
         Dispatchers.setMain(testDispatcher)
-        mockkStatic(Dispatchers::class)
-        every { Dispatchers.IO } returns testDispatcher
-        every { Dispatchers.Default } returns testDispatcher
 
         mockkStatic(EpdController::class)
         every { EpdController.getMaxTouchPressure() } returns 4096f
@@ -59,7 +56,6 @@ class PdfExporterTest {
     @After
     fun teardown() {
         unmockkStatic(EpdController::class)
-        unmockkStatic(Dispatchers::class)
         Dispatchers.resetMain()
     }
 
@@ -103,7 +99,7 @@ class PdfExporterTest {
     @Test
     fun `test export infinite canvas vector`() =
         runTest(testDispatcher) {
-            val model = mockk<InfiniteCanvasModel>()
+            val model = mockk<InfiniteCanvasModel>(relaxed = true)
             val stroke = createTestStroke(100f, 100f)
 
             io.mockk.coEvery { model.queryItems(any()) } returns arrayListOf(stroke)
@@ -136,7 +132,7 @@ class PdfExporterTest {
     @Test
     fun `test export invokes progress callback`() =
         runTest(testDispatcher) {
-            val model = mockk<InfiniteCanvasModel>()
+            val model = mockk<InfiniteCanvasModel>(relaxed = true)
             val stroke = createTestStroke(100f, 100f)
             val callback = mockk<PdfExporter.ProgressCallback>(relaxed = true)
 
@@ -166,7 +162,7 @@ class PdfExporterTest {
     @Test
     fun `test export fixed pages vector`() =
         runTest(testDispatcher) {
-            val model = mockk<InfiniteCanvasModel>()
+            val model = mockk<InfiniteCanvasModel>(relaxed = true)
             val stroke1 = createTestStroke(100f, 100f)
             val stroke2 = createTestStroke(100f, 2000f) // Should be on second page
 
@@ -199,7 +195,7 @@ class PdfExporterTest {
     @Test
     fun `test export fixed pages bitmap`() =
         runTest(testDispatcher) {
-            val model = mockk<InfiniteCanvasModel>()
+            val model = mockk<InfiniteCanvasModel>(relaxed = true)
             val stroke1 = createTestStroke(100f, 100f)
 
             io.mockk.coEvery { model.queryItems(any()) } returns arrayListOf(stroke1)
