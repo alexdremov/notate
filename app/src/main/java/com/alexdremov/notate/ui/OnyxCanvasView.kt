@@ -26,7 +26,6 @@ import com.alexdremov.notate.ui.render.CanvasRenderer
 import com.alexdremov.notate.ui.render.RenderQuality
 import com.alexdremov.notate.ui.render.SelectionOverlayDrawer
 import com.alexdremov.notate.ui.selection.SelectionInteractor
-import com.alexdremov.notate.util.Logger
 import com.onyx.android.sdk.api.device.epd.EpdController
 import com.onyx.android.sdk.api.device.epd.UpdateMode
 import com.onyx.android.sdk.pen.EpdPenManager

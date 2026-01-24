@@ -271,15 +271,18 @@ object PdfExporter {
     }
 
     private fun getSafeMaxPressure(stroke: Stroke): Float {
-        var maxObserved = 0f
-        for (p in stroke.points) {
-            if (p.pressure > maxObserved) maxObserved = p.pressure
+        val maxObserved = stroke.points.maxOfOrNull { it.pressure } ?: 0f
+
+        return when {
+            maxObserved > 0f && maxObserved <= 1.0f -> {
+                1.0f
+            }
+
+            else -> {
+                val hwMax = EpdController.getMaxTouchPressure()
+                if (hwMax <= 0f) 4096f else hwMax
+            }
         }
-        if (maxObserved > 0f && maxObserved <= 1.0f) {
-            return 1.0f
-        }
-        val hwMax = EpdController.getMaxTouchPressure()
-        return if (hwMax <= 0f) 4096f else hwMax
     }
 
     private fun renderStrokeToPdf(
