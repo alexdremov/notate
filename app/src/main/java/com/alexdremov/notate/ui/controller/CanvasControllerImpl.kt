@@ -260,7 +260,11 @@ class CanvasControllerImpl(
                         }
 
                         else -> {
-                            throw IllegalArgumentException("Unsupported CanvasItem type: ${item::class.java.name}")
+                            android.util.Log.w(
+                                "CanvasControllerImpl",
+                                "Unsupported CanvasItem type during paste: ${item::class.java.name}",
+                            )
+                            return@forEach
                         }
                     }
 
@@ -378,7 +382,11 @@ class CanvasControllerImpl(
                     }
 
                     else -> {
-                        throw IllegalArgumentException("Unsupported CanvasItem type: ${item::class.java.name}")
+                        android.util.Log.w(
+                            "CanvasControllerImpl",
+                            "Unsupported CanvasItem type: ${item::class.java.name}",
+                        )
+                        return@forEach
                     }
                 }
 

@@ -447,10 +447,17 @@ class InfiniteCanvasModel {
         return r
     }
 
+    /**
+     * Serializes the current canvas state to [CanvasData].
+     *
+     * Note: this requires an initialized session; [regionManager] must be non-null.
+     */
     suspend fun toCanvasData(): CanvasData =
         mutex.withLock {
-            val rm = regionManager
-            val size = rm?.regionSize ?: CanvasConfig.DEFAULT_REGION_SIZE
+            val manager =
+                regionManager
+                    ?: throw IllegalStateException("toCanvasData() called before session initialization: regionManager is null")
+            val size = manager.regionSize
 
             CanvasSerializer.toData(
                 canvasType,

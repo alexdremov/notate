@@ -69,6 +69,7 @@ class MinimapDrawer(
         minimapHandler.postDelayed(hideMinimapRunnable, CanvasConfig.MINIMAP_HIDE_DELAY_MS)
     }
 
+    @Volatile
     private var isRegenerating = false
 
     fun draw(
@@ -283,15 +284,17 @@ class MinimapDrawer(
     }
 
     private fun finalizeRegeneration() {
-        currentThumbnailBitmap?.let { bitmap ->
-            contentThumbnail?.recycle()
-            contentThumbnail = bitmap
-            contentRect.set(regenerationContextRect)
+        synchronized(this@MinimapDrawer) {
+            currentThumbnailBitmap?.let { bitmap ->
+                contentThumbnail?.recycle()
+                contentThumbnail = bitmap
+                contentRect.set(regenerationContextRect)
+            }
+            currentThumbnailBitmap = null
+            currentThumbnailCanvas = null
+            minimapDirty = false
+            isRegenerating = false
         }
-        currentThumbnailBitmap = null
-        currentThumbnailCanvas = null
-        minimapDirty = false
-        isRegenerating = false
         onRefresh()
     }
 

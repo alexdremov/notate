@@ -21,7 +21,8 @@ object ZipUtils {
             while (entry != null) {
                 val file = File(targetDir, entry.name)
                 // Security check for Zip Slip
-                if (!file.canonicalPath.startsWith(targetDir.canonicalPath)) {
+                val canonicalPath = file.canonicalPath
+                if (!canonicalPath.startsWith(targetDir.canonicalPath + File.separator)) {
                     throw SecurityException("Zip entry is outside of the target dir: ${entry.name}")
                 }
 
@@ -79,7 +80,8 @@ object ZipUtils {
             var entry = zis.nextEntry
             while (entry != null) {
                 val file = File(targetDir, entry.name)
-                if (!file.canonicalPath.startsWith(targetDir.canonicalPath)) {
+                val canonicalPath = file.canonicalPath
+                if (!canonicalPath.startsWith(targetDir.canonicalPath + File.separator)) {
                     throw SecurityException("Zip entry is outside of the target dir: ${entry.name}")
                 }
 

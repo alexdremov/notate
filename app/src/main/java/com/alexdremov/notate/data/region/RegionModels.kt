@@ -29,7 +29,6 @@ data class RegionId(
     }
 }
 
-@Serializable
 data class RegionData(
     val id: RegionId,
     val items: MutableList<CanvasItem> = ArrayList(),

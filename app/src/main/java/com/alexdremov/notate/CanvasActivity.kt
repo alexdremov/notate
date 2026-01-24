@@ -370,7 +370,7 @@ class CanvasActivity : AppCompatActivity() {
             )
 
         binding.canvasView.onStrokeStarted = {
-            activePenPopup?. dismiss()
+            activePenPopup?.dismiss()
             activePenPopup = null
             if (sidebarCoordinator.isOpen) {
                 sidebarCoordinator.close()
@@ -677,7 +677,7 @@ class CanvasActivity : AppCompatActivity() {
 
             com.alexdremov.notate.util.EpdFastModeController
                 .enterFastMode()
-            activePenPopup?. show(binding.root, targetRect)
+            activePenPopup?.show(binding.root, targetRect)
         } else {
             viewModel.selectTool(toolId)
         }

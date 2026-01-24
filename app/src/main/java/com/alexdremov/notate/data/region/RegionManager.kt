@@ -111,8 +111,12 @@ class RegionManager(
     }
 
     init {
-        // Load index on startup
-        regionIndex = storage.loadIndex().toMutableMap()
+        // Load index on startup (deep-copy RectF values to avoid shared mutable state)
+        regionIndex =
+            storage
+                .loadIndex()
+                .mapValues { (_, rect) -> RectF(rect) }
+                .toMutableMap()
 
         if (regionIndex.isEmpty()) {
             Logger.w("RegionManager", "Index empty on init. Attempting to rebuild from region files...")
@@ -162,8 +166,9 @@ class RegionManager(
             object : PerformanceProfiler.MemoryStatsProvider {
                 override fun getStats(): Map<String, String> =
                     mapOf(
-                        "Region Cache (MB)" to "${regionCache.size() / 1024} / ${regionCache.maxSize() / 1024}",
-                        "Index" to "${regionIndex.size}",
+                        "Region Cache (MB)" to
+                            "${stateLock.read { regionCache.size() / 1024 }} / ${stateLock.read { regionCache.maxSize() / 1024 }}",
+                        "Index" to "${stateLock.read { regionIndex.size }}",
                         "Loading Jobs" to "${loadingJobs.size}",
                     )
             },
