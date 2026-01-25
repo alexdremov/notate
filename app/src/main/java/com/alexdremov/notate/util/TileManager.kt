@@ -124,6 +124,57 @@ class TileManager(
             xfermode = PorterDuffXfermode(PorterDuff.Mode.CLEAR)
         }
 
+    @Volatile
+    private var hiddenItemIds: Set<Long> = emptySet()
+
+    fun setHiddenItems(ids: Set<Long>) {
+        this.hiddenItemIds = ids
+    }
+
+    /**
+     * Instantly "erases" the specified items from the cached tile bitmaps.
+     * This provides immediate visual feedback for "lifting" items during selection
+     * without waiting for background tile regeneration.
+     */
+    fun hideItemsInCache(items: List<com.alexdremov.notate.model.CanvasItem>) {
+        if (items.isEmpty()) return
+
+        val snapshot = tileCache.snapshot()
+        val unionBounds = RectF()
+        items.forEach { unionBounds.union(it.bounds) }
+
+        val paint =
+            Paint().apply {
+                xfermode = PorterDuffXfermode(PorterDuff.Mode.CLEAR)
+                style = Paint.Style.STROKE
+                strokeJoin = Paint.Join.ROUND
+                strokeCap = Paint.Cap.ROUND
+            }
+
+        for ((key, bitmap) in snapshot) {
+            if (bitmap == null || bitmap.isRecycled || bitmap == tileCache.errorBitmap) continue
+
+            val worldSize = calculateWorldTileSize(key.level)
+            val tileRect = getTileWorldRect(key.col, key.row, worldSize)
+
+            if (RectF.intersects(unionBounds, tileRect)) {
+                val tileCanvas = Canvas(bitmap)
+                val scale = tileSize.toFloat() / worldSize
+                tileCanvas.save()
+                tileCanvas.scale(scale, scale)
+                tileCanvas.translate(-tileRect.left, -tileRect.top)
+
+                for (item in items) {
+                    if (RectF.intersects(item.bounds, tileRect)) {
+                        renderer.drawItemToCanvas(tileCanvas, item, xfermode = PorterDuff.Mode.CLEAR)
+                    }
+                }
+                tileCanvas.restore()
+            }
+        }
+        notifyTileReady()
+    }
+
     init {
         // Listen for Model Updates
         initJobs +=
@@ -131,13 +182,15 @@ class TileManager(
                 canvasModel.events.collect { event ->
                     when (event) {
                         is InfiniteCanvasModel.ModelEvent.ItemsRemoved -> {
+                            hideItemsInCache(event.items)
                             val bounds = RectF()
                             event.items.forEach { bounds.union(it.bounds) }
                             refreshTiles(bounds)
                         }
 
                         is InfiniteCanvasModel.ModelEvent.ItemsAdded -> {
-                            // Handle operations like Paste, Undo, Redo
+                            // Handle operations like Paste, Undo, Redo, Unstash
+                            updateTilesWithItems(event.items)
                             val bounds = RectF()
                             event.items.forEach { bounds.union(it.bounds) }
                             refreshTiles(bounds)
@@ -579,15 +632,19 @@ class TileManager(
         // We can sort in place or copy. Query returns ArrayList so it's mutable?
         // queryItems returns ArrayList, let's assume mutable or copy.
         val sortedItems = items.sortedWith(compareBy<com.alexdremov.notate.model.CanvasItem> { it.zIndex }.thenBy { it.order })
+        val hidden = hiddenItemIds
 
         for (item in sortedItems) {
             yield() // Check cancellation
+            if (hidden.contains(item.order)) continue
             renderer.drawItemToCanvas(canvas, item, scale = scale)
         }
         canvas.restore()
     }
 
     fun updateTilesWithItem(item: com.alexdremov.notate.model.CanvasItem) {
+        if (hiddenItemIds.contains(item.order)) return
+
         if (item is Stroke && item.style == com.alexdremov.notate.model.StrokeType.HIGHLIGHTER) {
             refreshTiles(item.bounds)
             return
@@ -836,9 +893,8 @@ class TileManager(
             val tileRect = getTileWorldRect(key.col, key.row, worldSize)
 
             if (RectF.intersects(bounds, tileRect)) {
-                // Always re-queue generating tiles if they intersect the dirty bounds.
-                // If we skip them here, they will be effectively cancelled (due to version mismatch)
-                // and simply stop loading, leaving gaps or missing updates.
+                // we queue even different LOD or out-of-bounds tiles as currently generating tiles may commit stale data
+                val isVisible = visibleRect != null && key.level == currentLevel && RectF.intersects(visibleRect, tileRect)
                 queueTileGeneration(key.col, key.row, key.level, worldSize, true, version, forceRefresh = true)
             }
         }

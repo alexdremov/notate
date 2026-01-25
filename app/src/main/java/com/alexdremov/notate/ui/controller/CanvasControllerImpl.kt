@@ -187,21 +187,41 @@ class CanvasControllerImpl(
     override suspend fun selectItem(item: CanvasItem) {
         selectionManager.select(item)
         generateSelectionImposter()
-        withContext(Dispatchers.Main) { renderer.invalidate() }
+        withContext(Dispatchers.Main) {
+            renderer.setHiddenItems(selectionManager.getSelectedIds())
+            renderer.hideItemsInCache(listOf(item))
+            renderer.invalidate()
+        }
     }
 
     override suspend fun selectItems(items: List<CanvasItem>) {
         selectionManager.selectAll(items)
         generateSelectionImposter()
-        withContext(Dispatchers.Main) { renderer.invalidate() }
+        withContext(Dispatchers.Main) {
+            renderer.setHiddenItems(selectionManager.getSelectedIds())
+            renderer.hideItemsInCache(items)
+            renderer.invalidate()
+        }
     }
 
     override suspend fun clearSelection() {
         if (selectionManager.hasSelection()) {
+            val bounds = selectionManager.getTransformedBounds()
+            val ids = selectionManager.getSelectedIds()
+
+            // BAKING: Get items and draw them onto tiles before clearing selection
+            val items = getItemsInRect(bounds).filter { ids.contains(it.order) }
+
             selectionManager.clearSelection()
             stashedFile?.delete()
             stashedFile = null
-            withContext(Dispatchers.Main) { renderer.invalidate() }
+            withContext(Dispatchers.Main) {
+                renderer.setHiddenItems(emptySet())
+                renderer.updateTilesWithItems(items)
+                renderer.refreshTiles(bounds)
+                renderer.invalidate()
+                onContentChangedListener?.invoke()
+            }
         }
     }
 
@@ -214,6 +234,7 @@ class CanvasControllerImpl(
             stashedFile = null
             model.deleteItemsByIds(bounds, ids)
             withContext(Dispatchers.Main) {
+                renderer.setHiddenItems(emptySet())
                 renderer.invalidateTiles(bounds)
                 onContentChangedListener?.invoke()
             }
@@ -297,6 +318,8 @@ class CanvasControllerImpl(
                 renderer.updateTilesWithItems(pastedItems)
                 selectionManager.clearSelection()
                 selectionManager.selectAll(pastedItems)
+                renderer.setHiddenItems(selectionManager.getSelectedIds())
+                renderer.hideItemsInCache(pastedItems)
                 generateSelectionImposter()
                 renderer.invalidate()
                 onContentChangedListener?.invoke()
@@ -327,6 +350,8 @@ class CanvasControllerImpl(
                 renderer.updateTilesWithItem(added)
                 selectionManager.clearSelection()
                 selectionManager.select(added)
+                renderer.setHiddenItems(selectionManager.getSelectedIds())
+                renderer.hideItemsInCache(listOf(added))
                 generateSelectionImposter()
                 renderer.invalidate()
                 onContentChangedListener?.invoke()
@@ -336,25 +361,31 @@ class CanvasControllerImpl(
 
     override suspend fun startMoveSelection() {
         if (!selectionManager.hasSelection()) return
-        startBatchSession()
 
         val bounds = selectionManager.getTransformedBounds()
         val ids = selectionManager.getSelectedIds()
 
-        // 1. Ensure Imposter is ready (or wait for it)
+        // 1. Query items BEFORE stashing removes them from model
+        val items = getItemsInRect(bounds).filter { ids.contains(it.order) }
+
+        startBatchSession()
+
+        // 2. Ensure Imposter is ready (or wait for it)
         if (selectionManager.getImposter() == null) {
             generateSelectionImposter()
         }
 
-        // 2. Stash Selection to Temp File
+        // 3. Stash Selection to Temp File
         withContext(Dispatchers.IO) {
             val file = File(context.cacheDir, "selection_stash_${System.currentTimeMillis()}.bin")
             stashedFile = file
             model.stashItems(bounds, ids, file)
         }
 
-        // 3. Inform renderer to invalidate the "lifted" area
+        // 4. Inform renderer to hide items and invalidate the "lifted" area
         withContext(Dispatchers.Main) {
+            renderer.setHiddenItems(ids)
+            renderer.hideItemsInCache(items)
             renderer.invalidateTiles(bounds)
         }
     }
@@ -390,10 +421,8 @@ class CanvasControllerImpl(
                     withContext(Dispatchers.Main) {
                         if (selectionManager.hasSelection()) {
                             selectionManager.setImposter(bitmap, matrix)
-                        } else {
-                            bitmap.recycle()
                         }
-                    }
+                    } // Removed else branch to recycle bitmap
                 }
             } catch (e: Throwable) {
                 Log.w("CanvasController", "Async imposter generation failed: ${e.message}")
@@ -425,21 +454,41 @@ class CanvasControllerImpl(
 
         val transform = selectionManager.getTransform()
 
-        withContext(Dispatchers.IO) {
-            model.unstashItems(file, transform)
-            file.delete()
-        }
+        val newItems =
+            withContext(Dispatchers.IO) {
+                model.unstashItems(file, transform)
+            }
+        file.delete()
         stashedFile = null
 
         endBatchSession()
 
-        // For now, clear selection on commit since we don't have the new IDs easily
-        // Or we could re-query the new area, but let's keep it simple.
+        // ALWAYS LIFTED STRATEGY:
+        // Do NOT clear selection. Re-select the new items immediately.
+        // This keeps them "lifted" in the SelectionOverlay and hidden from the tiles.
+
         selectionManager.clearSelection()
-        selectionManager.resetTransform()
+        selectionManager.resetTransform() // Transform is now baked into the items
+        selectionManager.selectAll(newItems)
+
+        // We must regenerate the imposter because the old one might have artifacts or
+        // the coordinate system has effectively changed (transform applied).
+        // While generating, SelectionOverlayDrawer will fallback to vector rendering.
+        selectionManager.clearImposter()
 
         withContext(Dispatchers.Main) {
+            // 1. Hide from tiles immediately (prevent double draw if TileManager updated them)
+            renderer.hideItemsInCache(newItems)
+
+            // 2. Tell renderer to KEEP hiding these IDs during future tile generations
+            renderer.setHiddenItems(selectionManager.getSelectedIds())
+
+            // 3. Trigger overlay redraw (will show vectors or new imposter)
             renderer.invalidate()
+
+            // 4. Start async imposter generation for the new state
+            generateSelectionImposter()
+
             onContentChangedListener?.invoke()
         }
     }

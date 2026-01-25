@@ -514,8 +514,9 @@ class RegionManager(
     suspend fun unstashItems(
         inputFile: java.io.File,
         transform: android.graphics.Matrix,
-    ) {
-        if (!inputFile.exists()) return
+    ): List<CanvasItem> {
+        if (!inputFile.exists()) return emptyList()
+        val addedItems = ArrayList<CanvasItem>()
         DataInputStream(BufferedInputStream(FileInputStream(inputFile))).use { dis ->
             try {
                 while (dis.available() > 0) {
@@ -539,13 +540,18 @@ class RegionManager(
                                 opacity = data.opacity,
                             )
                     }
-                    if (item != null) addItem(transformItem(item, transform))
+                    if (item != null) {
+                        val transformed = transformItem(item, transform)
+                        addItem(transformed)
+                        addedItems.add(transformed)
+                    }
                 }
             } catch (e: java.io.EOFException) {
             } catch (e: Exception) {
                 Logger.e("RegionManager", "Failed to unstash items", e)
             }
         }
+        return addedItems
     }
 
     private fun transformItem(

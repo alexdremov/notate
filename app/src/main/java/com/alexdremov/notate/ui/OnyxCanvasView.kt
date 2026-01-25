@@ -206,6 +206,7 @@ class OnyxCanvasView
 
             canvasController.setOnContentChangedListener {
                 onContentChanged?.invoke()
+                showActionPopup()
             }
         }
 

@@ -10,7 +10,7 @@ import com.alexdremov.notate.controller.SelectionManager
 
 /**
  * Responsible for rendering the selection visual state:
- * 1. The "lifted" items (via Imposter Bitmap).
+ * 1. The "lifted" items (via Imposter Bitmap or direct vector fallback).
  * 2. The bounding box.
  * 3. The manipulation handles.
  */
@@ -67,24 +67,36 @@ class SelectionOverlayDrawer(
     ) {
         if (!selectionManager.hasSelection()) return
 
-        // 1. Draw Imposter Bitmap (High Performance)
+        // 1. Draw Lifted Items
         val imposter = selectionManager.getImposter()
         if (imposter != null) {
+            // High Performance: Use pre-rendered bitmap
             val (bitmap, offsetMatrix) = imposter
             canvas.save()
-            // World -> Screen
             canvas.concat(viewMatrix)
-            // Original -> Transformed
             canvas.concat(selectionManager.getTransform())
-            // Bitmap -> Original
             canvas.concat(offsetMatrix)
-
             canvas.drawBitmap(bitmap, 0f, 0f, bitmapPaint)
+            canvas.restore()
+        } else {
+            // Fallback: Direct Vector Rendering if imposter is missing or generating
+            canvas.save()
+            canvas.concat(viewMatrix)
+            canvas.concat(selectionManager.getTransform())
+
+            val ids = selectionManager.getSelectedIds()
+            renderer.renderDirectVectorsSync(
+                canvas,
+                Matrix(), // Identity as we already concatted transform
+                null,
+                RenderQuality.HIGH,
+            ) { item -> ids.contains(item.order) }
+
             canvas.restore()
         }
 
         // 2. Draw Selection Box & Handles
-        val corners = selectionManager.getTransformedCorners() // World Coords [x0,y0...]
+        val corners = selectionManager.getTransformedCorners()
 
         // Transform corners to Screen Space
         viewMatrix.mapPoints(screenCorners, corners)
@@ -101,13 +113,11 @@ class SelectionOverlayDrawer(
             canvas.drawPath(path, loadingPaint)
         }
 
-        // Scale stroke width relative to screen
         boxPaint.strokeWidth = 2f
         canvas.drawPath(path, boxPaint)
 
         // Draw Handles
         val handleRadius = 15f
-
         for (i in 0 until 4) {
             val hx = screenCorners[i * 2]
             val hy = screenCorners[i * 2 + 1]
@@ -115,7 +125,6 @@ class SelectionOverlayDrawer(
             canvas.drawCircle(hx, hy, handleRadius, handleBorderPaint)
         }
 
-        // Draw Rotate Handle (Top-Center Knob)
         drawRotateHandle(canvas, screenCorners, handleRadius)
     }
 

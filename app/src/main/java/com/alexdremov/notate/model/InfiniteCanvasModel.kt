@@ -442,12 +442,15 @@ class InfiniteCanvasModel {
     suspend fun unstashItems(
         file: java.io.File,
         transform: android.graphics.Matrix,
-    ) {
+    ): List<CanvasItem> =
         mutex.withLock {
-            regionManager?.unstashItems(file, transform)
+            val added = regionManager?.unstashItems(file, transform) ?: emptyList()
+            if (added.isNotEmpty()) {
+                _events.tryEmit(ModelEvent.ItemsAdded(added))
+            }
             recalculateContentBounds()
+            added
         }
-    }
 
     suspend fun deleteItemsByIds(
         rect: RectF,
