@@ -300,7 +300,7 @@ class RegionManager(
                 // CRITICAL FIX: Ensure the global spatial index matches the actual loaded content.
                 // If the stored index is stale (smaller than actual bounds), strokes extending
                 // into neighbors won't be found by getRegionIdsInRect(), causing clipping/disappearance
-                // in zoomed-out composite tiles.
+                // when querying items across regions at different zoom levels.
                 if (!region!!.contentBounds.isEmpty) {
                     val indexBounds = regionIndex[id]
                     if (indexBounds == null || indexBounds != region.contentBounds) {
