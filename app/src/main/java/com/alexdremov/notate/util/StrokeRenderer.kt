@@ -208,6 +208,12 @@ object StrokeRenderer {
                 return@trace
             }
 
+            // Global Culling: If the stroke's overall bounds are outside the clip, skip everything.
+            // Using EdgeType.AA for safety with strokes.
+            if (canvas.quickReject(stroke.bounds, Canvas.EdgeType.AA)) {
+                return@trace
+            }
+
             val maxPressure = getSafeMaxPressure(stroke)
             val displayColor = calculateDisplayColor(stroke)
 
