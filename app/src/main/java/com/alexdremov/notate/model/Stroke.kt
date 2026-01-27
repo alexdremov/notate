@@ -44,4 +44,32 @@ data class Stroke(
         path.reset()
         renderCache = null
     }
+
+    override fun equals(other: Any?): Boolean {
+        if (this === other) return true
+        if (javaClass != other?.javaClass) return false
+
+        other as Stroke
+
+        if (points != other.points) return false
+        if (color != other.color) return false
+        if (width != other.width) return false
+        if (style != other.style) return false
+        if (bounds != other.bounds) return false
+        if (strokeOrder != other.strokeOrder) return false
+        if (zIndex != other.zIndex) return false
+
+        return true
+    }
+
+    override fun hashCode(): Int {
+        var result = points.hashCode()
+        result = 31 * result + color
+        result = 31 * result + width.hashCode()
+        result = 31 * result + style.hashCode()
+        result = 31 * result + bounds.hashCode()
+        result = 31 * result + strokeOrder.hashCode()
+        result = 31 * result + zIndex.hashCode()
+        return result
+    }
 }

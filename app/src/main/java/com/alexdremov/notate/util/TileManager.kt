@@ -293,12 +293,16 @@ class TileManager(
                         if (col in startCol..endCol && row in startRow..endRow) continue
                         val key = TileCache.TileKey(col, row, level)
                         validKeys.add(key)
-                        queueTileGeneration(col, row, level, worldTileSize, false, currentVersion)
                     }
                 }
             }
 
             cancelStaleJobs(validKeys)
+
+            validKeys.forEach { key ->
+                val isVisible = (startCol <= key.col) && (key.col <= endCol) && (startRow <= key.row) && (key.row <= endRow)
+                drawOrQueueTile(canvas, key.col, key.row, key.level, worldTileSize, isVisible, currentVersion, scale)
+            }
 
             if (CanvasConfig.DEBUG_SHOW_REGIONS) {
                 drawRegionDebugOverlay(canvas, scale)
@@ -310,6 +314,7 @@ class TileManager(
         generationJobs.forEach { (key, job) ->
             if (!validKeys.contains(key)) {
                 job.cancel()
+                tileCache.remove(key)
             }
         }
     }
