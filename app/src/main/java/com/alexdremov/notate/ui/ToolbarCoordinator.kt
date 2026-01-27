@@ -8,6 +8,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.ViewTreeObserver
 import android.widget.LinearLayout
+import androidx.core.os.HandlerCompat
 import com.alexdremov.notate.ui.dpToPx
 import com.onyx.android.sdk.api.device.EpdDeviceManager
 
@@ -39,7 +40,7 @@ class ToolbarCoordinator(
     var isCollapsible: Boolean = false
     var onRequestCollapse: (() -> Unit)? = null
 
-    private val handler = Handler.createAsync(Looper.getMainLooper())
+    private val handler = HandlerCompat.createAsync(Looper.getMainLooper())
     private val collapseRunnable =
         Runnable {
             if (isCollapsible) {

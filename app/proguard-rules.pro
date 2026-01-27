@@ -20,3 +20,6 @@
 
 # Guava / Java 8 Reflection (Fix for R8 errors)
 -dontwarn java.lang.reflect.AnnotatedType
+
+# PDFBox optional JPEG2000 support
+-dontwarn com.gemalto.jp2.**
