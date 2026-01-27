@@ -472,14 +472,14 @@ class RegionManager(
 
                 region.isDirty = true
 
-                val removedBounds = RectF()
                 if (regionItems.isNotEmpty()) {
+                    val removedBounds = RectF()
                     removedBounds.set(regionItems[0].bounds)
                     for (i in 1 until regionItems.size) {
                         removedBounds.union(regionItems[i].bounds)
                     }
+                    invalidateOverlappingThumbnails(removedBounds)
                 }
-                invalidateOverlappingThumbnails(removedBounds)
 
                 region.invalidateSize()
                 regionCache.put(id, region)
