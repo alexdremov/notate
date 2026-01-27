@@ -431,7 +431,7 @@ class PenInputHandler(
                     currentLasso.transform(inverseMatrix, worldPath)
                     val items = controller.getItemsInPath(worldPath)
                     controller.selectItems(items)
-                    refreshHandler.postDelayed(refreshRunnable, 50)
+                    refreshHandler.post { performRefresh(true) }
                 } else {
                     val left = minOf(currentStartX ?: curX, curX)
                     val top = minOf(currentStartY ?: curY, curY)
