@@ -528,10 +528,6 @@ class TileManager(
             val scale = tileSize.toFloat() / worldSize
 
             val rm = canvasModel.getRegionManager()
-            // CRITICAL OPTIMIZATION:
-            // If the tile covers a large area (zoomed out), rendering raw strokes is OOM-prone and slow.
-            // Instead, we composite region thumbnails.
-            val useComposite = rm != null && worldSize > rm.regionSize * 1.5f
 
             // 1. Identify necessary regions
             val regionIds = rm?.getRegionIdsInRect(worldRect) ?: emptyList()
@@ -546,15 +542,8 @@ class TileManager(
             }
 
             // 3. Fetch Data (Lightweight, IO-bound, No Bitmap Allocation)
-            val items: List<com.alexdremov.notate.model.CanvasItem>?
-
-            if (useComposite) {
-                // Just get IDs, don't load heavy region data
-                items = null
-            } else {
-                // Query items (Synchronous, but fast now as cache is primed)
-                items = canvasModel.queryItems(worldRect)
-            }
+            // Query items (Synchronous, but fast now as cache is primed)
+            val items = canvasModel.queryItems(worldRect)
 
             // 4. Check Cancellation
             if (!coroutineContext.isActive) return@trace null
@@ -565,11 +554,7 @@ class TileManager(
             val tileCanvas = Canvas(bitmap)
 
             // 6. Render
-            if (useComposite) {
-                renderCompositeThumbnails(tileCanvas, worldRect, rm!!, regionIds, scale)
-            } else {
-                renderItems(tileCanvas, items!!, worldRect, scale)
-            }
+            renderItems(tileCanvas, items, worldRect, scale)
 
             bitmap
         }
@@ -595,38 +580,6 @@ class TileManager(
             renderer.drawItemToCanvas(canvas, item, scale = scale)
         }
         canvas.restore()
-    }
-
-    private suspend fun renderCompositeThumbnails(
-        canvas: Canvas,
-        worldRect: RectF,
-        rm: com.alexdremov.notate.data.region.RegionManager,
-        regionIds: List<RegionId>,
-        tileScale: Float,
-    ) {
-        Logger.d("TileManager", "  Compositing ${regionIds.size} thumbnails")
-
-        regionIds.forEach { id ->
-            yield() // Check cancellation
-            // This might block slightly if generating, but at zoomed out levels,
-            // one tile covers MANY regions, so ideally we rely on cache.
-            val thumb = rm.getRegionThumbnail(id, context)
-
-            if (thumb != null) {
-                val rBounds = id.getBounds(rm.regionSize)
-
-                // Map world region bounds to tile canvas coordinates
-                val left = (rBounds.left - worldRect.left) * tileScale
-                val top = (rBounds.top - worldRect.top) * tileScale
-                val right = (rBounds.right - worldRect.left) * tileScale
-                val bottom = (rBounds.bottom - worldRect.top) * tileScale
-
-                val dest = RectF(left, top, right, bottom)
-
-                // Draw with bilinear filtering for smoothness
-                canvas.drawBitmap(thumb, null, dest, null)
-            }
-        }
     }
 
     fun updateTilesWithItem(item: com.alexdremov.notate.model.CanvasItem) {
@@ -664,12 +617,12 @@ class TileManager(
                 renderer.drawItemToCanvas(tileCanvas, item, scale = scale)
                 tileCanvas.restore()
 
-                if (isVisible) {
-                    // Re-queue to ensure final consistency if background tasks were active or to prevent stale background data
-                    val isBeingGenerated = synchronized(generatingKeys) { generatingKeys.contains(key) }
-                    if (isBeingGenerated) {
-                        queueTileGeneration(key.col, key.row, key.level, worldSize, true, version, forceRefresh = true)
-                    }
+                // Re-queue to ensure final consistency if background tasks were active.
+                // If we don't restart, the background task (started before item addition)
+                // might overwrite our manual update with a bitmap missing the new item.
+                val isBeingGenerated = synchronized(generatingKeys) { generatingKeys.contains(key) }
+                if (isBeingGenerated) {
+                    queueTileGeneration(key.col, key.row, key.level, worldSize, true, version, forceRefresh = true)
                 }
                 handledKeys.add(key)
             }
@@ -752,13 +705,12 @@ class TileManager(
                 }
                 tileCanvas.restore()
 
-                if (isVisible) {
-                    // Re-queue logic
-                    val isBeingGenerated = synchronized(generatingKeys) { generatingKeys.contains(key) }
-                    if (isBeingGenerated) {
-                        queueTileGeneration(key.col, key.row, key.level, worldSize, true, version, forceRefresh = true)
-                    }
+                // Re-queue logic
+                val isBeingGenerated = synchronized(generatingKeys) { generatingKeys.contains(key) }
+                if (isBeingGenerated) {
+                    queueTileGeneration(key.col, key.row, key.level, worldSize, true, version, forceRefresh = true)
                 }
+
                 handledKeys.add(key)
             }
         }
@@ -879,9 +831,10 @@ class TileManager(
             val tileRect = getTileWorldRect(key.col, key.row, worldSize)
 
             if (RectF.intersects(bounds, tileRect)) {
-                if (visibleRect == null || (key.level == currentLevel && RectF.intersects(visibleRect, tileRect))) {
-                    queueTileGeneration(key.col, key.row, key.level, worldSize, true, version, forceRefresh = true)
-                }
+                // Always re-queue generating tiles if they intersect the dirty bounds.
+                // If we skip them here, they will be effectively cancelled (due to version mismatch)
+                // and simply stop loading, leaving gaps or missing updates.
+                queueTileGeneration(key.col, key.row, key.level, worldSize, true, version, forceRefresh = true)
             }
         }
     }
@@ -949,15 +902,6 @@ class TileManager(
         worldTileSize: Float,
     ) {
         val rm = canvasModel.getRegionManager() ?: return
-
-        // OPTIMIZATION: If zoomed out significantly (worldTileSize > regionSize),
-        // we switch to Composite Thumbnail rendering.
-        // Loading raw RegionData (Strokes) is wasteful and causes OOM.
-        // So we DISABLE data prefetching in this mode.
-        // Ideally we would prefetch thumbnails, but that is less critical than preventing OOM.
-        if (worldTileSize > rm.regionSize * 1.5f) {
-            return
-        }
 
         // Throttle: Don't prefetch if moved less than 1/4 of a tile
         val threshold = worldTileSize / 4f

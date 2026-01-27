@@ -296,6 +296,19 @@ class RegionManager(
             stateLock.write {
                 val existing = regionCache.get(id) ?: overflowRegions[id]
                 if (existing != null) return existing
+
+                // CRITICAL FIX: Ensure the global spatial index matches the actual loaded content.
+                // If the stored index is stale (smaller than actual bounds), strokes extending
+                // into neighbors won't be found by getRegionIdsInRect(), causing clipping/disappearance
+                // in zoomed-out composite tiles.
+                if (!region!!.contentBounds.isEmpty) {
+                    val indexBounds = regionIndex[id]
+                    if (indexBounds == null || indexBounds != region.contentBounds) {
+                        Logger.i("RegionManager", "Self-healing index for region $id: $indexBounds -> ${region.contentBounds}")
+                        updateRegionIndex(id, region.contentBounds)
+                    }
+                }
+
                 regionCache.put(id, region!!)
             }
             // Logger.v("RegionManager", "Loading end: $id")
@@ -386,6 +399,19 @@ class RegionManager(
         return null
     }
 
+    private fun invalidateOverlappingThumbnails(rect: RectF) {
+        val minX = floor(rect.left / regionSize).toInt()
+        val maxX = floor(rect.right / regionSize).toInt()
+        val minY = floor(rect.top / regionSize).toInt()
+        val maxY = floor(rect.bottom / regionSize).toInt()
+
+        for (x in minX..maxX) {
+            for (y in minY..maxY) {
+                invalidateThumbnail(RegionId(x, y))
+            }
+        }
+    }
+
     suspend fun addItem(item: CanvasItem) {
         val id = getRegionIdForItem(item)
         val region = getRegion(id)
@@ -407,7 +433,7 @@ class RegionManager(
 
             updateRegionIndex(id, region.contentBounds)
             region.isDirty = true
-            invalidateThumbnail(id)
+            invalidateOverlappingThumbnails(item.bounds)
             region.invalidateSize()
             regionCache.put(id, region)
             updateMetadataCache()
@@ -445,7 +471,16 @@ class RegionManager(
                 }
 
                 region.isDirty = true
-                invalidateThumbnail(id)
+
+                val removedBounds = RectF()
+                if (regionItems.isNotEmpty()) {
+                    removedBounds.set(regionItems[0].bounds)
+                    for (i in 1 until regionItems.size) {
+                        removedBounds.union(regionItems[i].bounds)
+                    }
+                }
+                invalidateOverlappingThumbnails(removedBounds)
+
                 region.invalidateSize()
                 regionCache.put(id, region)
             }
