@@ -163,14 +163,6 @@ class TileManager(
         val unionBounds = RectF()
         items.forEach { unionBounds.union(it.bounds) }
 
-        val paint =
-            Paint().apply {
-                xfermode = PorterDuffXfermode(PorterDuff.Mode.CLEAR)
-                style = Paint.Style.STROKE
-                strokeJoin = Paint.Join.ROUND
-                strokeCap = Paint.Cap.ROUND
-            }
-
         for ((key, bitmap) in snapshot) {
             if (bitmap == null || bitmap.isRecycled || bitmap == tileCache.errorBitmap) continue
 
