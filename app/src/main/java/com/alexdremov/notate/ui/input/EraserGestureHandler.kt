@@ -94,15 +94,11 @@ class EraserGestureHandler(
         // 2. Count Directional Reversals
         var reversals = 0
         for (i in 2 until stroke.points.size) {
-            val p1 = stroke.points[i - 2]
-            val p2 = stroke.points[i - 1]
-            val p3 = stroke.points[i - 2] // Was i, but wait. p1, p2, p3 usually i-2, i-1, i.
-            // Let's fix the loop index access.
-            val pp1 = stroke.points[i - 2]
-            val pp2 = stroke.points[i - 1]
-            val pp3 = stroke.points[i]
-
-            val angle = StrokeGeometry.calculateAngle(pp1, pp2, pp3)
+            val angle = StrokeGeometry.calculateAngle(
+                stroke.points[i - 2],
+                stroke.points[i - 1],
+                stroke.points[i],
+            )
             if (angle > REVERSAL_THRESHOLD) {
                 reversals++
             }
