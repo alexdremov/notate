@@ -64,6 +64,10 @@ class InfiniteCanvasModel {
             val items: List<CanvasItem>,
         ) : ModelEvent()
 
+        data class BulkItemsAdded(
+            val bounds: RectF,
+        ) : ModelEvent()
+
         data class RegionLoaded(
             val bounds: RectF,
         ) : ModelEvent()
@@ -130,6 +134,11 @@ class InfiniteCanvasModel {
         uri: android.net.Uri,
         context: android.content.Context,
     ): String? = regionManager?.importImage(uri, context)
+
+    suspend fun getItem(
+        id: Long,
+        bounds: RectF,
+    ): CanvasItem? = regionManager?.findItem(id, bounds)
 
     suspend fun addItem(item: CanvasItem): CanvasItem? {
         if (canvasType == CanvasType.FIXED_PAGES) {
@@ -270,6 +279,28 @@ class InfiniteCanvasModel {
 
     suspend fun deleteStrokes(strokes: List<Stroke>) {
         deleteItems(strokes)
+    }
+
+    suspend fun replaceItems(
+        oldItems: List<CanvasItem>,
+        newItems: List<CanvasItem>,
+    ): List<CanvasItem> {
+        if (oldItems.isEmpty() && newItems.isEmpty()) return emptyList()
+        return mutex.withLock {
+            val orderedNewItems =
+                newItems.map { item ->
+                    when (item) {
+                        is Stroke -> item.copy(strokeOrder = nextOrder++)
+                        is CanvasImage -> item.copy(order = nextOrder++)
+                        else -> item
+                    }
+                }
+
+            val action = HistoryAction.Replace(oldItems, orderedNewItems)
+            executeAction(action)
+            historyManager.addToStack(action)
+            orderedNewItems
+        }
     }
 
     private suspend fun executeAction(
@@ -442,14 +473,14 @@ class InfiniteCanvasModel {
     suspend fun unstashItems(
         file: java.io.File,
         transform: android.graphics.Matrix,
-    ): List<CanvasItem> =
+    ): Pair<Set<Long>, RectF> =
         mutex.withLock {
-            val added = regionManager?.unstashItems(file, transform) ?: emptyList()
-            if (added.isNotEmpty()) {
-                _events.tryEmit(ModelEvent.ItemsAdded(added))
+            val result = regionManager?.unstashItems(file, transform) ?: Pair(emptySet(), RectF())
+            if (!result.second.isEmpty) {
+                _events.tryEmit(ModelEvent.BulkItemsAdded(result.second))
             }
             recalculateContentBounds()
-            added
+            result
         }
 
     suspend fun deleteItemsByIds(

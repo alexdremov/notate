@@ -367,8 +367,31 @@ class CanvasActivity : AppCompatActivity() {
                     sidebarCoordinator.close()
                     viewModel.setEditMode(true)
                 },
-            )
+                onGeneratePatterns = { type, intensity ->
+                    lifecycleScope.launch(Dispatchers.Default) {
+                        // Calculate visible rect in Model coordinates
+                        val matrix = android.graphics.Matrix()
+                        binding.canvasView.getViewportMatrix(matrix)
 
+                        val screenWidth = binding.canvasView.width.toFloat()
+                        val screenHeight = binding.canvasView.height.toFloat()
+
+                        val invertMatrix = android.graphics.Matrix()
+                        matrix.invert(invertMatrix)
+
+                        val visibleRect = android.graphics.RectF(0f, 0f, screenWidth, screenHeight)
+                        invertMatrix.mapRect(visibleRect)
+
+                        val strokes =
+                            com.alexdremov.notate.util.PatternGenerator.generateStrokes(
+                                type,
+                                intensity,
+                                visibleRect,
+                            )
+                        binding.canvasView.getController().addStrokes(strokes)
+                    }
+                },
+            )
         binding.canvasView.onStrokeStarted = {
             activePenPopup?.dismiss()
             activePenPopup = null

@@ -6,7 +6,8 @@ import android.graphics.DashPathEffect
 import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.Path
-import com.alexdremov.notate.controller.SelectionManager
+import android.graphics.RectF
+import com.alexdremov.notate.ui.controller.SelectionManager
 
 /**
  * Responsible for rendering the selection visual state:
@@ -80,19 +81,29 @@ class SelectionOverlayDrawer(
             canvas.restore()
         } else {
             // Fallback: Direct Vector Rendering if imposter is missing or generating
-            canvas.save()
-            canvas.concat(viewMatrix)
-            canvas.concat(selectionManager.getTransform())
+            val combinedMatrix = Matrix(viewMatrix)
+            combinedMatrix.preConcat(selectionManager.getTransform())
+
+            // 1. Calculate Viewport in World Coordinates
+            val visibleRect = RectF(0f, 0f, canvas.width.toFloat(), canvas.height.toFloat())
+            val inverseView = Matrix()
+            viewMatrix.invert(inverseView)
+            inverseView.mapRect(visibleRect)
+
+            // 2. Calculate Query Rect in Original Item Coordinates (Reverse Selection Transform)
+            // We need items that, when transformed, land in the visibleRect.
+            val queryRect = RectF(visibleRect)
+            val inverseSelection = Matrix()
+            selectionManager.getTransform().invert(inverseSelection)
+            inverseSelection.mapRect(queryRect)
 
             val ids = selectionManager.getSelectedIds()
             renderer.renderDirectVectorsSync(
                 canvas,
-                Matrix(), // Identity as we already concatted transform
-                null,
+                combinedMatrix,
+                queryRect,
                 RenderQuality.HIGH,
             ) { item -> ids.contains(item.order) }
-
-            canvas.restore()
         }
 
         // 2. Draw Selection Box & Handles

@@ -190,6 +190,24 @@ class CanvasRenderer(
     }
 
     /**
+     * Renders a specific list of items synchronously.
+     * Used by SelectionOverlayDrawer to render "lifted" items that are held in memory.
+     */
+    fun renderItemsSync(
+        canvas: Canvas,
+        items: List<com.alexdremov.notate.model.CanvasItem>,
+        matrix: Matrix,
+        visibleRect: RectF?,
+        quality: RenderQuality,
+    ) {
+        canvas.save()
+        canvas.setMatrix(matrix)
+        val viewScale = matrix.mapRadius(1.0f)
+        renderItems(canvas, items, visibleRect, quality, viewScale, context)
+        canvas.restore()
+    }
+
+    /**
      * Synchronous version of renderDirectVectors for UI thread usage.
      * Only renders items from currently loaded regions to avoid blocking.
      */

@@ -12,6 +12,7 @@ sealed interface FileSystemItem {
     val fileName: String
     val path: String
     val lastModified: Long
+    val size: Long
     val syncStatus: SyncStatus
 }
 
@@ -26,6 +27,7 @@ data class ProjectItem(
     override val fileName: String,
     override val path: String,
     override val lastModified: Long,
+    override val size: Long,
     val itemsCount: Int,
     override val syncStatus: SyncStatus = SyncStatus.NONE,
 ) : FileSystemItem
@@ -35,6 +37,7 @@ data class CanvasItem(
     override val fileName: String,
     override val path: String,
     override val lastModified: Long,
+    override val size: Long,
     val thumbnail: String? = null,
     val tagIds: List<String> = emptyList(),
     val embeddedTags: List<Tag> = emptyList(),
@@ -166,6 +169,7 @@ class ProjectRepository(
                     fileName = "${meta.name}.notate", // Best effort guess from index
                     path = path,
                     lastModified = meta.lastModified,
+                    size = 0, // Metadata doesn't store size currently, would need I/O to get it. Avoiding for search speed.
                     thumbnail = metadata?.thumbnail,
                     tagIds = meta.tagIds,
                     embeddedTags = meta.embeddedTags,

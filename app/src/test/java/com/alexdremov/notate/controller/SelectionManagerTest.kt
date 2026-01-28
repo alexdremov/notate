@@ -1,4 +1,4 @@
-package com.alexdremov.notate.controller
+package com.alexdremov.notate.ui.controller
 
 import android.graphics.Matrix
 import android.graphics.Path

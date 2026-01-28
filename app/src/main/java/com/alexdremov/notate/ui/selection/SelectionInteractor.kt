@@ -3,8 +3,8 @@ package com.alexdremov.notate.ui.selection
 import android.graphics.Matrix
 import android.graphics.RectF
 import android.view.MotionEvent
-import com.alexdremov.notate.controller.CanvasController
 import com.alexdremov.notate.ui.OnyxCanvasView
+import com.alexdremov.notate.ui.controller.CanvasController
 import com.alexdremov.notate.util.EpdFastModeController
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -167,25 +167,26 @@ class SelectionInteractor(
     fun onUp() {
         stopAutoScroll()
         val wasInteracting = isDragging || isTransformingMultiTouch
-        val wasBodyTap = activeHandle == HandleType.BODY && dragDistanceAccumulator < 10f && !isTransformingMultiTouch
+        // Increased threshold to 40f to accommodate finger jitter
+        val wasBodyTap = activeHandle == HandleType.BODY && dragDistanceAccumulator < 40f && !isTransformingMultiTouch
 
         if (wasInteracting) {
-            scope.launch { controller.commitMoveSelection() }
             EpdFastModeController.exitFastMode()
+
+            scope.launch {
+                controller.commitMoveSelection()
+                if (wasBodyTap) {
+                    controller.clearSelection()
+                    view.dismissActionPopup()
+                } else {
+                    view.showActionPopup()
+                }
+            }
         }
 
         isDragging = false
         isTransformingMultiTouch = false
         activeHandle = HandleType.NONE
-
-        if (wasInteracting) {
-            if (wasBodyTap) {
-                scope.launch { controller.clearSelection() }
-                view.dismissActionPopup()
-            } else {
-                view.showActionPopup()
-            }
-        }
     }
 
     private fun handleSingleTouchDrag(

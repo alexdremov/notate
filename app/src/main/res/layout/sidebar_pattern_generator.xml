@@ -1,0 +1,85 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:padding="16dp">
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Pattern Generator"
+        android:textSize="14sp"
+        android:textColor="#666666"
+        android:textAllCaps="true"
+        android:textStyle="bold"
+        android:layout_marginBottom="16dp" />
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Pattern Type"
+        android:textSize="16sp"
+        android:textColor="#000000"
+        android:layout_marginBottom="8dp" />
+
+    <RadioGroup
+        android:id="@+id/rg_pattern_type"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:layout_marginBottom="16dp">
+
+        <RadioButton
+            android:id="@+id/rb_pattern_fractal"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Fractal Tree"
+            android:checked="true" />
+
+        <RadioButton
+            android:id="@+id/rb_pattern_squares"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Grid of Squares" />
+
+        <RadioButton
+            android:id="@+id/rb_pattern_handwriting"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Fake Handwriting" />
+    </RadioGroup>
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Area Size / Complexity"
+        android:textSize="16sp"
+        android:textColor="#000000"
+        android:layout_marginBottom="8dp" />
+
+    <SeekBar
+        android:id="@+id/seekbar_pattern_area"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:max="100"
+        android:progress="50"
+        android:layout_marginBottom="4dp" />
+
+    <TextView
+        android:id="@+id/tv_pattern_area_value"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Medium"
+        android:textSize="12sp"
+        android:textColor="#888888"
+        android:gravity="end"
+        android:layout_marginBottom="24dp" />
+
+    <Button
+        android:id="@+id/btn_generate_pattern"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Generate" />
+
+</LinearLayout>

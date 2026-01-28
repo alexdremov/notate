@@ -14,12 +14,13 @@ import android.view.MotionEvent
 import android.view.SurfaceHolder
 import android.view.SurfaceView
 import com.alexdremov.notate.config.CanvasConfig
-import com.alexdremov.notate.controller.CanvasControllerImpl
 import com.alexdremov.notate.data.CanvasData
 import com.alexdremov.notate.data.CanvasType
 import com.alexdremov.notate.model.InfiniteCanvasModel
 import com.alexdremov.notate.model.PenTool
 import com.alexdremov.notate.model.Stroke
+import com.alexdremov.notate.ui.controller.CanvasControllerImpl
+import com.alexdremov.notate.ui.controller.ViewportController
 import com.alexdremov.notate.ui.input.PenInputHandler
 import com.alexdremov.notate.ui.interaction.ViewportInteractor
 import com.alexdremov.notate.ui.render.CanvasRenderer
@@ -163,7 +164,7 @@ class OnyxCanvasView
 
             // Setup Viewport Controller to bridge Controller -> Interactor
             canvasController.setViewportController(
-                object : com.alexdremov.notate.controller.ViewportController {
+                object : ViewportController {
                     override fun scrollTo(
                         x: Float,
                         y: Float,

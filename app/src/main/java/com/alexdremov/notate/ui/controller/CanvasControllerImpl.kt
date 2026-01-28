@@ -1,4 +1,4 @@
-package com.alexdremov.notate.controller
+package com.alexdremov.notate.ui.controller
 
 import android.content.Context
 import android.graphics.Matrix
@@ -17,9 +17,11 @@ import com.alexdremov.notate.ui.render.CanvasRenderer
 import com.alexdremov.notate.util.ClipboardManager
 import com.alexdremov.notate.util.StrokeGeometry
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.ArrayList
+import kotlin.coroutines.coroutineContext
 
 class CanvasControllerImpl(
     private val context: Context,
@@ -27,17 +29,15 @@ class CanvasControllerImpl(
     private val renderer: CanvasRenderer,
 ) : CanvasController {
     private val uiHandler = Handler(Looper.getMainLooper())
-    private var viewportController: com.alexdremov.notate.controller.ViewportController? = null
+    private var viewportController: ViewportController? = null
     private val selectionManager = SelectionManager()
     private var onContentChangedListener: (() -> Unit)? = null
-
-    private var stashedFile: File? = null
 
     override fun setOnContentChangedListener(listener: () -> Unit) {
         this.onContentChangedListener = listener
     }
 
-    override fun setViewportController(controller: com.alexdremov.notate.controller.ViewportController) {
+    override fun setViewportController(controller: ViewportController) {
         this.viewportController = controller
     }
 
@@ -52,6 +52,38 @@ class CanvasControllerImpl(
                 renderer.updateTilesWithStroke(added)
                 onContentChangedListener?.invoke()
             }
+        }
+    }
+
+    override suspend fun addStrokes(strokes: Sequence<Stroke>) {
+        val batchSize = 500 // Update renderer every 500 strokes to avoid UI freeze or OOM
+        val batch = ArrayList<Stroke>(batchSize)
+
+        for (stroke in strokes) {
+            if (!coroutineContext.isActive) break
+
+            val added = model.addStroke(stroke)
+            if (added != null) {
+                batch.add(added)
+            }
+
+            if (batch.size >= batchSize) {
+                val batchCopy = ArrayList(batch)
+                withContext(Dispatchers.Main) {
+                    renderer.updateTilesWithItems(batchCopy)
+                }
+                batch.clear()
+            }
+        }
+
+        if (batch.isNotEmpty()) {
+            withContext(Dispatchers.Main) {
+                renderer.updateTilesWithItems(batch)
+            }
+        }
+
+        withContext(Dispatchers.Main) {
+            onContentChangedListener?.invoke()
         }
     }
 
@@ -209,15 +241,23 @@ class CanvasControllerImpl(
             val bounds = selectionManager.getTransformedBounds()
             val ids = selectionManager.getSelectedIds()
 
-            // BAKING: Get items and draw them onto tiles before clearing selection
-            val items = getItemsInRect(bounds).filter { ids.contains(it.order) }
+            // BAKING: Only query items for very small selections to provide instant feedback.
+            // For large selections, we rely on TileManager's background refresh to avoid UI freeze.
+            val items =
+                if (ids.size < 50) {
+                    getItemsInRect(bounds).filter { ids.contains(it.order) }
+                } else {
+                    emptyList()
+                }
 
             selectionManager.clearSelection()
-            stashedFile?.delete()
-            stashedFile = null
+            updatePinnedRegions()
+
             withContext(Dispatchers.Main) {
                 renderer.setHiddenItems(emptySet())
-                renderer.updateTilesWithItems(items)
+                if (items.isNotEmpty()) {
+                    renderer.updateTilesWithItems(items)
+                }
                 renderer.refreshTiles(bounds)
                 renderer.invalidate()
                 onContentChangedListener?.invoke()
@@ -230,9 +270,12 @@ class CanvasControllerImpl(
             val bounds = selectionManager.getTransformedBounds()
             val ids = selectionManager.getSelectedIds()
             selectionManager.clearSelection()
-            stashedFile?.delete()
-            stashedFile = null
-            model.deleteItemsByIds(bounds, ids)
+            updatePinnedRegions()
+
+            withContext(Dispatchers.Default) {
+                model.deleteItemsByIds(bounds, ids)
+            }
+
             withContext(Dispatchers.Main) {
                 renderer.setHiddenItems(emptySet())
                 renderer.invalidateTiles(bounds)
@@ -243,12 +286,18 @@ class CanvasControllerImpl(
 
     override suspend fun copySelection() {
         if (selectionManager.hasSelection()) {
-            val bounds = selectionManager.getTransformedBounds()
             val ids = selectionManager.getSelectedIds()
-            val items = ArrayList<CanvasItem>()
-            model.visitItemsInRect(bounds) { item ->
-                if (ids.contains(item.order)) items.add(item)
+            if (ids.size > 5000) {
+                // Prevent OOM/Freeze on massive copy
+                withContext(Dispatchers.Main) {
+                    android.widget.Toast
+                        .makeText(context, "Selection too large to copy", android.widget.Toast.LENGTH_SHORT)
+                        .show()
+                }
+                return
             }
+
+            val items = fetchSelectedItems()
             ClipboardManager.copy(items)
         }
     }
@@ -365,9 +414,6 @@ class CanvasControllerImpl(
         val bounds = selectionManager.getTransformedBounds()
         val ids = selectionManager.getSelectedIds()
 
-        // 1. Query items BEFORE stashing removes them from model
-        val items = getItemsInRect(bounds).filter { ids.contains(it.order) }
-
         startBatchSession()
 
         // 2. Ensure Imposter is ready (or wait for it)
@@ -375,17 +421,14 @@ class CanvasControllerImpl(
             generateSelectionImposter()
         }
 
-        // 3. Stash Selection to Temp File
-        withContext(Dispatchers.IO) {
-            val file = File(context.cacheDir, "selection_stash_${System.currentTimeMillis()}.bin")
-            stashedFile = file
-            model.stashItems(bounds, ids, file)
-        }
-
-        // 4. Inform renderer to hide items and invalidate the "lifted" area
+        // 3. Inform renderer to hide items
         withContext(Dispatchers.Main) {
             renderer.setHiddenItems(ids)
-            renderer.hideItemsInCache(items)
+            // Instant hide optimization for small selections
+            if (ids.size < 500) {
+                val items = withContext(Dispatchers.Default) { fetchSelectedItems() }
+                renderer.hideItemsInCache(items)
+            }
             renderer.invalidateTiles(bounds)
         }
     }
@@ -435,6 +478,52 @@ class CanvasControllerImpl(
         }
     }
 
+    private fun transformItem(
+        item: CanvasItem,
+        transform: Matrix,
+    ): CanvasItem =
+        when (item) {
+            is Stroke -> {
+                val newPath = Path(item.path)
+                newPath.transform(transform)
+
+                val newBounds = RectF()
+                newPath.computeBounds(newBounds, true)
+
+                val newPoints =
+                    item.points.map { p ->
+                        val pts = floatArrayOf(p.x, p.y)
+                        transform.mapPoints(pts)
+                        com.onyx.android.sdk.data.note
+                            .TouchPoint(pts[0], pts[1], p.pressure, p.size, p.timestamp)
+                    }
+
+                val values = FloatArray(9)
+                transform.getValues(values)
+                val scale =
+                    kotlin.math.sqrt(
+                        values[Matrix.MSCALE_X] * values[Matrix.MSCALE_X] +
+                            values[Matrix.MSKEW_Y] * values[Matrix.MSKEW_Y],
+                    )
+                item.copy(path = newPath, points = newPoints, bounds = newBounds, width = item.width * scale)
+            }
+
+            is CanvasImage -> {
+                val newBounds = RectF(item.bounds)
+                transform.mapRect(newBounds)
+                val values = FloatArray(9)
+                transform.getValues(values)
+                val scaleX = values[Matrix.MSCALE_X]
+                val skewY = values[Matrix.MSKEW_Y]
+                val rotation = kotlin.math.atan2(skewY.toDouble(), scaleX.toDouble()).toFloat()
+                item.copy(bounds = newBounds, rotation = item.rotation + Math.toDegrees(rotation.toDouble()).toFloat())
+            }
+
+            else -> {
+                item
+            }
+        }
+
     override suspend fun moveSelection(
         dx: Float,
         dy: Float,
@@ -450,38 +539,50 @@ class CanvasControllerImpl(
 
     override suspend fun commitMoveSelection() {
         if (!selectionManager.hasSelection()) return
-        val file = stashedFile ?: return
 
+        val originalBounds = selectionManager.getOriginalBounds()
+        val originalItems = fetchSelectedItems()
         val transform = selectionManager.getTransform()
 
-        val newItems =
+        // Transform items in memory
+        val newItems = originalItems.map { transformItem(it, transform) }
+
+        // Calculate new bounds
+        val newBounds = RectF()
+        if (newItems.isNotEmpty()) {
+            newBounds.set(newItems[0].bounds)
+            for (i in 1 until newItems.size) newBounds.union(newItems[i].bounds)
+        }
+
+        // Apply to Model
+        val committedItems =
             withContext(Dispatchers.IO) {
-                model.unstashItems(file, transform)
+                model.replaceItems(originalItems, newItems)
             }
-        file.delete()
-        stashedFile = null
 
         endBatchSession()
 
         // ALWAYS LIFTED STRATEGY:
-        // Do NOT clear selection. Re-select the new items immediately.
-        // This keeps them "lifted" in the SelectionOverlay and hidden from the tiles.
+        // Clear old selection state and re-select new items.
+        // This keeps them "lifted" visually.
 
         selectionManager.clearSelection()
         selectionManager.resetTransform() // Transform is now baked into the items
-        selectionManager.selectAll(newItems)
+        selectionManager.selectAll(committedItems) // Re-select transformed items WITH CORRECT IDs
 
-        // We must regenerate the imposter because the old one might have artifacts or
-        // the coordinate system has effectively changed (transform applied).
-        // While generating, SelectionOverlayDrawer will fallback to vector rendering.
+        updatePinnedRegions()
+
+        // We must regenerate the imposter because the old one is stale (pre-transform coordinate system).
         selectionManager.clearImposter()
 
         withContext(Dispatchers.Main) {
-            // 1. Hide from tiles immediately (prevent double draw if TileManager updated them)
-            renderer.hideItemsInCache(newItems)
-
-            // 2. Tell renderer to KEEP hiding these IDs during future tile generations
+            // 1. Tell renderer to KEEP hiding these IDs (new IDs) during future tile generations
             renderer.setHiddenItems(selectionManager.getSelectedIds())
+
+            // 2. Force invalidation of tiles in the area.
+            // Fix Ghosting: Invalidate BOTH old and new locations.
+            renderer.invalidateTiles(originalBounds)
+            renderer.invalidateTiles(newBounds)
 
             // 3. Trigger overlay redraw (will show vectors or new imposter)
             renderer.invalidate()
@@ -491,5 +592,43 @@ class CanvasControllerImpl(
 
             onContentChangedListener?.invoke()
         }
+    }
+
+    private suspend fun fetchSelectedItems(): List<CanvasItem> {
+        val items = ArrayList<CanvasItem>()
+        val missingIds = ArrayList<Long>()
+
+        // Use SelectionManager's internal iterator to avoid allocating lists of IDs/Bounds
+        // This is memory efficient (O(1) allocation) and allows pinpoint item retrieval.
+        val snapshotItems = ArrayList<Pair<Long, RectF>>()
+
+        selectionManager.forEachSelected { id, bounds ->
+            snapshotItems.add(Pair(id, RectF(bounds)))
+        }
+
+        // We must query outside the lock/iterator to avoid blocking SelectionManager
+        // while performing IO (RegionManager loads).
+        for ((id, bounds) in snapshotItems) {
+            val item = model.getItem(id, bounds)
+            if (item != null) {
+                items.add(item)
+            } else {
+                missingIds.add(id)
+            }
+        }
+
+        if (missingIds.isNotEmpty()) {
+            Log.e(
+                "CanvasController",
+                "CRITICAL: Failed to fetch ${missingIds.size} selected items. IDs: ${missingIds.take(10)}... This will cause duplication.",
+            )
+        }
+
+        return items
+    }
+
+    private fun updatePinnedRegions() {
+        // Pinning disabled per requirements to avoid OOM on large selections.
+        // SelectionManager holds items in memory for overlay rendering.
     }
 }

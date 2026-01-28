@@ -196,6 +196,10 @@ class TileManager(
                             refreshTiles(bounds)
                         }
 
+                        is InfiniteCanvasModel.ModelEvent.BulkItemsAdded -> {
+                            refreshTiles(event.bounds)
+                        }
+
                         is InfiniteCanvasModel.ModelEvent.ContentCleared -> {
                             clear()
                             notifyTileReady()
@@ -367,7 +371,6 @@ class TileManager(
         generationJobs.forEach { (key, job) ->
             if (!validKeys.contains(key)) {
                 job.cancel()
-                tileCache.remove(key)
             }
         }
     }
