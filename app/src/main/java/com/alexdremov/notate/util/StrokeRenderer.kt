@@ -181,11 +181,19 @@ object StrokeRenderer {
         context: android.content.Context? = null,
         scale: Float = 1.0f,
         forceVector: Boolean = false,
+        xfermode: android.graphics.PorterDuff.Mode? = null,
     ) {
         com.alexdremov.notate.util.PerformanceProfiler.trace("StrokeRenderer.drawItem") {
             when (item) {
-                is Stroke -> drawStroke(canvas, paint, item, debug, forceVector)
-                is com.alexdremov.notate.model.CanvasImage -> ImageRenderer.draw(canvas, paint, item, context, scale)
+                is Stroke -> {
+                    drawStroke(canvas, paint, item, debug, forceVector, xfermode)
+                }
+
+                is com.alexdremov.notate.model.CanvasImage -> {
+                    if (xfermode != null) paint.xfermode = android.graphics.PorterDuffXfermode(xfermode)
+                    ImageRenderer.draw(canvas, paint, item, context, scale)
+                    if (xfermode != null) paint.xfermode = null
+                }
             }
         }
     }
@@ -196,6 +204,7 @@ object StrokeRenderer {
         stroke: Stroke,
         debug: Boolean = false,
         forceVector: Boolean = false,
+        xfermode: android.graphics.PorterDuff.Mode? = null,
     ) {
         com.alexdremov.notate.util.PerformanceProfiler.trace("StrokeRenderer.drawStroke") {
             if (stroke.points.isEmpty()) {
@@ -230,6 +239,9 @@ object StrokeRenderer {
                 colorFilter = null
                 isAntiAlias = true
                 isDither = true
+                if (xfermode != null) {
+                    this.xfermode = android.graphics.PorterDuffXfermode(xfermode)
+                }
             }
 
             // Dispatch to Strategy

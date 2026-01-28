@@ -448,6 +448,7 @@ class LocalStorageProvider(
                                 fileName = it.name,
                                 path = it.absolutePath,
                                 lastModified = it.lastModified(),
+                                size = 0L,
                                 itemsCount = it.list()?.size ?: 0,
                             )
                         }
@@ -459,6 +460,7 @@ class LocalStorageProvider(
                                 fileName = it.name,
                                 path = it.absolutePath,
                                 lastModified = it.lastModified(),
+                                size = it.length(),
                                 thumbnail = metadata?.thumbnail,
                                 tagIds = metadata?.tagIds ?: emptyList(),
                                 embeddedTags = metadata?.tagDefinitions ?: emptyList(),
@@ -667,6 +669,7 @@ class LocalStorageProvider(
                             fileName = it.name,
                             path = it.absolutePath,
                             lastModified = it.lastModified(),
+                            size = it.length(),
                             thumbnail = metadata.thumbnail,
                             tagIds = metadata.tagIds,
                             embeddedTags = metadata.tagDefinitions,
@@ -721,6 +724,7 @@ class SafStorageProvider(
                                 fileName = it.name ?: "Unknown",
                                 path = it.uri.toString(),
                                 lastModified = it.lastModified(),
+                                size = 0L,
                                 itemsCount = 0,
                             )
                         }
@@ -741,6 +745,7 @@ class SafStorageProvider(
                                 fileName = name,
                                 path = it.uri.toString(),
                                 lastModified = it.lastModified(),
+                                size = it.length(),
                                 thumbnail = metadata?.thumbnail,
                                 tagIds = metadata?.tagIds ?: emptyList(),
                                 embeddedTags = metadata?.tagDefinitions ?: emptyList(),
@@ -955,6 +960,7 @@ class SafStorageProvider(
                                 fileName = name,
                                 path = file.uri.toString(),
                                 lastModified = file.lastModified(),
+                                size = file.length(),
                                 thumbnail = metadata.thumbnail,
                                 tagIds = metadata.tagIds,
                                 embeddedTags = metadata.tagDefinitions,

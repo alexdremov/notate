@@ -48,9 +48,9 @@ import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
 import androidx.compose.ui.zIndex
 import com.alexdremov.notate.R
-import com.alexdremov.notate.controller.CanvasController
 import com.alexdremov.notate.model.*
 import com.alexdremov.notate.model.InfiniteCanvasModel
+import com.alexdremov.notate.ui.controller.CanvasController
 import com.alexdremov.notate.ui.navigation.CompactPageNavigation
 import com.alexdremov.notate.util.Logger
 import com.alexdremov.notate.vm.DrawingViewModel

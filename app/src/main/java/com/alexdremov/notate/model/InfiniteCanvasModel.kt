@@ -64,6 +64,10 @@ class InfiniteCanvasModel {
             val items: List<CanvasItem>,
         ) : ModelEvent()
 
+        data class BulkItemsAdded(
+            val bounds: RectF,
+        ) : ModelEvent()
+
         data class RegionLoaded(
             val bounds: RectF,
         ) : ModelEvent()
@@ -130,6 +134,11 @@ class InfiniteCanvasModel {
         uri: android.net.Uri,
         context: android.content.Context,
     ): String? = regionManager?.importImage(uri, context)
+
+    suspend fun getItem(
+        id: Long,
+        bounds: RectF,
+    ): CanvasItem? = regionManager?.findItem(id, bounds)
 
     suspend fun addItem(item: CanvasItem): CanvasItem? {
         if (canvasType == CanvasType.FIXED_PAGES) {
@@ -272,6 +281,28 @@ class InfiniteCanvasModel {
         deleteItems(strokes)
     }
 
+    suspend fun replaceItems(
+        oldItems: List<CanvasItem>,
+        newItems: List<CanvasItem>,
+    ): List<CanvasItem> {
+        if (oldItems.isEmpty() && newItems.isEmpty()) return emptyList()
+        return mutex.withLock {
+            val orderedNewItems =
+                newItems.map { item ->
+                    when (item) {
+                        is Stroke -> item.copy(strokeOrder = nextOrder++)
+                        is CanvasImage -> item.copy(order = nextOrder++)
+                        else -> item
+                    }
+                }
+
+            val action = HistoryAction.Replace(oldItems, orderedNewItems)
+            executeAction(action)
+            historyManager.addToStack(action)
+            orderedNewItems
+        }
+    }
+
     private suspend fun executeAction(
         action: HistoryAction,
         recalculateBounds: Boolean = true,
@@ -412,6 +443,15 @@ class InfiniteCanvasModel {
         return result
     }
 
+    suspend fun visitItemsInRect(
+        rect: RectF,
+        visitor: (CanvasItem) -> Unit,
+    ) {
+        mutex.withLock {
+            regionManager?.visitItemsInRect(rect, visitor)
+        }
+    }
+
     suspend fun queryStrokes(rect: RectF): ArrayList<Stroke> {
         val items = queryItems(rect)
         val strokes = ArrayList<Stroke>()
@@ -419,6 +459,40 @@ class InfiniteCanvasModel {
             if (item is Stroke) strokes.add(item)
         }
         return strokes
+    }
+
+    suspend fun stashItems(
+        rect: RectF,
+        ids: Set<Long>,
+        file: java.io.File,
+    ): Int =
+        mutex.withLock {
+            regionManager?.stashSelectedItems(rect, ids, file) ?: 0
+        }
+
+    suspend fun unstashItems(
+        file: java.io.File,
+        transform: android.graphics.Matrix,
+    ): Pair<Set<Long>, RectF> =
+        mutex.withLock {
+            val result = regionManager?.unstashItems(file, transform) ?: Pair(emptySet(), RectF())
+            if (!result.second.isEmpty) {
+                _events.tryEmit(ModelEvent.BulkItemsAdded(result.second))
+            }
+            recalculateContentBounds()
+            result
+        }
+
+    suspend fun deleteItemsByIds(
+        rect: RectF,
+        ids: Set<Long>,
+    ) {
+        mutex.withLock {
+            regionManager?.removeItemsByIds(rect, ids)
+            recalculateContentBounds()
+            // History support for virtualized deletion could be added here
+            // by stashing items to a temp file and creating a HistoryAction.RemoveVirtual(file)
+        }
     }
 
     private fun updateContentBounds(bounds: RectF) {

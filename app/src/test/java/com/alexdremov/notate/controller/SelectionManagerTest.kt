@@ -1,4 +1,4 @@
-package com.alexdremov.notate.controller
+package com.alexdremov.notate.ui.controller
 
 import android.graphics.Matrix
 import android.graphics.Path
@@ -23,6 +23,7 @@ class SelectionManagerTest {
         top: Float,
         right: Float,
         bottom: Float,
+        order: Long = 0,
     ): CanvasItem {
         val rect = RectF(left, top, right, bottom)
         return Stroke(
@@ -32,15 +33,15 @@ class SelectionManagerTest {
             width = 1f,
             style = StrokeType.FINELINER,
             bounds = rect,
-            strokeOrder = 0,
+            strokeOrder = order,
         )
     }
 
     @Test
     fun `test selection and bounds recomputation`() {
         val sm = SelectionManager()
-        val item1 = createMockItem(0f, 0f, 10f, 10f)
-        val item2 = createMockItem(10f, 10f, 20f, 20f)
+        val item1 = createMockItem(0f, 0f, 10f, 10f, order = 1)
+        val item2 = createMockItem(10f, 10f, 20f, 20f, order = 2)
 
         sm.select(item1)
         assertEquals(RectF(0f, 0f, 10f, 10f), sm.getTransformedBounds())
@@ -49,7 +50,11 @@ class SelectionManagerTest {
         assertEquals(RectF(0f, 0f, 20f, 20f), sm.getTransformedBounds())
 
         sm.deselect(item1)
-        assertEquals(RectF(10f, 10f, 20f, 20f), sm.getTransformedBounds())
+        // Note: In virtualized mode, bounds remain conservative (don't shrink) on deselect
+        assertEquals(RectF(0f, 0f, 20f, 20f), sm.getTransformedBounds())
+
+        sm.clearSelection()
+        assertTrue(sm.getTransformedBounds().isEmpty)
     }
 
     @Test
@@ -58,7 +63,9 @@ class SelectionManagerTest {
         val executor = Executors.newFixedThreadPool(10)
         val items =
             (0 until 100).map { i ->
-                createMockItem(i.toFloat(), i.toFloat(), (i + 1).toFloat(), (i + 1).toFloat())
+                // Ensure unique IDs
+                val item = createMockItem(i.toFloat(), i.toFloat(), (i + 1).toFloat(), (i + 1).toFloat())
+                (item as Stroke).copy(strokeOrder = i.toLong())
             }
 
         for (item in items) {
@@ -70,7 +77,7 @@ class SelectionManagerTest {
         executor.shutdown()
         executor.awaitTermination(5, TimeUnit.SECONDS)
 
-        assertEquals(100, sm.selectedItems.size)
+        assertEquals(100, sm.getSelectedIds().size)
         assertEquals(RectF(0f, 0f, 100f, 100f), sm.getTransformedBounds())
     }
 

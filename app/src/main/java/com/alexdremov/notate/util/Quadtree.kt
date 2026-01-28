@@ -190,6 +190,32 @@ class Quadtree(
         }
     }
 
+    fun visit(
+        viewport: RectF,
+        visitor: (CanvasItem) -> Unit,
+    ) {
+        if (!RectF.intersects(bounds, viewport)) {
+            return
+        }
+
+        val index = getIndex(viewport)
+        if (index != -1 && nodes[0] != null) {
+            nodes[index]?.visit(viewport, visitor)
+        } else if (nodes[0] != null) {
+            for (i in nodes.indices) {
+                if (nodes[i] != null && RectF.intersects(nodes[i]!!.bounds, viewport)) {
+                    nodes[i]?.visit(viewport, visitor)
+                }
+            }
+        }
+
+        for (item in items) {
+            if (RectF.intersects(item.bounds, viewport)) {
+                visitor(item)
+            }
+        }
+    }
+
     fun hitTest(
         x: Float,
         y: Float,

@@ -25,8 +25,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
-import com.alexdremov.notate.controller.CanvasController
 import com.alexdremov.notate.model.InfiniteCanvasModel
+import com.alexdremov.notate.ui.controller.CanvasController
 import com.alexdremov.notate.ui.render.CanvasRenderer
 import com.alexdremov.notate.ui.render.RenderQuality
 import kotlinx.coroutines.Dispatchers

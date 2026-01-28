@@ -1,17 +1,27 @@
-package com.alexdremov.notate.controller
+package com.alexdremov.notate.ui.controller
 
 import android.content.Context
+import android.graphics.Matrix
+import android.graphics.Path
+import android.graphics.RectF
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
+import android.util.Log
+import com.alexdremov.notate.model.CanvasImage
+import com.alexdremov.notate.model.CanvasItem
 import com.alexdremov.notate.model.EraserType
 import com.alexdremov.notate.model.InfiniteCanvasModel
 import com.alexdremov.notate.model.Stroke
 import com.alexdremov.notate.ui.render.CanvasRenderer
+import com.alexdremov.notate.util.ClipboardManager
+import com.alexdremov.notate.util.StrokeGeometry
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
+import java.io.File
 import java.util.ArrayList
-import java.util.stream.Collectors
+import kotlin.coroutines.coroutineContext
 
 class CanvasControllerImpl(
     private val context: Context,
@@ -19,7 +29,7 @@ class CanvasControllerImpl(
     private val renderer: CanvasRenderer,
 ) : CanvasController {
     private val uiHandler = Handler(Looper.getMainLooper())
-    private var viewportController: com.alexdremov.notate.controller.ViewportController? = null
+    private var viewportController: ViewportController? = null
     private val selectionManager = SelectionManager()
     private var onContentChangedListener: (() -> Unit)? = null
 
@@ -27,7 +37,7 @@ class CanvasControllerImpl(
         this.onContentChangedListener = listener
     }
 
-    override fun setViewportController(controller: com.alexdremov.notate.controller.ViewportController) {
+    override fun setViewportController(controller: ViewportController) {
         this.viewportController = controller
     }
 
@@ -42,6 +52,38 @@ class CanvasControllerImpl(
                 renderer.updateTilesWithStroke(added)
                 onContentChangedListener?.invoke()
             }
+        }
+    }
+
+    override suspend fun addStrokes(strokes: Sequence<Stroke>) {
+        val batchSize = 500 // Update renderer every 500 strokes to avoid UI freeze or OOM
+        val batch = ArrayList<Stroke>(batchSize)
+
+        for (stroke in strokes) {
+            if (!coroutineContext.isActive) break
+
+            val added = model.addStroke(stroke)
+            if (added != null) {
+                batch.add(added)
+            }
+
+            if (batch.size >= batchSize) {
+                val batchCopy = ArrayList(batch)
+                withContext(Dispatchers.Main) {
+                    renderer.updateTilesWithItems(batchCopy)
+                }
+                batch.clear()
+            }
+        }
+
+        if (batch.isNotEmpty()) {
+            withContext(Dispatchers.Main) {
+                renderer.updateTilesWithItems(batch)
+            }
+        }
+
+        withContext(Dispatchers.Main) {
+            onContentChangedListener?.invoke()
         }
     }
 
@@ -110,105 +152,153 @@ class CanvasControllerImpl(
     override suspend fun getItemAt(
         x: Float,
         y: Float,
-    ): com.alexdremov.notate.model.CanvasItem? = model.hitTest(x, y, 20f)
+    ): CanvasItem? = model.hitTest(x, y, 20f)
 
     override fun getItemAtSync(
         x: Float,
         y: Float,
-    ): com.alexdremov.notate.model.CanvasItem? = model.hitTestSync(x, y, 20f)
+    ): CanvasItem? = model.hitTestSync(x, y, 20f)
 
-    override suspend fun getItemsInRect(rect: android.graphics.RectF): List<com.alexdremov.notate.model.CanvasItem> {
-        val items = model.queryItems(rect)
+    override suspend fun getItemsInRect(rect: RectF): List<CanvasItem> =
+        withContext(Dispatchers.Default) {
+            val result = ArrayList<CanvasItem>()
 
-        // Optimized Precise Rect Selection
-        return withContext(Dispatchers.Default) {
-            items
-                .parallelStream()
-                .filter { item ->
-                    if (rect.contains(item.bounds)) return@filter true
-                    if (item is Stroke) {
-                        com.alexdremov.notate.util.StrokeGeometry
-                            .strokeIntersectsRect(item, rect)
+            model.visitItemsInRect(rect) { item ->
+                val matches =
+                    if (rect.contains(item.bounds)) {
+                        true
+                    } else if (item is Stroke) {
+                        StrokeGeometry.strokeIntersectsRect(item, rect)
                     } else {
-                        android.graphics.RectF.intersects(rect, item.bounds)
+                        RectF.intersects(rect, item.bounds)
                     }
-                }.collect(Collectors.toList())
-        }
-    }
 
-    override suspend fun getItemsInPath(path: android.graphics.Path): List<com.alexdremov.notate.model.CanvasItem> {
-        val bounds = android.graphics.RectF()
+                if (matches) {
+                    result.add(item)
+                }
+            }
+            result
+        }
+
+    override suspend fun getItemsInPath(path: Path): List<CanvasItem> {
+        val bounds = RectF()
         path.computeBounds(bounds, true)
-        val items = model.queryItems(bounds)
 
         return withContext(Dispatchers.Default) {
-            var pathPoints =
-                com.alexdremov.notate.util.StrokeGeometry
-                    .flattenPath(path, 15f)
-            pathPoints =
-                com.alexdremov.notate.util.StrokeGeometry
-                    .simplifyPoints(pathPoints, 5.0f)
+            var pathPoints = StrokeGeometry.flattenPath(path, 15f)
+            pathPoints = StrokeGeometry.simplifyPoints(pathPoints, 5.0f)
 
-            items
-                .parallelStream()
-                .filter { item ->
-                    if (!bounds.contains(item.bounds)) return@filter false
-                    if (com.alexdremov.notate.util.StrokeGeometry
-                            .isRectFullyInPolygon(item.bounds, pathPoints)
-                    ) {
-                        return@filter true
-                    }
+            val result = ArrayList<CanvasItem>()
 
-                    if (item is Stroke) {
+            model.visitItemsInRect(bounds) { item ->
+                if (!bounds.contains(item.bounds)) return@visitItemsInRect
+
+                val matches =
+                    if (StrokeGeometry.isRectFullyInPolygon(item.bounds, pathPoints)) {
+                        true
+                    } else if (item is Stroke) {
                         item.points.all { p ->
-                            com.alexdremov.notate.util.StrokeGeometry
-                                .isPointInPolygon(p.x, p.y, pathPoints)
+                            StrokeGeometry.isPointInPolygon(p.x, p.y, pathPoints)
                         }
                     } else {
                         val b = item.bounds
-                        com.alexdremov.notate.util.StrokeGeometry
-                            .isPointInPolygon(b.left, b.top, pathPoints) &&
-                            com.alexdremov.notate.util.StrokeGeometry
-                                .isPointInPolygon(b.right, b.top, pathPoints) &&
-                            com.alexdremov.notate.util.StrokeGeometry
-                                .isPointInPolygon(b.right, b.bottom, pathPoints) &&
-                            com.alexdremov.notate.util.StrokeGeometry
-                                .isPointInPolygon(b.left, b.bottom, pathPoints)
+                        StrokeGeometry.isPointInPolygon(b.left, b.top, pathPoints) &&
+                            StrokeGeometry.isPointInPolygon(b.right, b.top, pathPoints) &&
+                            StrokeGeometry.isPointInPolygon(b.right, b.bottom, pathPoints) &&
+                            StrokeGeometry.isPointInPolygon(b.left, b.bottom, pathPoints)
                     }
-                }.collect(Collectors.toList())
+
+                if (matches) {
+                    result.add(item)
+                }
+            }
+            result
         }
     }
 
-    override suspend fun selectItem(item: com.alexdremov.notate.model.CanvasItem) {
+    override suspend fun selectItem(item: CanvasItem) {
         selectionManager.select(item)
-        withContext(Dispatchers.Main) { renderer.invalidate() }
+        generateSelectionImposter()
+        withContext(Dispatchers.Main) {
+            renderer.setHiddenItems(selectionManager.getSelectedIds())
+            renderer.hideItemsInCache(listOf(item))
+            renderer.invalidate()
+        }
     }
 
-    override suspend fun selectItems(items: List<com.alexdremov.notate.model.CanvasItem>) {
+    override suspend fun selectItems(items: List<CanvasItem>) {
         selectionManager.selectAll(items)
-        withContext(Dispatchers.Main) { renderer.invalidate() }
+        generateSelectionImposter()
+        withContext(Dispatchers.Main) {
+            renderer.setHiddenItems(selectionManager.getSelectedIds())
+            renderer.hideItemsInCache(items)
+            renderer.invalidate()
+        }
     }
 
     override suspend fun clearSelection() {
         if (selectionManager.hasSelection()) {
+            val bounds = selectionManager.getTransformedBounds()
+            val ids = selectionManager.getSelectedIds()
+
+            // BAKING: Only query items for very small selections to provide instant feedback.
+            // For large selections, we rely on TileManager's background refresh to avoid UI freeze.
+            val items =
+                if (ids.size < 50) {
+                    getItemsInRect(bounds).filter { ids.contains(it.order) }
+                } else {
+                    emptyList()
+                }
+
             selectionManager.clearSelection()
-            withContext(Dispatchers.Main) { renderer.invalidate() }
+            updatePinnedRegions()
+
+            withContext(Dispatchers.Main) {
+                renderer.setHiddenItems(emptySet())
+                if (items.isNotEmpty()) {
+                    renderer.updateTilesWithItems(items)
+                }
+                renderer.refreshTiles(bounds)
+                renderer.invalidate()
+                onContentChangedListener?.invoke()
+            }
         }
     }
 
     override suspend fun deleteSelection() {
         if (selectionManager.hasSelection()) {
-            val toRemove = selectionManager.selectedItems.toList()
+            val bounds = selectionManager.getTransformedBounds()
+            val ids = selectionManager.getSelectedIds()
             selectionManager.clearSelection()
-            deleteItemsFromModel(toRemove)
-            withContext(Dispatchers.Main) { onContentChangedListener?.invoke() }
+            updatePinnedRegions()
+
+            withContext(Dispatchers.Default) {
+                model.deleteItemsByIds(bounds, ids)
+            }
+
+            withContext(Dispatchers.Main) {
+                renderer.setHiddenItems(emptySet())
+                renderer.invalidateTiles(bounds)
+                onContentChangedListener?.invoke()
+            }
         }
     }
 
     override suspend fun copySelection() {
         if (selectionManager.hasSelection()) {
-            com.alexdremov.notate.util.ClipboardManager
-                .copy(selectionManager.selectedItems)
+            val ids = selectionManager.getSelectedIds()
+            if (ids.size > 5000) {
+                // Prevent OOM/Freeze on massive copy
+                withContext(Dispatchers.Main) {
+                    android.widget.Toast
+                        .makeText(context, "Selection too large to copy", android.widget.Toast.LENGTH_SHORT)
+                        .show()
+                }
+                return
+            }
+
+            val items = fetchSelectedItems()
+            ClipboardManager.copy(items)
         }
     }
 
@@ -216,54 +306,52 @@ class CanvasControllerImpl(
         x: Float,
         y: Float,
     ) {
-        if (com.alexdremov.notate.util.ClipboardManager
-                .hasContent()
-        ) {
-            val items =
-                com.alexdremov.notate.util.ClipboardManager
-                    .getItems()
+        if (ClipboardManager.hasContent()) {
+            val items = ClipboardManager.getItems()
             if (items.isEmpty()) return
 
-            val bounds = android.graphics.RectF()
+            val bounds = RectF()
             bounds.set(items[0].bounds)
             for (item in items) bounds.union(item.bounds)
 
             val dx = x - bounds.centerX()
             val dy = y - bounds.centerY()
 
-            val matrix = android.graphics.Matrix()
+            val matrix = Matrix()
             matrix.setTranslate(dx, dy)
 
-            val pastedItems = ArrayList<com.alexdremov.notate.model.CanvasItem>()
+            val pastedItems = ArrayList<CanvasItem>()
 
             startBatchSession()
             items.forEach { item ->
                 val newItem =
                     when (item) {
                         is Stroke -> {
-                            val newPath = android.graphics.Path(item.path)
+                            val newPath = Path(item.path)
                             newPath.transform(matrix)
                             val newPoints =
                                 item.points.map { p ->
-                                    com.onyx.android.sdk.data.note
-                                        .TouchPoint(p.x + dx, p.y + dy, p.pressure, p.size, p.timestamp)
+                                    com.onyx.android.sdk.data.note.TouchPoint(
+                                        p.x + dx,
+                                        p.y + dy,
+                                        p.pressure,
+                                        p.size,
+                                        p.timestamp,
+                                    )
                                 }
-                            val newBounds = android.graphics.RectF(item.bounds)
+                            val newBounds = RectF(item.bounds)
                             matrix.mapRect(newBounds)
                             item.copy(path = newPath, points = newPoints, bounds = newBounds, strokeOrder = 0)
                         }
 
-                        is com.alexdremov.notate.model.CanvasImage -> {
-                            val newBounds = android.graphics.RectF(item.bounds)
+                        is CanvasImage -> {
+                            val newBounds = RectF(item.bounds)
                             matrix.mapRect(newBounds)
                             item.copy(bounds = newBounds, order = 0)
                         }
 
                         else -> {
-                            android.util.Log.w(
-                                "CanvasControllerImpl",
-                                "Unsupported CanvasItem type during paste: ${item::class.java.name}",
-                            )
+                            Log.w("CanvasControllerImpl", "Unsupported CanvasItem during paste")
                             return@forEach
                         }
                     }
@@ -279,6 +367,9 @@ class CanvasControllerImpl(
                 renderer.updateTilesWithItems(pastedItems)
                 selectionManager.clearSelection()
                 selectionManager.selectAll(pastedItems)
+                renderer.setHiddenItems(selectionManager.getSelectedIds())
+                renderer.hideItemsInCache(pastedItems)
+                generateSelectionImposter()
                 renderer.invalidate()
                 onContentChangedListener?.invoke()
             }
@@ -293,9 +384,9 @@ class CanvasControllerImpl(
         height: Float,
     ) {
         val importedPath = model.importImage(Uri.parse(uri), context) ?: uri
-        val bounds = android.graphics.RectF(x - width / 2, y - height / 2, x + width / 2, y + height / 2)
+        val bounds = RectF(x - width / 2, y - height / 2, x + width / 2, y + height / 2)
         val image =
-            com.alexdremov.notate.model.CanvasImage(
+            CanvasImage(
                 uri = importedPath,
                 bounds = bounds,
                 zIndex = 0f,
@@ -308,6 +399,9 @@ class CanvasControllerImpl(
                 renderer.updateTilesWithItem(added)
                 selectionManager.clearSelection()
                 selectionManager.select(added)
+                renderer.setHiddenItems(selectionManager.getSelectedIds())
+                renderer.hideItemsInCache(listOf(added))
+                generateSelectionImposter()
                 renderer.invalidate()
                 onContentChangedListener?.invoke()
             }
@@ -316,10 +410,124 @@ class CanvasControllerImpl(
 
     override suspend fun startMoveSelection() {
         if (!selectionManager.hasSelection()) return
+
+        val bounds = selectionManager.getTransformedBounds()
+        val ids = selectionManager.getSelectedIds()
+
         startBatchSession()
-        deleteItemsFromModel(selectionManager.selectedItems.toList())
-        withContext(Dispatchers.Main) { renderer.invalidate() }
+
+        // 2. Ensure Imposter is ready (or wait for it)
+        if (selectionManager.getImposter() == null) {
+            generateSelectionImposter()
+        }
+
+        // 3. Inform renderer to hide items
+        withContext(Dispatchers.Main) {
+            renderer.setHiddenItems(ids)
+            // Instant hide optimization for small selections
+            if (ids.size < 500) {
+                val items = withContext(Dispatchers.Default) { fetchSelectedItems() }
+                renderer.hideItemsInCache(items)
+            }
+            renderer.invalidateTiles(bounds)
+        }
     }
+
+    private suspend fun generateSelectionImposter() {
+        if (!selectionManager.hasSelection()) return
+        val bounds = selectionManager.getTransformedBounds()
+        val ids = selectionManager.getSelectedIds()
+
+        selectionManager.isGeneratingImposter = true
+        withContext(Dispatchers.Main) { renderer.invalidate() }
+
+        withContext(Dispatchers.Default) {
+            try {
+                val padding = 5
+                val width = bounds.width().toInt() + (padding * 2)
+                val height = bounds.height().toInt() + (padding * 2)
+
+                if (width in 1..4096 && height in 1..4096) {
+                    val bitmap = android.graphics.Bitmap.createBitmap(width, height, android.graphics.Bitmap.Config.ARGB_8888)
+                    val canvas = android.graphics.Canvas(bitmap)
+                    canvas.translate(-(bounds.left - padding), -(bounds.top - padding))
+
+                    model.visitItemsInRect(bounds) { item ->
+                        if (ids.contains(item.order)) {
+                            renderer.drawItemToCanvas(canvas, item)
+                        }
+                    }
+
+                    val matrix = Matrix()
+                    matrix.setTranslate(bounds.left - padding, bounds.top - padding)
+
+                    withContext(Dispatchers.Main) {
+                        if (selectionManager.hasSelection()) {
+                            selectionManager.setImposter(bitmap, matrix)
+                        } else {
+                            bitmap.recycle()
+                        }
+                    }
+                }
+            } catch (e: Throwable) {
+                Log.w("CanvasController", "Async imposter generation failed: ${e.message}")
+            } finally {
+                withContext(Dispatchers.Main) {
+                    selectionManager.isGeneratingImposter = false
+                    renderer.invalidate()
+                }
+            }
+        }
+    }
+
+    private fun transformItem(
+        item: CanvasItem,
+        transform: Matrix,
+    ): CanvasItem =
+        when (item) {
+            is Stroke -> {
+                val newPath = Path(item.path)
+                newPath.transform(transform)
+
+                // Recalculate width if scale changed
+                val values = FloatArray(9)
+                transform.getValues(values)
+                val scale =
+                    kotlin.math.sqrt(
+                        values[Matrix.MSCALE_X] * values[Matrix.MSCALE_X] +
+                            values[Matrix.MSKEW_Y] * values[Matrix.MSKEW_Y],
+                    )
+                val newWidth = item.width * scale
+
+                // Use consistent bounds calculation logic
+                val newBounds = StrokeGeometry.computeStrokeBounds(newPath, newWidth, item.style)
+
+                val newPoints =
+                    item.points.map { p ->
+                        val pts = floatArrayOf(p.x, p.y)
+                        transform.mapPoints(pts)
+                        com.onyx.android.sdk.data.note
+                            .TouchPoint(pts[0], pts[1], p.pressure, p.size, p.timestamp)
+                    }
+
+                item.copy(path = newPath, points = newPoints, bounds = newBounds, width = newWidth)
+            }
+
+            is CanvasImage -> {
+                val newBounds = RectF(item.bounds)
+                transform.mapRect(newBounds)
+                val values = FloatArray(9)
+                transform.getValues(values)
+                val scaleX = values[Matrix.MSCALE_X]
+                val skewY = values[Matrix.MSKEW_Y]
+                val rotation = kotlin.math.atan2(skewY.toDouble(), scaleX.toDouble()).toFloat()
+                item.copy(bounds = newBounds, rotation = item.rotation + Math.toDegrees(rotation.toDouble()).toFloat())
+            }
+
+            else -> {
+                item
+            }
+        }
 
     override suspend fun moveSelection(
         dx: Float,
@@ -329,7 +537,7 @@ class CanvasControllerImpl(
         withContext(Dispatchers.Main) { renderer.invalidate() }
     }
 
-    override suspend fun transformSelection(matrix: android.graphics.Matrix) {
+    override suspend fun transformSelection(matrix: Matrix) {
         selectionManager.applyTransform(matrix)
         withContext(Dispatchers.Main) { renderer.invalidate() }
     }
@@ -337,84 +545,95 @@ class CanvasControllerImpl(
     override suspend fun commitMoveSelection() {
         if (!selectionManager.hasSelection()) return
 
-        val originals = selectionManager.selectedItems.toList()
+        val originalBounds = selectionManager.getOriginalBounds()
+        val originalItems = fetchSelectedItems()
         val transform = selectionManager.getTransform()
 
-        val values = FloatArray(9)
-        transform.getValues(values)
-        val scaleX = values[android.graphics.Matrix.MSCALE_X]
-        val skewY = values[android.graphics.Matrix.MSKEW_Y]
-        val scale = kotlin.math.sqrt(scaleX * scaleX + skewY * skewY)
-        val rotation = kotlin.math.atan2(skewY.toDouble(), scaleX.toDouble()).toFloat()
+        // Transform items in memory
+        val newItems = originalItems.map { transformItem(it, transform) }
 
-        val newSelected = ArrayList<com.alexdremov.notate.model.CanvasItem>()
-
-        originals.forEach { item ->
-            val newItem =
-                when (item) {
-                    is Stroke -> {
-                        val newPath = android.graphics.Path(item.path)
-                        newPath.transform(transform)
-
-                        val newPoints =
-                            item.points.map { p ->
-                                val pts = floatArrayOf(p.x, p.y)
-                                transform.mapPoints(pts)
-                                com.onyx.android.sdk.data.note.TouchPoint(
-                                    pts[0],
-                                    pts[1],
-                                    p.pressure,
-                                    p.size * scale,
-                                    p.timestamp,
-                                )
-                            }
-
-                        val newBounds = android.graphics.RectF(item.bounds)
-                        transform.mapRect(newBounds)
-
-                        item.copy(path = newPath, points = newPoints, bounds = newBounds, width = item.width * scale)
-                    }
-
-                    is com.alexdremov.notate.model.CanvasImage -> {
-                        val newBounds = android.graphics.RectF(item.bounds)
-                        transform.mapRect(newBounds)
-                        item.copy(bounds = newBounds, rotation = item.rotation + Math.toDegrees(rotation.toDouble()).toFloat())
-                    }
-
-                    else -> {
-                        android.util.Log.w(
-                            "CanvasControllerImpl",
-                            "Unsupported CanvasItem type: ${item::class.java.name}",
-                        )
-                        return@forEach
-                    }
-                }
-
-            val added = model.addItem(newItem)
-            if (added != null) {
-                newSelected.add(added)
-                withContext(Dispatchers.Main) { renderer.updateTilesWithItem(added) }
-            }
+        // Calculate new bounds
+        val newBounds = RectF()
+        if (newItems.isNotEmpty()) {
+            newBounds.set(newItems[0].bounds)
+            for (i in 1 until newItems.size) newBounds.union(newItems[i].bounds)
         }
+
+        // Apply to Model
+        val committedItems =
+            withContext(Dispatchers.IO) {
+                model.replaceItems(originalItems, newItems)
+            }
 
         endBatchSession()
 
+        // ALWAYS LIFTED STRATEGY:
+        // Clear old selection state and re-select new items.
+        // This keeps them "lifted" visually.
+
         selectionManager.clearSelection()
-        selectionManager.selectAll(newSelected)
-        selectionManager.resetTransform()
+        selectionManager.resetTransform() // Transform is now baked into the items
+        selectionManager.selectAll(committedItems) // Re-select transformed items WITH CORRECT IDs
+
+        updatePinnedRegions()
+
+        // We must regenerate the imposter because the old one is stale (pre-transform coordinate system).
+        selectionManager.clearImposter()
 
         withContext(Dispatchers.Main) {
+            // 1. Tell renderer to KEEP hiding these IDs (new IDs) during future tile generations
+            renderer.setHiddenItems(selectionManager.getSelectedIds())
+
+            // 2. Force invalidation of tiles in the area.
+            // Fix Ghosting: Invalidate BOTH old and new locations.
+            renderer.invalidateTiles(originalBounds)
+            renderer.invalidateTiles(newBounds)
+
+            // 3. Trigger overlay redraw (will show vectors or new imposter)
             renderer.invalidate()
+
+            // 4. Start async imposter generation for the new state
+            generateSelectionImposter()
+
             onContentChangedListener?.invoke()
         }
     }
 
-    private suspend fun deleteItemsFromModel(items: List<com.alexdremov.notate.model.CanvasItem>) {
-        model.deleteItems(items)
-        if (items.isNotEmpty()) {
-            val bounds = android.graphics.RectF(items[0].bounds)
-            items.forEach { bounds.union(it.bounds) }
-            withContext(Dispatchers.Main) { renderer.invalidateTiles(bounds) }
+    private suspend fun fetchSelectedItems(): List<CanvasItem> {
+        val items = ArrayList<CanvasItem>()
+        val missingIds = ArrayList<Long>()
+
+        // Use SelectionManager's internal iterator to avoid allocating lists of IDs/Bounds
+        // This is memory efficient (O(1) allocation) and allows pinpoint item retrieval.
+        val snapshotItems = ArrayList<Pair<Long, RectF>>()
+
+        selectionManager.forEachSelected { id, bounds ->
+            snapshotItems.add(Pair(id, RectF(bounds)))
         }
+
+        // We must query outside the lock/iterator to avoid blocking SelectionManager
+        // while performing IO (RegionManager loads).
+        for ((id, bounds) in snapshotItems) {
+            val item = model.getItem(id, bounds)
+            if (item != null) {
+                items.add(item)
+            } else {
+                missingIds.add(id)
+            }
+        }
+
+        if (missingIds.isNotEmpty()) {
+            Log.e(
+                "CanvasController",
+                "CRITICAL: Failed to fetch ${missingIds.size} selected items. IDs: ${missingIds.take(10)}... This will cause duplication.",
+            )
+        }
+
+        return items
+    }
+
+    private fun updatePinnedRegions() {
+        // Pinning disabled per requirements to avoid OOM on large selections.
+        // SelectionManager holds items in memory for overlay rendering.
     }
 }
