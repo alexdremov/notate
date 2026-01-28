@@ -478,38 +478,39 @@ class CanvasControllerImpl(
         }
     }
 
-        private fun transformItem(
-            item: CanvasItem,
-            transform: Matrix,
-        ): CanvasItem =
-            when (item) {
-                is Stroke -> {
-                    val newPath = Path(item.path)
-                    newPath.transform(transform)
-                    
-                    // Recalculate width if scale changed
-                    val values = FloatArray(9)
-                    transform.getValues(values)
-                    val scale =
-                        kotlin.math.sqrt(
-                            values[Matrix.MSCALE_X] * values[Matrix.MSCALE_X] +
-                                values[Matrix.MSKEW_Y] * values[Matrix.MSKEW_Y],
-                        )
-                    val newWidth = item.width * scale
-    
-                    // Use consistent bounds calculation logic
-                    val newBounds = StrokeGeometry.computeStrokeBounds(newPath, newWidth, item.style)
-                    
-                    val newPoints =
-                        item.points.map { p ->
-                            val pts = floatArrayOf(p.x, p.y)
-                            transform.mapPoints(pts)
-                            com.onyx.android.sdk.data.note
-                                .TouchPoint(pts[0], pts[1], p.pressure, p.size, p.timestamp)
-                        }
-                    
-                    item.copy(path = newPath, points = newPoints, bounds = newBounds, width = newWidth)
-                }
+    private fun transformItem(
+        item: CanvasItem,
+        transform: Matrix,
+    ): CanvasItem =
+        when (item) {
+            is Stroke -> {
+                val newPath = Path(item.path)
+                newPath.transform(transform)
+
+                // Recalculate width if scale changed
+                val values = FloatArray(9)
+                transform.getValues(values)
+                val scale =
+                    kotlin.math.sqrt(
+                        values[Matrix.MSCALE_X] * values[Matrix.MSCALE_X] +
+                            values[Matrix.MSKEW_Y] * values[Matrix.MSKEW_Y],
+                    )
+                val newWidth = item.width * scale
+
+                // Use consistent bounds calculation logic
+                val newBounds = StrokeGeometry.computeStrokeBounds(newPath, newWidth, item.style)
+
+                val newPoints =
+                    item.points.map { p ->
+                        val pts = floatArrayOf(p.x, p.y)
+                        transform.mapPoints(pts)
+                        com.onyx.android.sdk.data.note
+                            .TouchPoint(pts[0], pts[1], p.pressure, p.size, p.timestamp)
+                    }
+
+                item.copy(path = newPath, points = newPoints, bounds = newBounds, width = newWidth)
+            }
+
             is CanvasImage -> {
                 val newBounds = RectF(item.bounds)
                 transform.mapRect(newBounds)
