@@ -741,6 +741,7 @@ class TileManager(
         val currentLevel = if (visibleRect != null) calculateLOD(lastScale) else -1
 
         val handledKeys = HashSet<TileCache.TileKey>()
+        val hidden = hiddenItemIds
 
         // Update Cached Tiles
         for ((key, bitmap) in snapshot) {
@@ -764,6 +765,7 @@ class TileManager(
                 // Batch Draw Intersecting Items
                 // Optimization: Filter items intersecting this specific tile
                 for (item in standardItems) {
+                    if (hidden.contains(item.order)) continue
                     if (RectF.intersects(item.bounds, tileRect)) {
                         renderer.drawItemToCanvas(tileCanvas, item, scale = scale)
                     }
