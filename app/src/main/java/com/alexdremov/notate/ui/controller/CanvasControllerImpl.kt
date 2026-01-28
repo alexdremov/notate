@@ -464,8 +464,10 @@ class CanvasControllerImpl(
                     withContext(Dispatchers.Main) {
                         if (selectionManager.hasSelection()) {
                             selectionManager.setImposter(bitmap, matrix)
+                        } else {
+                            bitmap.recycle()
                         }
-                    } // Removed else branch to recycle bitmap
+                    }
                 }
             } catch (e: Throwable) {
                 Log.w("CanvasController", "Async imposter generation failed: ${e.message}")
