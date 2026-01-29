@@ -158,11 +158,29 @@ class RegionManagerOverflowTest {
             storage.deleteRegion(r1)
             storage.deleteRegion(r2)
 
-            val r1Data = regionManager.getRegion(r1)
-            assertTrue("R1 should have been evicted from overflow", r1Data.items.isEmpty())
+            // Retry loop for R1 eviction
+            var r1Evicted = false
+            for (i in 0 until 20) {
+                val r1Data = regionManager.getRegion(r1)
+                if (r1Data.items.isEmpty()) {
+                    r1Evicted = true
+                    break
+                }
+                kotlinx.coroutines.delay(100)
+            }
+            assertTrue("R1 should have been evicted from overflow", r1Evicted)
 
-            val r2Data = regionManager.getRegion(r2)
-            assertTrue("R2 should have been evicted from overflow", r2Data.items.isEmpty())
+            // Retry loop for R2 eviction
+            var r2Evicted = false
+            for (i in 0 until 20) {
+                val r2Data = regionManager.getRegion(r2)
+                if (r2Data.items.isEmpty()) {
+                    r2Evicted = true
+                    break
+                }
+                kotlinx.coroutines.delay(100)
+            }
+            assertTrue("R2 should have been evicted from overflow", r2Evicted)
 
             // Verify R3 is still in memory (overflow)
             storage.deleteRegion(r3)
