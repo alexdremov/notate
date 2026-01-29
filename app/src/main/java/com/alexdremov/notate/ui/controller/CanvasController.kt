@@ -102,11 +102,13 @@ interface CanvasController {
 
     suspend fun transformSelection(matrix: android.graphics.Matrix)
 
-    suspend fun commitMoveSelection()
+    suspend fun commitMoveSelection(shouldReselect: Boolean = true)
 
     fun getSelectionManager(): SelectionManager
 
     fun setOnContentChangedListener(listener: () -> Unit)
+
+    fun setProgressCallback(callback: (isVisible: Boolean, message: String?, progress: Int) -> Unit)
 }
 
 interface ViewportController {

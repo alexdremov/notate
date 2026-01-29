@@ -81,29 +81,36 @@ class SelectionOverlayDrawer(
             canvas.restore()
         } else {
             // Fallback: Direct Vector Rendering if imposter is missing or generating
-            val combinedMatrix = Matrix(viewMatrix)
-            combinedMatrix.preConcat(selectionManager.getTransform())
-
-            // 1. Calculate Viewport in World Coordinates
-            val visibleRect = RectF(0f, 0f, canvas.width.toFloat(), canvas.height.toFloat())
-            val inverseView = Matrix()
-            viewMatrix.invert(inverseView)
-            inverseView.mapRect(visibleRect)
-
-            // 2. Calculate Query Rect in Original Item Coordinates (Reverse Selection Transform)
-            // We need items that, when transformed, land in the visibleRect.
-            val queryRect = RectF(visibleRect)
-            val inverseSelection = Matrix()
-            selectionManager.getTransform().invert(inverseSelection)
-            inverseSelection.mapRect(queryRect)
-
             val ids = selectionManager.getSelectedIds()
-            renderer.renderDirectVectorsSync(
-                canvas,
-                combinedMatrix,
-                queryRect,
-                RenderQuality.HIGH,
-            ) { item -> ids.contains(item.order) }
+
+            // PERFORMANCE SAFEGUARD:
+            // If selection is massive (> 2000 items), skipping imposter generation to avoid OOM
+            // means we also MUST skip direct vector rendering, otherwise the UI thread will freeze.
+            // We just fall through to draw the bounding box.
+            if (ids.size <= 2000) {
+                val combinedMatrix = Matrix(viewMatrix)
+                combinedMatrix.preConcat(selectionManager.getTransform())
+
+                // 1. Calculate Viewport in World Coordinates
+                val visibleRect = RectF(0f, 0f, canvas.width.toFloat(), canvas.height.toFloat())
+                val inverseView = Matrix()
+                viewMatrix.invert(inverseView)
+                inverseView.mapRect(visibleRect)
+
+                // 2. Calculate Query Rect in Original Item Coordinates (Reverse Selection Transform)
+                // We need items that, when transformed, land in the visibleRect.
+                val queryRect = RectF(visibleRect)
+                val inverseSelection = Matrix()
+                selectionManager.getTransform().invert(inverseSelection)
+                inverseSelection.mapRect(queryRect)
+
+                renderer.renderDirectVectorsSync(
+                    canvas,
+                    combinedMatrix,
+                    queryRect,
+                    RenderQuality.HIGH,
+                ) { item -> ids.contains(item.order) }
+            }
         }
 
         // 2. Draw Selection Box & Handles

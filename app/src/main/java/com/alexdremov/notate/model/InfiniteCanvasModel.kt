@@ -338,6 +338,13 @@ class InfiniteCanvasModel {
                 action.actions.forEach { executeAction(it, false) }
                 if (recalculateBounds) recalculateContentBounds()
             }
+
+            is HistoryAction.RemoveStashed -> {
+                val rm = regionManager ?: return
+                rm.removeItemsByIds(action.bounds, action.ids)
+                if (recalculateBounds) recalculateContentBounds()
+                _events.tryEmit(ModelEvent.BulkItemsAdded(action.bounds))
+            }
         }
     }
 
@@ -376,6 +383,13 @@ class InfiniteCanvasModel {
                 action.actions.asReversed().forEach { revertAction(it, false) }
                 if (recalculateBounds) recalculateContentBounds()
             }
+
+            is HistoryAction.RemoveStashed -> {
+                val rm = regionManager ?: return
+                val (_, _) = rm.unstashItems(action.stashFile, android.graphics.Matrix())
+                if (recalculateBounds) recalculateContentBounds()
+                _events.tryEmit(ModelEvent.BulkItemsAdded(action.bounds))
+            }
         }
     }
 
@@ -411,6 +425,10 @@ class InfiniteCanvasModel {
                 val r = RectF()
                 action.actions.forEach { r.union(calculateActionBounds(it)) }
                 r
+            }
+
+            is HistoryAction.RemoveStashed -> {
+                action.bounds
             }
         }
 
@@ -473,9 +491,10 @@ class InfiniteCanvasModel {
     suspend fun unstashItems(
         file: java.io.File,
         transform: android.graphics.Matrix,
+        onItemUnstashed: ((CanvasItem) -> Unit)? = null,
     ): Pair<Set<Long>, RectF> =
         mutex.withLock {
-            val result = regionManager?.unstashItems(file, transform) ?: Pair(emptySet(), RectF())
+            val result = regionManager?.unstashItems(file, transform, onItemUnstashed) ?: Pair(emptySet(), RectF())
             if (!result.second.isEmpty) {
                 _events.tryEmit(ModelEvent.BulkItemsAdded(result.second))
             }
@@ -486,12 +505,16 @@ class InfiniteCanvasModel {
     suspend fun deleteItemsByIds(
         rect: RectF,
         ids: Set<Long>,
+        stashDir: java.io.File,
     ) {
         mutex.withLock {
-            regionManager?.removeItemsByIds(rect, ids)
+            val file = java.io.File(stashDir, "del_${System.currentTimeMillis()}_${ids.hashCode()}.bin")
+            regionManager?.stashSelectedItems(rect, ids, file)
+            val action = HistoryAction.RemoveStashed(file, rect, ids)
+            historyManager.addToStack(action)
+
             recalculateContentBounds()
-            // History support for virtualized deletion could be added here
-            // by stashing items to a temp file and creating a HistoryAction.RemoveVirtual(file)
+            _events.tryEmit(ModelEvent.BulkItemsAdded(rect)) // Force refresh area
         }
     }
 

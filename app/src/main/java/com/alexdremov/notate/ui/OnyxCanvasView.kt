@@ -591,6 +591,14 @@ class OnyxCanvasView
         }
 
         suspend fun undo() {
+            val sm = canvasController.getSelectionManager()
+            if (sm.hasSelection() && !sm.getTransform().isIdentity) {
+                // Undo pending transform (Reset visual state without committing)
+                sm.resetTransform()
+                canvasRenderer.invalidate()
+                return
+            }
+
             canvasModel.undo()?.let { canvasRenderer.invalidateTiles(it) }
             refreshAfterEdit()
             onContentChanged?.invoke()

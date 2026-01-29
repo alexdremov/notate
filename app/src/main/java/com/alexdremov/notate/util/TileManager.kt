@@ -86,7 +86,7 @@ class TileManager(
 
     // Scheduling State
     private val activeJobCount = AtomicInteger(0)
-    private val maxConcurrentJobs = 32
+    private val maxConcurrentJobs = 128
     private val pendingLock = Any()
     private val pendingJobsByRegion = HashMap<RegionId, MutableList<PendingJob>>()
     private val pendingJobsByKey = HashMap<TileCache.TileKey, PendingJob>()

@@ -81,10 +81,16 @@ class SelectionInteractor(
     private val AXIS_LOCK_THRESHOLD = 20f // Pixels moved before locking kicks in
     private val AXIS_LOCK_GAP = 20.0 // Dominant axis must be 4x the other
 
+    // State for managing commit concurrency
+    private var isCommitting = false
+
     fun onDown(
         x: Float,
         y: Float,
     ): Boolean {
+        // Prevent interaction if a commit is still processing to avoid state race/freeze
+        if (isCommitting) return true
+
         val sm = controller.getSelectionManager()
         if (!sm.hasSelection()) return false
 
@@ -125,6 +131,8 @@ class SelectionInteractor(
         x: Float,
         y: Float,
     ) {
+        if (isCommitting) return
+
         isDragging = true
         activeHandle = HandleType.BODY
         lastTouchX = x
@@ -154,6 +162,7 @@ class SelectionInteractor(
     }
 
     fun onMove(event: MotionEvent): Boolean {
+        if (isCommitting) return true
         if (isTransformingMultiTouch && event.pointerCount >= 2) {
             handleMultiTouchTransform(event)
             return true
@@ -173,14 +182,22 @@ class SelectionInteractor(
         if (wasInteracting) {
             EpdFastModeController.exitFastMode()
 
-            scope.launch {
-                controller.commitMoveSelection()
-                if (wasBodyTap) {
-                    controller.clearSelection()
-                    view.dismissActionPopup()
-                } else {
-                    view.showActionPopup()
+            if (wasBodyTap) {
+                // Guard against multiple commits
+                if (isCommitting) return
+                isCommitting = true
+
+                val job =
+                    scope.launch {
+                        controller.clearSelection() // This now triggers commit(reselect=false)
+                        view.dismissActionPopup()
+                    }
+                job.invokeOnCompletion {
+                    isCommitting = false
                 }
+            } else {
+                // Drag ended. Keep selection floating (no commit).
+                view.showActionPopup()
             }
         }
 
@@ -438,5 +455,5 @@ class SelectionInteractor(
         scrollDirY = 0f
     }
 
-    fun isInteracting() = isDragging || isTransformingMultiTouch
+    fun isInteracting() = isDragging || isTransformingMultiTouch || isCommitting
 }

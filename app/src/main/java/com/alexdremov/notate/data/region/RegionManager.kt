@@ -133,7 +133,7 @@ class RegionManager(
                     if (evicted) handleEviction(key, oldValue)
                     val inOverflow = stateLock.read { overflowRegions.containsKey(key) }
                     if (inOverflow) return
-                    if (oldValue.isDirty) saveRegionInternal(oldValue)
+                    if (oldValue.isDirty) scheduleSave(oldValue)
                     oldValue.recycle()
                 }
             }
@@ -150,6 +150,12 @@ class RegionManager(
                     )
             },
         )
+    }
+
+    private fun scheduleSave(region: RegionData) {
+        scope.launch(Dispatchers.IO) {
+            saveRegionInternal(region)
+        }
     }
 
     private fun updateMetadataCache() {
@@ -175,7 +181,7 @@ class RegionManager(
                     val oldestRegion = overflowRegions.remove(oldestKey)
                     if (oldestRegion != null) {
                         currentOverflowBytes -= oldestRegion.getSizeCached()
-                        if (oldestRegion.isDirty) saveRegionInternal(oldestRegion)
+                        if (oldestRegion.isDirty) scheduleSave(oldestRegion)
                         oldestRegion.recycle()
                     }
                 }
@@ -183,7 +189,7 @@ class RegionManager(
                     overflowRegions[key] = region
                     currentOverflowBytes += size
                 } else {
-                    if (region.isDirty) saveRegionInternal(region)
+                    if (region.isDirty) scheduleSave(region)
                 }
             }
         }
@@ -593,6 +599,7 @@ class RegionManager(
     suspend fun unstashItems(
         inputFile: java.io.File,
         transform: android.graphics.Matrix,
+        onItemUnstashed: ((CanvasItem) -> Unit)? = null,
     ): Pair<Set<Long>, RectF> {
         if (!inputFile.exists()) return Pair(emptySet(), RectF())
         val addedIds = HashSet<Long>()
@@ -628,6 +635,8 @@ class RegionManager(
                         val transformed = transformItem(item, transform)
                         buffer.add(transformed)
                         addedIds.add(transformed.order)
+                        onItemUnstashed?.invoke(transformed)
+
                         if (first) {
                             unionBounds.set(transformed.bounds)
                             first = false

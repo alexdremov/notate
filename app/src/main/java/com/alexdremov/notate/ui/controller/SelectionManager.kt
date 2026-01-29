@@ -16,6 +16,7 @@ class SelectionManager {
     // Storing Bounds allows us to pinpoint items in the spatial index (RegionManager)
     // without relying on error-prone global area queries.
     private val _ids = ArrayList<Long>()
+    private val _idSet = HashSet<Long>()
     private var _bounds = FloatArray(1024) // Packed [left, top, right, bottom]
     private var _count = 0
 
@@ -34,7 +35,7 @@ class SelectionManager {
         get() = synchronized(lock) { _isGeneratingImposter }
         set(value) = synchronized(lock) { _isGeneratingImposter = value }
 
-    fun getSelectedIds(): Set<Long> = synchronized(lock) { _ids.toSet() }
+    fun getSelectedIds(): Set<Long> = synchronized(lock) { HashSet(_idSet) }
 
     fun forEachSelected(action: (Long, RectF) -> Unit) {
         synchronized(lock) {
@@ -113,9 +114,10 @@ class SelectionManager {
             }
 
             // Check for duplicate ID to enforce set semantics
-            if (!_ids.contains(item.order)) {
+            if (!_idSet.contains(item.order)) {
                 ensureCapacity(_count + 1)
                 _ids.add(item.order)
+                _idSet.add(item.order)
                 val base = _count * 4
                 _bounds[base] = item.bounds.left
                 _bounds[base + 1] = item.bounds.top
@@ -136,8 +138,9 @@ class SelectionManager {
                     selectionBounds.union(item.bounds)
                 }
 
-                if (!_ids.contains(item.order)) {
+                if (!_idSet.contains(item.order)) {
                     _ids.add(item.order)
+                    _idSet.add(item.order)
                     val base = _count * 4
                     _bounds[base] = item.bounds.left
                     _bounds[base + 1] = item.bounds.top
@@ -154,6 +157,7 @@ class SelectionManager {
             val idx = _ids.indexOf(item.order)
             if (idx != -1) {
                 _ids.removeAt(idx)
+                _idSet.remove(item.order)
 
                 // Shift bounds
                 val remaining = _count - 1 - idx
@@ -173,6 +177,7 @@ class SelectionManager {
     fun clearSelection() {
         synchronized(lock) {
             _ids.clear()
+            _idSet.clear()
             _count = 0
             transformMatrix.reset()
             selectionBounds.setEmpty()
@@ -183,9 +188,9 @@ class SelectionManager {
 
     fun hasSelection(): Boolean = synchronized(lock) { _count > 0 }
 
-    fun isSelected(item: CanvasItem): Boolean = synchronized(lock) { _ids.contains(item.order) }
+    fun isSelected(item: CanvasItem): Boolean = synchronized(lock) { _idSet.contains(item.order) }
 
-    fun isSelected(id: Long): Boolean = synchronized(lock) { _ids.contains(id) }
+    fun isSelected(id: Long): Boolean = synchronized(lock) { _idSet.contains(id) }
 
     fun getOriginalBounds(): RectF = synchronized(lock) { RectF(selectionBounds) }
 
