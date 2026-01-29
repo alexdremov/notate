@@ -1,4 +1,4 @@
-package com.alexdremov.notate.controller
+package com.alexdremov.notate.ui.controller
 
 import com.alexdremov.notate.model.EraserType
 import com.alexdremov.notate.model.Stroke
@@ -18,6 +18,11 @@ interface CanvasController {
      * Commits a completed stroke to the model.
      */
     suspend fun commitStroke(stroke: Stroke)
+
+    /**
+     * Commits multiple strokes to the model efficiently.
+     */
+    suspend fun addStrokes(strokes: Sequence<Stroke>)
 
     /**
      * Previews an erasure operation without committing it to history immediately.
@@ -97,11 +102,13 @@ interface CanvasController {
 
     suspend fun transformSelection(matrix: android.graphics.Matrix)
 
-    suspend fun commitMoveSelection()
+    suspend fun commitMoveSelection(shouldReselect: Boolean = true)
 
     fun getSelectionManager(): SelectionManager
 
     fun setOnContentChangedListener(listener: () -> Unit)
+
+    fun setProgressCallback(callback: (isVisible: Boolean, message: String?, progress: Int) -> Unit)
 }
 
 interface ViewportController {

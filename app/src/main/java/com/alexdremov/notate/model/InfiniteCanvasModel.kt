@@ -64,6 +64,10 @@ class InfiniteCanvasModel {
             val items: List<CanvasItem>,
         ) : ModelEvent()
 
+        data class BulkItemsAdded(
+            val bounds: RectF,
+        ) : ModelEvent()
+
         data class RegionLoaded(
             val bounds: RectF,
         ) : ModelEvent()
@@ -130,6 +134,11 @@ class InfiniteCanvasModel {
         uri: android.net.Uri,
         context: android.content.Context,
     ): String? = regionManager?.importImage(uri, context)
+
+    suspend fun getItem(
+        id: Long,
+        bounds: RectF,
+    ): CanvasItem? = regionManager?.findItem(id, bounds)
 
     suspend fun addItem(item: CanvasItem): CanvasItem? {
         if (canvasType == CanvasType.FIXED_PAGES) {
@@ -272,6 +281,28 @@ class InfiniteCanvasModel {
         deleteItems(strokes)
     }
 
+    suspend fun replaceItems(
+        oldItems: List<CanvasItem>,
+        newItems: List<CanvasItem>,
+    ): List<CanvasItem> {
+        if (oldItems.isEmpty() && newItems.isEmpty()) return emptyList()
+        return mutex.withLock {
+            val orderedNewItems =
+                newItems.map { item ->
+                    when (item) {
+                        is Stroke -> item.copy(strokeOrder = nextOrder++)
+                        is CanvasImage -> item.copy(order = nextOrder++)
+                        else -> item
+                    }
+                }
+
+            val action = HistoryAction.Replace(oldItems, orderedNewItems)
+            executeAction(action)
+            historyManager.addToStack(action)
+            orderedNewItems
+        }
+    }
+
     private suspend fun executeAction(
         action: HistoryAction,
         recalculateBounds: Boolean = true,
@@ -306,6 +337,13 @@ class InfiniteCanvasModel {
             is HistoryAction.Batch -> {
                 action.actions.forEach { executeAction(it, false) }
                 if (recalculateBounds) recalculateContentBounds()
+            }
+
+            is HistoryAction.RemoveStashed -> {
+                val rm = regionManager ?: return
+                rm.removeItemsByIds(action.bounds, action.ids)
+                if (recalculateBounds) recalculateContentBounds()
+                _events.tryEmit(ModelEvent.BulkItemsAdded(action.bounds))
             }
         }
     }
@@ -345,6 +383,13 @@ class InfiniteCanvasModel {
                 action.actions.asReversed().forEach { revertAction(it, false) }
                 if (recalculateBounds) recalculateContentBounds()
             }
+
+            is HistoryAction.RemoveStashed -> {
+                val rm = regionManager ?: return
+                val (_, _) = rm.unstashItems(action.stashFile, android.graphics.Matrix())
+                if (recalculateBounds) recalculateContentBounds()
+                _events.tryEmit(ModelEvent.BulkItemsAdded(action.bounds))
+            }
         }
     }
 
@@ -381,6 +426,10 @@ class InfiniteCanvasModel {
                 action.actions.forEach { r.union(calculateActionBounds(it)) }
                 r
             }
+
+            is HistoryAction.RemoveStashed -> {
+                action.bounds
+            }
         }
 
     suspend fun clear() {
@@ -412,6 +461,15 @@ class InfiniteCanvasModel {
         return result
     }
 
+    suspend fun visitItemsInRect(
+        rect: RectF,
+        visitor: (CanvasItem) -> Unit,
+    ) {
+        mutex.withLock {
+            regionManager?.visitItemsInRect(rect, visitor)
+        }
+    }
+
     suspend fun queryStrokes(rect: RectF): ArrayList<Stroke> {
         val items = queryItems(rect)
         val strokes = ArrayList<Stroke>()
@@ -419,6 +477,45 @@ class InfiniteCanvasModel {
             if (item is Stroke) strokes.add(item)
         }
         return strokes
+    }
+
+    suspend fun stashItems(
+        rect: RectF,
+        ids: Set<Long>,
+        file: java.io.File,
+    ): Int =
+        mutex.withLock {
+            regionManager?.stashSelectedItems(rect, ids, file) ?: 0
+        }
+
+    suspend fun unstashItems(
+        file: java.io.File,
+        transform: android.graphics.Matrix,
+        onItemUnstashed: ((CanvasItem) -> Unit)? = null,
+    ): Pair<Set<Long>, RectF> =
+        mutex.withLock {
+            val result = regionManager?.unstashItems(file, transform, onItemUnstashed) ?: Pair(emptySet(), RectF())
+            if (!result.second.isEmpty) {
+                _events.tryEmit(ModelEvent.BulkItemsAdded(result.second))
+            }
+            recalculateContentBounds()
+            result
+        }
+
+    suspend fun deleteItemsByIds(
+        rect: RectF,
+        ids: Set<Long>,
+        stashDir: java.io.File,
+    ) {
+        mutex.withLock {
+            val file = java.io.File(stashDir, "del_${System.currentTimeMillis()}_${ids.hashCode()}.bin")
+            regionManager?.stashSelectedItems(rect, ids, file)
+            val action = HistoryAction.RemoveStashed(file, rect, ids)
+            historyManager.addToStack(action)
+
+            recalculateContentBounds()
+            _events.tryEmit(ModelEvent.BulkItemsAdded(rect)) // Force refresh area
+        }
     }
 
     private fun updateContentBounds(bounds: RectF) {

@@ -6,12 +6,12 @@ import android.graphics.DashPathEffect
 import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.Path
-import com.alexdremov.notate.controller.SelectionManager
-import com.alexdremov.notate.util.StrokeRenderer
+import android.graphics.RectF
+import com.alexdremov.notate.ui.controller.SelectionManager
 
 /**
  * Responsible for rendering the selection visual state:
- * 1. The "lifted" strokes (transformed).
+ * 1. The "lifted" items (via Imposter Bitmap or direct vector fallback).
  * 2. The bounding box.
  * 3. The manipulation handles.
  */
@@ -43,11 +43,23 @@ class SelectionOverlayDrawer(
             isAntiAlias = true
         }
 
+    private val bitmapPaint =
+        Paint().apply {
+            isAntiAlias = true
+            isFilterBitmap = true
+            isDither = true
+        }
+
+    private val loadingPaint =
+        Paint().apply {
+            color = Color.argb(64, 0, 0, 255) // Semi-transparent blue
+            style = Paint.Style.FILL
+            isAntiAlias = true
+        }
+
     // Reuse objects to avoid allocation
-    private val screenMatrix = Matrix()
     private val path = Path()
     private val screenCorners = FloatArray(8)
-    private val screenCenter = FloatArray(2)
 
     fun draw(
         canvas: Canvas,
@@ -56,23 +68,53 @@ class SelectionOverlayDrawer(
     ) {
         if (!selectionManager.hasSelection()) return
 
-        // 1. Draw Transformed Strokes (Visual Lift)
-        // We draw them here because they are temporarily removed from the main tile model during interaction
-        if (selectionManager.selectedStrokes.isNotEmpty()) {
+        // 1. Draw Lifted Items
+        val imposter = selectionManager.getImposter()
+        if (imposter != null) {
+            // High Performance: Use pre-rendered bitmap
+            val (bitmap, offsetMatrix) = imposter
             canvas.save()
-            // Apply View Matrix (World -> Screen)
             canvas.concat(viewMatrix)
-            // Apply Selection Transform (Original -> Current)
             canvas.concat(selectionManager.getTransform())
-
-            selectionManager.selectedStrokes.forEach { stroke ->
-                renderer.drawStrokeToCanvas(canvas, stroke)
-            }
+            canvas.concat(offsetMatrix)
+            canvas.drawBitmap(bitmap, 0f, 0f, bitmapPaint)
             canvas.restore()
+        } else {
+            // Fallback: Direct Vector Rendering if imposter is missing or generating
+            val ids = selectionManager.getSelectedIds()
+
+            // PERFORMANCE SAFEGUARD:
+            // If selection is massive (> 2000 items), skipping imposter generation to avoid OOM
+            // means we also MUST skip direct vector rendering, otherwise the UI thread will freeze.
+            // We just fall through to draw the bounding box.
+            if (ids.size <= 2000) {
+                val combinedMatrix = Matrix(viewMatrix)
+                combinedMatrix.preConcat(selectionManager.getTransform())
+
+                // 1. Calculate Viewport in World Coordinates
+                val visibleRect = RectF(0f, 0f, canvas.width.toFloat(), canvas.height.toFloat())
+                val inverseView = Matrix()
+                viewMatrix.invert(inverseView)
+                inverseView.mapRect(visibleRect)
+
+                // 2. Calculate Query Rect in Original Item Coordinates (Reverse Selection Transform)
+                // We need items that, when transformed, land in the visibleRect.
+                val queryRect = RectF(visibleRect)
+                val inverseSelection = Matrix()
+                selectionManager.getTransform().invert(inverseSelection)
+                inverseSelection.mapRect(queryRect)
+
+                renderer.renderDirectVectorsSync(
+                    canvas,
+                    combinedMatrix,
+                    queryRect,
+                    RenderQuality.HIGH,
+                ) { item -> ids.contains(item.order) }
+            }
         }
 
         // 2. Draw Selection Box & Handles
-        val corners = selectionManager.getTransformedCorners() // World Coords [x0,y0...]
+        val corners = selectionManager.getTransformedCorners()
 
         // Transform corners to Screen Space
         viewMatrix.mapPoints(screenCorners, corners)
@@ -85,13 +127,15 @@ class SelectionOverlayDrawer(
         path.lineTo(screenCorners[6], screenCorners[7])
         path.close()
 
-        // Scale stroke width relative to screen, usually fixed size is better for UI
-        boxPaint.strokeWidth = 2f // Fixed screen pixels
+        if (selectionManager.isGeneratingImposter && imposter == null) {
+            canvas.drawPath(path, loadingPaint)
+        }
+
+        boxPaint.strokeWidth = 2f
         canvas.drawPath(path, boxPaint)
 
         // Draw Handles
-        val handleRadius = 15f // Fixed screen pixels
-
+        val handleRadius = 15f
         for (i in 0 until 4) {
             val hx = screenCorners[i * 2]
             val hy = screenCorners[i * 2 + 1]
@@ -99,7 +143,6 @@ class SelectionOverlayDrawer(
             canvas.drawCircle(hx, hy, handleRadius, handleBorderPaint)
         }
 
-        // Draw Rotate Handle (Top-Center Knob)
         drawRotateHandle(canvas, screenCorners, handleRadius)
     }
 
@@ -108,21 +151,15 @@ class SelectionOverlayDrawer(
         corners: FloatArray,
         radius: Float,
     ) {
-        // Midpoint of Top-Left (0,1) and Top-Right (2,3)
         val mx = (corners[0] + corners[2]) / 2f
         val my = (corners[1] + corners[3]) / 2f
 
-        // Vector along top edge
         val dx = corners[2] - corners[0]
         val dy = corners[3] - corners[1]
         val len = kotlin.math.hypot(dx, dy)
 
         if (len < 0.1f) return
 
-        // Perpendicular vector (pointing "up" / away from center)
-        // In screen coords, Y is down.
-        // If unrotated: TL(0,0) -> TR(10,0). dx=10, dy=0. Up is (0, -1).
-        // (dy, -dx) = (0, -10). Normalized: (0, -1). Correct.
         val ux = dy / len
         val uy = -dx / len
 
@@ -130,9 +167,7 @@ class SelectionOverlayDrawer(
         val rhx = mx + ux * handleOffset
         val rhy = my + uy * handleOffset
 
-        // Line to handle
         canvas.drawLine(mx, my, rhx, rhy, boxPaint)
-        // Handle circle
         canvas.drawCircle(rhx, rhy, radius, handlePaint)
         canvas.drawCircle(rhx, rhy, radius, handleBorderPaint)
     }

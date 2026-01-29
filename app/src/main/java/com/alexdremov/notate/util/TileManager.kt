@@ -83,7 +83,27 @@ class TileManager(
     // State Tracking
     private val generatingKeys = Collections.synchronizedSet(HashSet<TileCache.TileKey>())
     private val generationJobs = ConcurrentHashMap<TileCache.TileKey, Job>()
-    private val generationSemaphore = Semaphore(32) // Limit concurrent heavy rendering
+
+    // Scheduling State
+    private val activeJobCount = AtomicInteger(0)
+    private val maxConcurrentJobs = 128
+    private val pendingLock = Any()
+    private val pendingJobsByRegion = HashMap<RegionId, MutableList<PendingJob>>()
+    private val pendingJobsByKey = HashMap<TileCache.TileKey, PendingJob>()
+    private var currentProcessingRegion: RegionId? = null
+    private val random = java.util.Random()
+
+    private data class PendingJob(
+        val key: TileCache.TileKey,
+        val col: Int,
+        val row: Int,
+        val level: Int,
+        val worldSize: Float,
+        val isHighPriority: Boolean,
+        val version: Int,
+        val forceRefresh: Boolean,
+        val regionId: RegionId,
+    )
 
     private val renderVersion = AtomicInteger(0)
     private var lastRenderLevel = -1
@@ -124,6 +144,49 @@ class TileManager(
             xfermode = PorterDuffXfermode(PorterDuff.Mode.CLEAR)
         }
 
+    @Volatile
+    private var hiddenItemIds: Set<Long> = emptySet()
+
+    fun setHiddenItems(ids: Set<Long>) {
+        this.hiddenItemIds = ids
+    }
+
+    /**
+     * Instantly "erases" the specified items from the cached tile bitmaps.
+     * This provides immediate visual feedback for "lifting" items during selection
+     * without waiting for background tile regeneration.
+     */
+    fun hideItemsInCache(items: List<com.alexdremov.notate.model.CanvasItem>) {
+        if (items.isEmpty()) return
+
+        val snapshot = tileCache.snapshot()
+        val unionBounds = RectF()
+        items.forEach { unionBounds.union(it.bounds) }
+
+        for ((key, bitmap) in snapshot) {
+            if (bitmap == null || bitmap.isRecycled || bitmap == tileCache.errorBitmap) continue
+
+            val worldSize = calculateWorldTileSize(key.level)
+            val tileRect = getTileWorldRect(key.col, key.row, worldSize)
+
+            if (RectF.intersects(unionBounds, tileRect)) {
+                val tileCanvas = Canvas(bitmap)
+                val scale = tileSize.toFloat() / worldSize
+                tileCanvas.save()
+                tileCanvas.scale(scale, scale)
+                tileCanvas.translate(-tileRect.left, -tileRect.top)
+
+                for (item in items) {
+                    if (RectF.intersects(item.bounds, tileRect)) {
+                        renderer.drawItemToCanvas(tileCanvas, item, xfermode = PorterDuff.Mode.CLEAR)
+                    }
+                }
+                tileCanvas.restore()
+            }
+        }
+        notifyTileReady()
+    }
+
     init {
         // Listen for Model Updates
         initJobs +=
@@ -131,16 +194,22 @@ class TileManager(
                 canvasModel.events.collect { event ->
                     when (event) {
                         is InfiniteCanvasModel.ModelEvent.ItemsRemoved -> {
+                            hideItemsInCache(event.items)
                             val bounds = RectF()
                             event.items.forEach { bounds.union(it.bounds) }
                             refreshTiles(bounds)
                         }
 
                         is InfiniteCanvasModel.ModelEvent.ItemsAdded -> {
-                            // Handle operations like Paste, Undo, Redo
+                            // Handle operations like Paste, Undo, Redo, Unstash
+                            updateTilesWithItems(event.items)
                             val bounds = RectF()
                             event.items.forEach { bounds.union(it.bounds) }
                             refreshTiles(bounds)
+                        }
+
+                        is InfiniteCanvasModel.ModelEvent.BulkItemsAdded -> {
+                            refreshTiles(event.bounds)
                         }
 
                         is InfiniteCanvasModel.ModelEvent.ContentCleared -> {
@@ -193,8 +262,8 @@ class TileManager(
                 override fun getStats(): Map<String, String> {
                     val stats = tileCache.getStats().toMutableMap()
                     stats["Generating"] = synchronized(generatingKeys) { generatingKeys.size }.toString()
-                    stats["Active Jobs"] = generationJobs.size.toString()
-                    stats["Semaphore Permits"] = generationSemaphore.availablePermits.toString()
+                    stats["Active Jobs"] = activeJobCount.get().toString()
+                    stats["Pending Jobs"] = synchronized(pendingLock) { pendingJobsByKey.size }.toString()
 
                     val jobs = generationJobs.keys.toList()
                     if (jobs.isNotEmpty()) {
@@ -314,7 +383,6 @@ class TileManager(
         generationJobs.forEach { (key, job) ->
             if (!validKeys.contains(key)) {
                 job.cancel()
-                tileCache.remove(key)
             }
         }
     }
@@ -445,7 +513,6 @@ class TileManager(
         forceRefresh: Boolean = false,
     ) {
         val key = TileCache.TileKey(col, row, level)
-        val startTime = System.currentTimeMillis()
 
         // Use synchronized block for atomic check-and-add
         synchronized(generatingKeys) {
@@ -461,63 +528,181 @@ class TileManager(
             generatingKeys.add(key)
         }
 
-        // Cancel existing job for this key if it's still running
+        // Cancel existing active job for this key if it's still running
+        // Note: We don't remove from pendingJobs here; we just update/overwrite it below
         generationJobs.remove(key)?.cancel()
 
+        val rm = canvasModel.getRegionManager()
+        val rSize = rm?.regionSize ?: 2048f // Safe default
+        val tileRect = getTileWorldRect(col, row, worldSize)
+        val rx = floor(tileRect.centerX() / rSize).toInt()
+        val ry = floor(tileRect.centerY() / rSize).toInt()
+        val regionId = RegionId(rx, ry)
+
         val job =
-            scope.launch(dispatcher, start = kotlinx.coroutines.CoroutineStart.LAZY) {
+            PendingJob(
+                key = key,
+                col = col,
+                row = row,
+                level = level,
+                worldSize = worldSize,
+                isHighPriority = isHighPriority,
+                version = version,
+                forceRefresh = forceRefresh,
+                regionId = regionId,
+            )
+
+        synchronized(pendingLock) {
+            val existing = pendingJobsByKey[key]
+            if (existing != null) {
+                val list = pendingJobsByRegion[existing.regionId]
+                if (list != null) {
+                    list.remove(existing)
+                    if (list.isEmpty()) {
+                        pendingJobsByRegion.remove(existing.regionId)
+                    }
+                }
+            }
+            pendingJobsByKey[key] = job
+            pendingJobsByRegion.getOrPut(regionId) { ArrayList() }.add(job)
+        }
+
+        scheduleJobs()
+    }
+
+    private fun scheduleJobs() {
+        if (activeJobCount.get() >= maxConcurrentJobs) return
+
+        // Dispatch a lightweight task to the background to pick and launch jobs
+        // to avoid blocking the render loop with scheduling logic.
+        scope.launch(dispatcher) {
+            synchronized(pendingLock) {
+                while (activeJobCount.get() < maxConcurrentJobs && pendingJobsByKey.isNotEmpty()) {
+                    val jobToRun = pickNextJob() ?: break
+                    activeJobCount.incrementAndGet()
+                    launchJob(jobToRun)
+                }
+            }
+        }
+    }
+
+    private fun pickNextJob(): PendingJob? {
+        while (pendingJobsByKey.isNotEmpty()) {
+            // 1. Ensure current region is valid and has jobs
+            var rid = currentProcessingRegion
+            if (rid == null || !pendingJobsByRegion.containsKey(rid) || pendingJobsByRegion[rid].isNullOrEmpty()) {
+                // Remove stale region entry if present but empty
+                if (rid != null && pendingJobsByRegion[rid]?.isEmpty() == true) {
+                    pendingJobsByRegion.remove(rid)
+                }
+
+                // Pick a new random region
+                val availableRegions = pendingJobsByRegion.keys.toList()
+                if (availableRegions.isEmpty()) return null
+                rid = availableRegions[random.nextInt(availableRegions.size)]
+                currentProcessingRegion = rid
+            }
+
+            val jobs = pendingJobsByRegion[rid]
+            if (jobs == null || jobs.isEmpty()) {
+                // Should be caught by the loop logic next iteration, but defensive coding:
+                pendingJobsByRegion.remove(rid)
+                currentProcessingRegion = null
+                continue
+            }
+
+            // 2. Pick the best job from this region (e.g. High Priority first)
+            var bestIndex = -1
+            var bestJob: PendingJob? = null
+
+            // Scan for high priority or just take the last one (LIFO)
+            for (i in jobs.indices) {
+                val j = jobs[i]
+                // Skip stale versions immediately?
+                if (j.version != renderVersion.get()) {
+                    continue
+                }
+
+                if (bestJob == null || (j.isHighPriority && !bestJob!!.isHighPriority)) {
+                    bestJob = j
+                    bestIndex = i
+                    if (j.isHighPriority) break // Found a high priority one, good enough
+                }
+            }
+
+            if (bestJob == null) {
+                // All jobs in this region were stale?
+                // Remove them all and recurse/retry
+                // We must clean up pendingJobsByKey as well
+                jobs.forEach { pendingJobsByKey.remove(it.key) }
+                jobs.clear()
+                pendingJobsByRegion.remove(rid)
+                currentProcessingRegion = null
+                continue
+            }
+
+            // Remove the chosen job
+            jobs.removeAt(bestIndex)
+            if (jobs.isEmpty()) {
+                pendingJobsByRegion.remove(rid)
+                // We keep currentProcessingRegion valid so we switch next time (or if nulls out above)
+            }
+            pendingJobsByKey.remove(bestJob.key)
+
+            return bestJob
+        }
+        return null
+    }
+
+    private fun launchJob(pJob: PendingJob) {
+        val job =
+            scope.launch(dispatcher) {
                 try {
-                    Logger.v("TileManager", "Job Start: $key")
+                    Logger.v("TileManager", "Job Start: ${pJob.key}")
                     // Task Cancellation Checks
-                    if (!isActive || version != renderVersion.get() || (!isHighPriority && isInteracting)) {
+                    if (!isActive || pJob.version != renderVersion.get() || (!pJob.isHighPriority && isInteracting)) {
                         return@launch
                     }
 
                     // Stale Check: Visibility (Double Check)
-                    // If it was supposed to be visible (High Priority) but is now off-screen, drop it.
                     val currentVisible = lastVisibleRect
-                    if (currentVisible != null && isHighPriority && !forceRefresh) {
-                        val tileRect = getTileWorldRect(col, row, worldSize)
+                    if (currentVisible != null && pJob.isHighPriority && !pJob.forceRefresh) {
+                        val tileRect = getTileWorldRect(pJob.col, pJob.row, pJob.worldSize)
                         if (!RectF.intersects(tileRect, currentVisible)) {
                             return@launch
                         }
                     }
 
-                    // Limit concurrent heavy rendering to prevent OOM
-                    val bitmap =
-                        generationSemaphore.withPermit {
-                            if (!isActive || version != renderVersion.get()) return@withPermit null
-                            generateTileBitmap(col, row, worldSize, level)
-                        }
+                    // Generate
+                    val bitmap = generateTileBitmap(pJob.col, pJob.row, pJob.worldSize, pJob.level)
 
                     if (bitmap == null || !isActive) return@launch
 
-                    // Final check before committing to cache - ensure we are still on the same version
-                    if (version == renderVersion.get()) {
-                        if (forceRefresh || tileCache.get(key) == null) {
-                            tileCache.put(key, bitmap)
+                    // Final check before committing
+                    if (pJob.version == renderVersion.get()) {
+                        if (pJob.forceRefresh || tileCache.get(pJob.key) == null) {
+                            tileCache.put(pJob.key, bitmap)
                         }
                     }
                 } catch (t: Throwable) {
                     if (t !is kotlinx.coroutines.CancellationException) {
-                        errorMessages.put(key, "${t.javaClass.simpleName}: ${t.message}")
-                        tileCache.put(key, tileCache.errorBitmap)
+                        errorMessages.put(pJob.key, "${t.javaClass.simpleName}: ${t.message}")
+                        tileCache.put(pJob.key, tileCache.errorBitmap)
                     }
                 }
             }
 
-        // CRITICAL FIX: Use invokeOnCompletion to ensure cleanup happens even if the job
-        // is cancelled before it starts (which skips the body and any try-finally blocks).
         job.invokeOnCompletion {
-            val wasRemoved = generationJobs.remove(key, job)
+            val wasRemoved = generationJobs.remove(pJob.key, job)
             if (wasRemoved) {
-                synchronized(generatingKeys) { generatingKeys.remove(key) }
+                synchronized(generatingKeys) { generatingKeys.remove(pJob.key) }
             }
             notifyTileReady()
+            activeJobCount.decrementAndGet()
+            scheduleJobs()
         }
 
-        generationJobs[key] = job
-        job.start()
+        generationJobs[pJob.key] = job
     }
 
     private suspend fun generateTileBitmap(
@@ -579,15 +764,19 @@ class TileManager(
         // We can sort in place or copy. Query returns ArrayList so it's mutable?
         // queryItems returns ArrayList, let's assume mutable or copy.
         val sortedItems = items.sortedWith(compareBy<com.alexdremov.notate.model.CanvasItem> { it.zIndex }.thenBy { it.order })
+        val hidden = hiddenItemIds
 
         for (item in sortedItems) {
             yield() // Check cancellation
+            if (hidden.contains(item.order)) continue
             renderer.drawItemToCanvas(canvas, item, scale = scale)
         }
         canvas.restore()
     }
 
     fun updateTilesWithItem(item: com.alexdremov.notate.model.CanvasItem) {
+        if (hiddenItemIds.contains(item.order)) return
+
         if (item is Stroke && item.style == com.alexdremov.notate.model.StrokeType.HIGHLIGHTER) {
             refreshTiles(item.bounds)
             return
@@ -681,6 +870,7 @@ class TileManager(
         val currentLevel = if (visibleRect != null) calculateLOD(lastScale) else -1
 
         val handledKeys = HashSet<TileCache.TileKey>()
+        val hidden = hiddenItemIds
 
         // Update Cached Tiles
         for ((key, bitmap) in snapshot) {
@@ -704,6 +894,7 @@ class TileManager(
                 // Batch Draw Intersecting Items
                 // Optimization: Filter items intersecting this specific tile
                 for (item in standardItems) {
+                    if (hidden.contains(item.order)) continue
                     if (RectF.intersects(item.bounds, tileRect)) {
                         renderer.drawItemToCanvas(tileCanvas, item, scale = scale)
                     }
@@ -836,9 +1027,8 @@ class TileManager(
             val tileRect = getTileWorldRect(key.col, key.row, worldSize)
 
             if (RectF.intersects(bounds, tileRect)) {
-                // Always re-queue generating tiles if they intersect the dirty bounds.
-                // If we skip them here, they will be effectively cancelled (due to version mismatch)
-                // and simply stop loading, leaving gaps or missing updates.
+                // we queue even different LOD or out-of-bounds tiles as currently generating tiles may commit stale data
+                val isVisible = visibleRect != null && key.level == currentLevel && RectF.intersects(visibleRect, tileRect)
                 queueTileGeneration(key.col, key.row, key.level, worldSize, true, version, forceRefresh = true)
             }
         }
@@ -871,6 +1061,11 @@ class TileManager(
             generatingKeys.clear()
             lastVisibleCount = 0
         }
+        synchronized(pendingLock) {
+            pendingJobsByKey.clear()
+            pendingJobsByRegion.clear()
+            currentProcessingRegion = null
+        }
     }
 
     fun destroy() {
@@ -878,6 +1073,12 @@ class TileManager(
         initJobs.clear()
         generationJobs.values.forEach { it.cancel() }
         generationJobs.clear()
+
+        synchronized(pendingLock) {
+            pendingJobsByKey.clear()
+            pendingJobsByRegion.clear()
+        }
+
         updateChannel.close()
         clear()
     }

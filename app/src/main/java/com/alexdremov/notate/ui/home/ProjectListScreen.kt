@@ -68,6 +68,7 @@ fun ProjectListScreen(
                         fileName = project.name,
                         path = project.uri,
                         lastModified = 0L, // Metadata not tracked for root projects
+                        size = 0L,
                         itemsCount = 0,
                         syncStatus = if (isSyncing) SyncStatus.SYNCING else SyncStatus.NONE,
                     )

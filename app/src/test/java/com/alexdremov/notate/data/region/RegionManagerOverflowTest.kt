@@ -116,7 +116,16 @@ class RegionManagerOverflowTest {
             regionManager.addItem(createHeavyRegion(r4).items[0])
 
             // Verify R1 is saved to disk and removed from cache
-            assertTrue("Evicted dirty region should be saved to disk", File(tempDir, "r_0_0.bin").exists())
+            // We use a retry loop because saving is asynchronous (Dispatchers.IO)
+            var found = false
+            for (i in 0 until 20) {
+                if (File(tempDir, "r_0_0.bin").exists()) {
+                    found = true
+                    break
+                }
+                kotlinx.coroutines.delay(100)
+            }
+            assertTrue("Evicted dirty region should be saved to disk", found)
         }
 
     @Test
@@ -144,6 +153,19 @@ class RegionManagerOverflowTest {
             // 3. One more filler -> Evicts R3 from cache
             // R3 added to Overflow. Total bytes exceeds 2KB. MUST evict R1 and R2.
             regionManager.addItem(createHeavyRegion(r6).items[0])
+
+            // Wait for saves to complete (file existence) before deleting
+            // This prevents the race where we delete -> async save happens -> file exists -> test fails
+            val r1File = File(tempDir, "r_0_0.bin")
+            for (i in 0 until 20) {
+                if (r1File.exists()) break
+                kotlinx.coroutines.delay(100)
+            }
+            val r2File = File(tempDir, "r_0_1.bin")
+            for (i in 0 until 20) {
+                if (r2File.exists()) break
+                kotlinx.coroutines.delay(100)
+            }
 
             // Verify R1 and R2 are NOT in memory
             storage.deleteRegion(r1)

@@ -49,6 +49,7 @@ class CanvasActivity : AppCompatActivity() {
     private var activePenPopup: com.alexdremov.notate.ui.dialog.PenSettingsPopup? = null
     private var isGridOpen = false
     private val isToolbarHorizontal = mutableStateOf(true)
+    private var progressDialog: androidx.appcompat.app.AlertDialog? = null
 
     private lateinit var sidebarCoordinator: SidebarCoordinator
     private lateinit var sidebarController: SettingsSidebarController
@@ -367,8 +368,31 @@ class CanvasActivity : AppCompatActivity() {
                     sidebarCoordinator.close()
                     viewModel.setEditMode(true)
                 },
-            )
+                onGeneratePatterns = { type, intensity ->
+                    lifecycleScope.launch(Dispatchers.Default) {
+                        // Calculate visible rect in Model coordinates
+                        val matrix = android.graphics.Matrix()
+                        binding.canvasView.getViewportMatrix(matrix)
 
+                        val screenWidth = binding.canvasView.width.toFloat()
+                        val screenHeight = binding.canvasView.height.toFloat()
+
+                        val invertMatrix = android.graphics.Matrix()
+                        matrix.invert(invertMatrix)
+
+                        val visibleRect = android.graphics.RectF(0f, 0f, screenWidth, screenHeight)
+                        invertMatrix.mapRect(visibleRect)
+
+                        val strokes =
+                            com.alexdremov.notate.util.PatternGenerator.generateStrokes(
+                                type,
+                                intensity,
+                                visibleRect,
+                            )
+                        binding.canvasView.getController().addStrokes(strokes)
+                    }
+                },
+            )
         binding.canvasView.onStrokeStarted = {
             activePenPopup?.dismiss()
             activePenPopup = null
@@ -379,6 +403,34 @@ class CanvasActivity : AppCompatActivity() {
 
         binding.canvasView.onRequestInsertImage = {
             imagePickerLauncher.launch(arrayOf("image/*"))
+        }
+
+        // Setup Progress Dialog
+        val progressView = layoutInflater.inflate(R.layout.dialog_progress, null)
+        val progressDialogBuilder =
+            androidx.appcompat.app.AlertDialog
+                .Builder(this)
+                .setView(progressView)
+                .setCancelable(false)
+        progressDialog = progressDialogBuilder.create()
+
+        val progressBar = progressView.findViewById<android.widget.ProgressBar>(R.id.progressBar)
+        val progressMessage = progressView.findViewById<android.widget.TextView>(R.id.tv_progress_message)
+
+        binding.canvasView.getController().setProgressCallback { isVisible, message, progress ->
+            runOnUiThread {
+                if (isVisible) {
+                    if (!progressDialog!!.isShowing) {
+                        progressDialog!!.show()
+                    }
+                    message?.let { progressMessage.text = it }
+                    progressBar.progress = progress
+                } else {
+                    if (progressDialog!!.isShowing) {
+                        progressDialog!!.dismiss()
+                    }
+                }
+            }
         }
 
         binding.canvasView.setCursorView(binding.cursorView)

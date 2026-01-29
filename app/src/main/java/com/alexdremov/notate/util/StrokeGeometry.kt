@@ -544,4 +544,30 @@ object StrokeGeometry {
             strokeOrder = 0, // Will be assigned later
         )
     }
+
+    fun calculateLength(points: List<TouchPoint>): Float {
+        if (points.size < 2) return 0f
+        var length = 0f
+        for (i in 0 until points.size - 1) {
+            length += hypot(points[i + 1].x - points[i].x, points[i + 1].y - points[i].y)
+        }
+        return length
+    }
+
+    fun calculateAngle(
+        p1: TouchPoint,
+        p2: TouchPoint,
+        p3: TouchPoint,
+    ): Double {
+        val dx1 = p2.x - p1.x
+        val dy1 = p2.y - p1.y
+        val dx2 = p3.x - p2.x
+        val dy2 = p3.y - p2.y
+
+        val dot = dx1 * dx2 + dy1 * dy2
+        val cross = dx1 * dy2 - dy1 * dx2
+
+        val angleRad = kotlin.math.atan2(cross.toDouble(), dot.toDouble())
+        return kotlin.math.abs(Math.toDegrees(angleRad))
+    }
 }

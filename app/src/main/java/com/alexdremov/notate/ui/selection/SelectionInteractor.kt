@@ -3,8 +3,8 @@ package com.alexdremov.notate.ui.selection
 import android.graphics.Matrix
 import android.graphics.RectF
 import android.view.MotionEvent
-import com.alexdremov.notate.controller.CanvasController
 import com.alexdremov.notate.ui.OnyxCanvasView
+import com.alexdremov.notate.ui.controller.CanvasController
 import com.alexdremov.notate.util.EpdFastModeController
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -81,10 +81,16 @@ class SelectionInteractor(
     private val AXIS_LOCK_THRESHOLD = 20f // Pixels moved before locking kicks in
     private val AXIS_LOCK_GAP = 20.0 // Dominant axis must be 4x the other
 
+    // State for managing commit concurrency
+    private var isCommitting = false
+
     fun onDown(
         x: Float,
         y: Float,
     ): Boolean {
+        // Prevent interaction if a commit is still processing to avoid state race/freeze
+        if (isCommitting) return true
+
         val sm = controller.getSelectionManager()
         if (!sm.hasSelection()) return false
 
@@ -125,6 +131,8 @@ class SelectionInteractor(
         x: Float,
         y: Float,
     ) {
+        if (isCommitting) return
+
         isDragging = true
         activeHandle = HandleType.BODY
         lastTouchX = x
@@ -154,6 +162,7 @@ class SelectionInteractor(
     }
 
     fun onMove(event: MotionEvent): Boolean {
+        if (isCommitting) return true
         if (isTransformingMultiTouch && event.pointerCount >= 2) {
             handleMultiTouchTransform(event)
             return true
@@ -167,25 +176,34 @@ class SelectionInteractor(
     fun onUp() {
         stopAutoScroll()
         val wasInteracting = isDragging || isTransformingMultiTouch
-        val wasBodyTap = activeHandle == HandleType.BODY && dragDistanceAccumulator < 10f && !isTransformingMultiTouch
+        // Increased threshold to 40f to accommodate finger jitter
+        val wasBodyTap = activeHandle == HandleType.BODY && dragDistanceAccumulator < 40f && !isTransformingMultiTouch
 
         if (wasInteracting) {
-            scope.launch { controller.commitMoveSelection() }
             EpdFastModeController.exitFastMode()
+
+            if (wasBodyTap) {
+                // Guard against multiple commits
+                if (isCommitting) return
+                isCommitting = true
+
+                val job =
+                    scope.launch {
+                        controller.clearSelection() // This now triggers commit(reselect=false)
+                        view.dismissActionPopup()
+                    }
+                job.invokeOnCompletion {
+                    isCommitting = false
+                }
+            } else {
+                // Drag ended. Keep selection floating (no commit).
+                view.showActionPopup()
+            }
         }
 
         isDragging = false
         isTransformingMultiTouch = false
         activeHandle = HandleType.NONE
-
-        if (wasInteracting) {
-            if (wasBodyTap) {
-                scope.launch { controller.clearSelection() }
-                view.dismissActionPopup()
-            } else {
-                view.showActionPopup()
-            }
-        }
     }
 
     private fun handleSingleTouchDrag(
@@ -437,5 +455,5 @@ class SelectionInteractor(
         scrollDirY = 0f
     }
 
-    fun isInteracting() = isDragging || isTransformingMultiTouch
+    fun isInteracting() = isDragging || isTransformingMultiTouch || isCommitting
 }

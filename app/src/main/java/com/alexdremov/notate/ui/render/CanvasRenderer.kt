@@ -55,6 +55,21 @@ class CanvasRenderer(
     }
 
     /**
+     * Sets a set of item IDs that should be skipped during tile rendering.
+     * Used for "lifting" selected items into an overlay.
+     */
+    fun setHiddenItems(ids: Set<Long>) {
+        tileManager.setHiddenItems(ids)
+    }
+
+    /**
+     * Instantly removes items from the tiled cache bitmaps.
+     */
+    fun hideItemsInCache(items: List<com.alexdremov.notate.model.CanvasItem>) {
+        tileManager.hideItemsInCache(items)
+    }
+
+    /**
      * Clears all cached tiles.
      * Forces a full regeneration of the view on the next render pass.
      */
@@ -175,6 +190,24 @@ class CanvasRenderer(
     }
 
     /**
+     * Renders a specific list of items synchronously.
+     * Used by SelectionOverlayDrawer to render "lifted" items that are held in memory.
+     */
+    fun renderItemsSync(
+        canvas: Canvas,
+        items: List<com.alexdremov.notate.model.CanvasItem>,
+        matrix: Matrix,
+        visibleRect: RectF?,
+        quality: RenderQuality,
+    ) {
+        canvas.save()
+        canvas.setMatrix(matrix)
+        val viewScale = matrix.mapRadius(1.0f)
+        renderItems(canvas, items, visibleRect, quality, viewScale, context)
+        canvas.restore()
+    }
+
+    /**
      * Synchronous version of renderDirectVectors for UI thread usage.
      * Only renders items from currently loaded regions to avoid blocking.
      */
@@ -183,6 +216,7 @@ class CanvasRenderer(
         matrix: Matrix,
         visibleRect: RectF?,
         quality: RenderQuality,
+        filter: ((com.alexdremov.notate.model.CanvasItem) -> Boolean)? = null,
     ) {
         canvas.save()
         canvas.setMatrix(matrix)
@@ -198,7 +232,7 @@ class CanvasRenderer(
             val region = rm.getRegionReadOnly(id) ?: continue
             val regionItems = ArrayList<com.alexdremov.notate.model.CanvasItem>()
             region.quadtree?.retrieve(regionItems, queryRect)
-            renderItems(canvas, regionItems, queryRect, quality, viewScale, context)
+            renderItems(canvas, regionItems, queryRect, quality, viewScale, context, filter)
         }
 
         canvas.restore()
@@ -251,6 +285,7 @@ class CanvasRenderer(
             quality: RenderQuality,
             viewScale: Float,
             context: android.content.Context?,
+            filter: ((com.alexdremov.notate.model.CanvasItem) -> Boolean)? = null,
         ) {
             val paint =
                 Paint().apply {
@@ -263,6 +298,7 @@ class CanvasRenderer(
                 }
 
             for (item in items) {
+                if (filter != null && !filter(item)) continue
                 if (visibleRect != null && !RectF.intersects(visibleRect, item.bounds)) continue
 
                 if (item is Stroke) {
@@ -299,6 +335,7 @@ class CanvasRenderer(
         item: com.alexdremov.notate.model.CanvasItem,
         debug: Boolean = false,
         scale: Float = 1.0f,
+        xfermode: android.graphics.PorterDuff.Mode? = null,
     ) {
         val paint =
             Paint().apply {
@@ -310,7 +347,7 @@ class CanvasRenderer(
                 strokeMiter = 4.0f
             }
 
-        StrokeRenderer.drawItem(canvas, item, debug, paint, context, scale)
+        StrokeRenderer.drawItem(canvas, item, debug, paint, context, scale, xfermode = xfermode)
     }
 
     /**

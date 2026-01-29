@@ -6,11 +6,11 @@ import android.graphics.RectF
 import android.os.Handler
 import android.os.Looper
 import com.alexdremov.notate.config.CanvasConfig
-import com.alexdremov.notate.controller.CanvasController
 import com.alexdremov.notate.model.EraserType
 import com.alexdremov.notate.model.PenTool
 import com.alexdremov.notate.model.StrokeType
 import com.alexdremov.notate.model.ToolType
+import com.alexdremov.notate.ui.controller.CanvasController
 import com.alexdremov.notate.util.ColorUtils
 import com.alexdremov.notate.util.Logger
 import com.alexdremov.notate.util.ShapeRecognizer
@@ -56,7 +56,7 @@ class PenInputHandler(
 
     private var touchHelper: TouchHelper? = null
     private val strokeBuilder = StrokeBuilder()
-    private val eraserHandler = EraserGestureHandler(controller, strokeBuilder)
+    private val eraserHandler = EraserGestureHandler(controller, strokeBuilder, scope)
     private var currentScale: Float = 1.0f
     private var cursorView: com.alexdremov.notate.ui.CursorView? = null
     private val lassoPath = Path()

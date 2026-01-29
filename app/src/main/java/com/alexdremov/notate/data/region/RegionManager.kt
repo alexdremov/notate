@@ -5,8 +5,14 @@ import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.RectF
 import android.util.LruCache
+import com.alexdremov.notate.BuildConfig
 import com.alexdremov.notate.config.CanvasConfig
+import com.alexdremov.notate.data.CanvasImageData
+import com.alexdremov.notate.data.CanvasSerializer
+import com.alexdremov.notate.data.StrokeData
+import com.alexdremov.notate.model.CanvasImage
 import com.alexdremov.notate.model.CanvasItem
+import com.alexdremov.notate.model.Stroke
 import com.alexdremov.notate.util.Logger
 import com.alexdremov.notate.util.PerformanceProfiler
 import com.alexdremov.notate.util.Quadtree
@@ -17,6 +23,15 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
+import kotlinx.serialization.decodeFromByteArray
+import kotlinx.serialization.encodeToByteArray
+import kotlinx.serialization.protobuf.ProtoBuf
+import java.io.BufferedInputStream
+import java.io.BufferedOutputStream
+import java.io.DataInputStream
+import java.io.DataOutputStream
+import java.io.FileInputStream
+import java.io.FileOutputStream
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.locks.ReentrantReadWriteLock
@@ -26,15 +41,6 @@ import kotlin.math.floor
 
 /**
  * Manages the spatial partitioning, caching, and persistence of canvas regions.
- *
- * **Concurrency Architecture (Refactored):**
- * - **Mutex**: Replaces `ReentrantReadWriteLock`. Guards internal state (Cache, Index, Quadtree).
- * - **Structured Concurrency**: All heavy operations (IO, Loading) are suspendable and use `Deferred` for deduplication.
- * - **No Blocking**: `runBlocking` is banned. All access is reactive or suspendable.
- * - **Thread Safety**: `RegionData.items` uses `CopyOnWriteArrayList` (implicitly handled during load/init) or relies on Mutex for structural changes.
- *
- * **Cache Consistency:**
- * Uses [resizingId] guard pattern to update LruCache accounting when item sizes change.
  */
 class RegionManager(
     private val storage: RegionStorage,
@@ -45,12 +51,8 @@ class RegionManager(
                 com.alexdremov.notate.config.CanvasConfig.REGIONS_CACHE_MEMORY_PERCENT
         ).toLong(),
 ) {
-    // Cache size in KB
-    // Guarded by [mutex]
     private val regionCache: LruCache<RegionId, RegionData>
 
-    // Thumbnail Cache (Separate from Region Data) - 20MB limit
-    // Guarded by [mutex] (mostly) or Concurrent
     private val thumbnailCache =
         object : LruCache<RegionId, Bitmap>(20 * 1024) {
             override fun sizeOf(
@@ -59,28 +61,19 @@ class RegionManager(
             ): Int = (value.allocationByteCount / 1024).coerceAtLeast(1)
         }
 
-    // Global Index of active regions and their bounds
-    // Guarded by [mutex]
     private val regionIndex: MutableMap<RegionId, RectF>
 
-    // Metadata cache for sync-safe access (Rendering)
     @Volatile
     private var cachedActiveIds: Set<RegionId> = emptySet()
 
     @Volatile
     private var cachedContentBounds: RectF = RectF()
 
-    // Skeleton Index for fast spatial queries
-    // Guarded by [mutex]
     private var skeletonQuadtree = Quadtree(0, RectF(-regionSize, -regionSize, regionSize, regionSize))
     private val regionProxies = HashMap<RegionId, RegionProxy>()
 
-    // Pinned Regions
-    // Guarded by [mutex]
     private var pinnedIds: Set<RegionId> = emptySet()
 
-    // Overflow regions
-    // Guarded by [mutex]
     private val overflowRegions = java.util.LinkedHashMap<RegionId, RegionData>()
     private val maxOverflowBytes = memoryLimitBytes / 2
     private var currentOverflowBytes = 0L
@@ -88,14 +81,12 @@ class RegionManager(
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     var onRegionLoaded: ((RegionData) -> Unit)? = null
 
-    // GUARD: Tracks the Region ID currently being resized (Remove -> Put).
     @Volatile
     private var resizingId: RegionId? = null
 
-    // GUARD: Deduplicate concurrent load requests
     private val loadingJobs = ConcurrentHashMap<RegionId, Deferred<RegionData>>()
+    private val pendingThumbnailDeletions = ConcurrentHashMap<RegionId, Boolean>()
 
-    // State Lock for structural metadata (Index, Tree, Cache Access)
     private val stateLock = ReentrantReadWriteLock()
 
     private class RegionProxy(
@@ -111,7 +102,6 @@ class RegionManager(
     }
 
     init {
-        // Load index on startup (deep-copy RectF values to avoid shared mutable state)
         regionIndex =
             storage
                 .loadIndex()
@@ -119,13 +109,9 @@ class RegionManager(
                 .toMutableMap()
 
         if (regionIndex.isEmpty()) {
-            Logger.w("RegionManager", "Index empty on init. Attempting to rebuild from region files...")
             rebuildIndex()
         }
 
-        Logger.d("RegionManager", "Initialized with ${regionIndex.size} regions from index")
-
-        // Build Skeleton Quadtree and Metadata Cache
         rebuildSkeletonQuadtree()
         updateMetadataCache()
 
@@ -144,20 +130,18 @@ class RegionManager(
                     newValue: RegionData?,
                 ) {
                     if (key == resizingId) return
+                    if (evicted) handleEviction(key, oldValue)
 
-                    if (evicted) {
-                        handleEviction(key, oldValue)
-                    }
-
-                    // If it was moved to overflow, don't save or recycle yet
                     val inOverflow = stateLock.read { overflowRegions.containsKey(key) }
                     if (inOverflow) return
 
                     if (oldValue.isDirty) {
-                        saveRegionInternal(oldValue)
+                        scheduleSave(oldValue) {
+                            oldValue.recycle()
+                        }
+                    } else {
+                        oldValue.recycle()
                     }
-
-                    oldValue.recycle()
                 }
             }
 
@@ -173,6 +157,16 @@ class RegionManager(
                     )
             },
         )
+    }
+
+    private fun scheduleSave(
+        region: RegionData,
+        onComplete: (() -> Unit)? = null,
+    ) {
+        scope.launch(Dispatchers.IO) {
+            saveRegionInternal(region)
+            onComplete?.invoke()
+        }
     }
 
     private fun updateMetadataCache() {
@@ -193,23 +187,25 @@ class RegionManager(
         stateLock.write {
             if (pinnedIds.contains(key)) {
                 val size = region.getSizeCached()
-
                 while (currentOverflowBytes + size > maxOverflowBytes && overflowRegions.isNotEmpty()) {
                     val oldestKey = overflowRegions.keys.first()
                     val oldestRegion = overflowRegions.remove(oldestKey)
                     if (oldestRegion != null) {
                         currentOverflowBytes -= oldestRegion.getSizeCached()
-                        if (oldestRegion.isDirty) saveRegionInternal(oldestRegion)
-                        oldestRegion.recycle()
+                        if (oldestRegion.isDirty) {
+                            scheduleSave(oldestRegion) {
+                                oldestRegion.recycle()
+                            }
+                        } else {
+                            oldestRegion.recycle()
+                        }
                     }
                 }
-
                 if (currentOverflowBytes + size <= maxOverflowBytes) {
                     overflowRegions[key] = region
                     currentOverflowBytes += size
-                } else {
-                    if (region.isDirty) saveRegionInternal(region)
                 }
+                // Redundant scheduleSave removed here; entryRemoved will handle it if not added to overflow.
             }
         }
     }
@@ -227,7 +223,6 @@ class RegionManager(
     private fun rebuildIndex() {
         val regionIds = storage.listStoredRegions()
         if (regionIds.isEmpty()) return
-
         var loadedCount = 0
         regionIds.forEach { id ->
             try {
@@ -242,7 +237,6 @@ class RegionManager(
             } catch (e: Exception) {
             }
         }
-
         if (loadedCount > 0) {
             storage.saveIndex(regionIndex)
             updateMetadataCache()
@@ -257,11 +251,8 @@ class RegionManager(
     suspend fun getRegion(id: RegionId): RegionData {
         stateLock.read {
             regionCache.get(id)?.let { return it }
-            overflowRegions[id]?.let {
-                // Promotion requires write lock, fall through
-            }
+            overflowRegions[id]?.let { /* Promoted below */ }
         }
-
         stateLock.write {
             overflowRegions.remove(id)?.let {
                 currentOverflowBytes -= it.getSizeCached()
@@ -270,29 +261,24 @@ class RegionManager(
             }
             regionCache.get(id)?.let { return it }
         }
-
         val deferred =
             loadingJobs.getOrPut(id) {
                 scope.async(Dispatchers.IO) { loadRegionFromDisk(id) }
             }
-
         return deferred.await()
     }
 
     private suspend fun loadRegionFromDisk(id: RegionId): RegionData {
-        // Logger.v("RegionManager", "Loading start: $id")
         try {
             var region = storage.loadRegion(id)
             if (region != null && region.items !is CopyOnWriteArrayList) {
                 region = region.copy(items = CopyOnWriteArrayList(region.items))
                 region.rebuildQuadtree(regionSize)
             }
-
             if (region == null) {
                 stateLock.write { removeRegionIndex(id) }
                 region = RegionData(id, CopyOnWriteArrayList())
             }
-
             stateLock.write {
                 val existing = regionCache.get(id) ?: overflowRegions[id]
                 if (existing != null) return existing
@@ -311,7 +297,6 @@ class RegionManager(
 
                 regionCache.put(id, region!!)
             }
-            // Logger.v("RegionManager", "Loading end: $id")
             return region!!
         } finally {
             loadingJobs.remove(id)
@@ -323,17 +308,19 @@ class RegionManager(
         context: android.content.Context,
     ): Bitmap? {
         thumbnailCache.get(id)?.let { return it }
-        val fromDisk = storage.loadThumbnail(id)
-        if (fromDisk != null) {
-            thumbnailCache.put(id, fromDisk)
-            return fromDisk
+
+        if (!pendingThumbnailDeletions.containsKey(id)) {
+            val fromDisk = storage.loadThumbnail(id)
+            if (fromDisk != null) {
+                thumbnailCache.put(id, fromDisk)
+                return fromDisk
+            }
         }
 
         getRegion(id)
         val rBounds = id.getBounds(regionSize)
         val overlappingIds = getRegionIdsInRect(rBounds)
         overlappingIds.forEach { getRegion(it) }
-
         val itemsSnapshot = ArrayList<CanvasItem>()
         stateLock.read {
             overlappingIds.forEach { oid ->
@@ -342,7 +329,6 @@ class RegionManager(
                 }
             }
         }
-
         val newBitmap = generateThumbnailFromItems(id, itemsSnapshot, context) ?: return null
         storage.saveThumbnail(id, newBitmap)
         thumbnailCache.put(id, newBitmap)
@@ -358,7 +344,6 @@ class RegionManager(
         val scale = targetSize / regionSize
         val size = kotlin.math.ceil(regionSize * scale).toInt()
         if (size <= 0) return null
-
         try {
             val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
             val canvas = Canvas(bitmap)
@@ -394,6 +379,7 @@ class RegionManager(
     fun getRegionReadOnly(id: RegionId): RegionData? {
         stateLock.read {
             regionCache.get(id)?.let { return it }
+            overflowRegions[id]?.let { return it }
             if (!regionIndex.containsKey(id)) return null
         }
         return null
@@ -412,93 +398,445 @@ class RegionManager(
         }
     }
 
+    suspend fun findItem(
+        id: Long,
+        bounds: RectF,
+    ): CanvasItem? {
+        // Robust Lookup Strategy:
+        // 1. Check center region
+        // 2. Check overlapping regions (with safety margin)
+
+        val centerId =
+            getRegionIdForItem(
+                object : CanvasItem {
+                    override val bounds = bounds
+                    override val order = id
+                    override val zIndex = 0f
+
+                    override fun distanceToPoint(
+                        x: Float,
+                        y: Float,
+                    ) = 0f
+                },
+            )
+
+        val regionIds = HashSet<RegionId>()
+        regionIds.add(centerId)
+
+        val searchBounds = RectF(bounds)
+        searchBounds.inset(-2f, -2f)
+        regionIds.addAll(getRegionIdsInRect(searchBounds))
+
+        for (rId in regionIds) {
+            val region = getRegion(rId) // Suspends and loads if needed
+            stateLock.read {
+                // Check if in cache (might have been evicted if getRegion loaded others?)
+                // Since we iterate one by one, getRegion ensures it's LRU-fresh.
+                // We use 'region' reference directly which is safe.
+                region.items.find { it.order == id }?.let { return it }
+            }
+        }
+        return null
+    }
+
     suspend fun addItem(item: CanvasItem) {
         val id = getRegionIdForItem(item)
         val region = getRegion(id)
-
         stateLock.write {
             resizingId = id
             regionCache.remove(id)
             resizingId = null
-
             region.items.add(item)
             if (region.quadtree == null) region.rebuildQuadtree(regionSize)
             region.quadtree = region.quadtree?.insert(item)
-
             if (region.contentBounds.isEmpty) {
                 region.contentBounds.set(item.bounds)
             } else {
                 region.contentBounds.union(item.bounds)
             }
-
             updateRegionIndex(id, region.contentBounds)
             region.isDirty = true
             invalidateOverlappingThumbnails(item.bounds)
             region.invalidateSize()
             regionCache.put(id, region)
             updateMetadataCache()
+            checkInvariants()
         }
     }
 
     suspend fun removeItems(items: List<CanvasItem>) {
-        val byRegion = items.groupBy { getRegionIdForItem(it) }
-        byRegion.keys.forEach { getRegion(it) }
+        val itemsByRegion = HashMap<RegionId, HashSet<Long>>()
 
+        items.forEach { item ->
+            // 1. Center-based ID (Primary target)
+            val centerId = getRegionIdForItem(item)
+            itemsByRegion.getOrPut(centerId) { HashSet() }.add(item.order)
+
+            // 2. Spatial overlapping IDs (Secondary - handles boundary shifts)
+            val searchBounds = RectF(item.bounds)
+            searchBounds.inset(-2f, -2f) // 2px safety margin
+            val overlaps = getRegionIdsInRect(searchBounds)
+            overlaps.forEach { rId ->
+                itemsByRegion.getOrPut(rId) { HashSet() }.add(item.order)
+            }
+        }
+
+        // Process region-by-region to ensure loaded state
+        itemsByRegion.forEach { (id, idsToRemove) ->
+            // 1. Ensure Loaded (Suspend)
+            val region = getRegion(id)
+
+            stateLock.write {
+                // 2. Ensure in cache (Resurrect if evicted)
+                if (regionCache.get(id) == null && overflowRegions[id] == null) {
+                    regionCache.put(id, region)
+                }
+
+                // 3. Find actual items to remove
+                val toRemove = region.items.filter { idsToRemove.contains(it.order) }
+
+                if (toRemove.isNotEmpty()) {
+                    resizingId = id
+                    regionCache.remove(id)
+                    resizingId = null
+
+                    region.items.removeAll(toRemove)
+                    toRemove.forEach { region.quadtree?.remove(it) }
+
+                    region.contentBounds.setEmpty()
+                    region.items.forEach {
+                        if (region.contentBounds.isEmpty) {
+                            region.contentBounds.set(it.bounds)
+                        } else {
+                            region.contentBounds.union(it.bounds)
+                        }
+                    }
+
+                    if (region.items.isEmpty()) {
+                        removeRegionIndex(id)
+                    } else {
+                        updateRegionIndex(id, region.contentBounds)
+                    }
+
+                    region.isDirty = true
+
+                    val removedBounds = RectF()
+                    if (toRemove.isNotEmpty()) {
+                        removedBounds.set(toRemove[0].bounds)
+                        for (i in 1 until toRemove.size) removedBounds.union(toRemove[i].bounds)
+                        invalidateOverlappingThumbnails(removedBounds)
+                    }
+
+                    region.invalidateSize()
+                    regionCache.put(id, region)
+                }
+            }
+        }
+
+        stateLock.write { updateMetadataCache() }
+    }
+
+    suspend fun stashSelectedItems(
+        rect: RectF,
+        ids: Set<Long>,
+        outputFile: java.io.File,
+    ): Int {
+        val regionIds = getRegionIdsInRect(rect)
+        var stashedCount = 0
+        DataOutputStream(BufferedOutputStream(FileOutputStream(outputFile, true))).use { dos ->
+            for (rId in regionIds) {
+                val region = getRegion(rId)
+                val toRemove = ArrayList<CanvasItem>()
+                region.items.forEach { item ->
+                    if (ids.contains(item.order)) toRemove.add(item)
+                }
+                if (toRemove.isNotEmpty()) {
+                    toRemove.forEach { item ->
+                        try {
+                            val bytes: ByteArray
+                            val type: Int
+                            when (item) {
+                                is Stroke -> {
+                                    type = 0
+                                    val data = CanvasSerializer.toStrokeData(item)
+                                    bytes = ProtoBuf.encodeToByteArray(data)
+                                }
+
+                                is CanvasImage -> {
+                                    type = 1
+                                    val data = CanvasSerializer.toCanvasImageData(item)
+                                    bytes = ProtoBuf.encodeToByteArray(data)
+                                }
+
+                                else -> {
+                                    return@forEach
+                                }
+                            }
+                            dos.writeInt(type)
+                            dos.writeInt(bytes.size)
+                            dos.write(bytes)
+                            stashedCount++
+                        } catch (e: Exception) {
+                            Logger.e("RegionManager", "Failed to stash item", e)
+                        }
+                    }
+                    stateLock.write {
+                        resizingId = rId
+                        regionCache.remove(rId)
+                        resizingId = null
+                        region.items.removeAll(toRemove)
+                        toRemove.forEach { region.quadtree?.remove(it) }
+                        region.contentBounds.setEmpty()
+                        region.items.forEach {
+                            if (region.contentBounds.isEmpty) {
+                                region.contentBounds.set(it.bounds)
+                            } else {
+                                region.contentBounds.union(it.bounds)
+                            }
+                        }
+                        if (region.items.isEmpty()) {
+                            removeRegionIndex(rId)
+                        } else {
+                            updateRegionIndex(rId, region.contentBounds)
+                        }
+                        region.isDirty = true
+                        invalidateThumbnail(rId)
+                        region.invalidateSize()
+                        regionCache.put(rId, region)
+                        updateMetadataCache()
+                    }
+                }
+            }
+        }
+        return stashedCount
+    }
+
+    suspend fun unstashItems(
+        inputFile: java.io.File,
+        transform: android.graphics.Matrix,
+        onItemUnstashed: ((CanvasItem) -> Unit)? = null,
+    ): Pair<Set<Long>, RectF> {
+        if (!inputFile.exists()) return Pair(emptySet(), RectF())
+        val addedIds = HashSet<Long>()
+        val unionBounds = RectF()
+        var first = true
+        val buffer = ArrayList<CanvasItem>(1000)
+
+        val startTime = System.currentTimeMillis()
+        DataInputStream(BufferedInputStream(FileInputStream(inputFile))).use { dis ->
+            try {
+                while (dis.available() > 0) {
+                    val type = dis.readInt()
+                    val length = dis.readInt()
+                    val bytes = ByteArray(length)
+                    dis.readFully(bytes)
+                    var item: CanvasItem? = null
+                    if (type == 0) {
+                        val data = ProtoBuf.decodeFromByteArray<StrokeData>(bytes)
+                        item = CanvasSerializer.fromStrokeData(data)
+                    } else if (type == 1) {
+                        val data = ProtoBuf.decodeFromByteArray<CanvasImageData>(bytes)
+                        item =
+                            CanvasImage(
+                                uri = data.uri,
+                                bounds = RectF(data.x, data.y, data.x + data.width, data.y + data.height),
+                                zIndex = data.zIndex,
+                                order = data.order,
+                                rotation = data.rotation,
+                                opacity = data.opacity,
+                            )
+                    }
+                    if (item != null) {
+                        val transformed = transformItem(item, transform)
+                        buffer.add(transformed)
+                        addedIds.add(transformed.order)
+                        onItemUnstashed?.invoke(transformed)
+
+                        if (first) {
+                            unionBounds.set(transformed.bounds)
+                            first = false
+                        } else {
+                            unionBounds.union(transformed.bounds)
+                        }
+
+                        if (buffer.size >= 1000) {
+                            addItemsInternal(buffer)
+                            buffer.clear()
+                        }
+                    }
+                }
+                if (buffer.isNotEmpty()) {
+                    addItemsInternal(buffer)
+                    buffer.clear()
+                }
+            } catch (e: java.io.EOFException) {
+            } catch (e: Exception) {
+                Logger.e("RegionManager", "Failed to unstash items", e)
+            }
+        }
+        val duration = System.currentTimeMillis() - startTime
+        if (duration > 100) {
+            Logger.w("RegionManager", "Unstash took ${duration}ms for ${addedIds.size} items")
+        }
+        stateLock.write { checkInvariants() }
+        return Pair(addedIds, unionBounds)
+    }
+
+    private suspend fun addItemsInternal(items: List<CanvasItem>) {
+        if (items.isEmpty()) return
+
+        val byRegion = items.groupBy { getRegionIdForItem(it) }
+
+        // 1. Concurrent Pre-load affected regions WITHOUT lock
+        byRegion.keys.forEach { id ->
+            getRegion(id)
+        }
+
+        // 2. Apply changes with Write Lock
+        val startLock = System.currentTimeMillis()
         stateLock.write {
-            byRegion.forEach { (id, regionItems) ->
-                val region = regionCache.get(id) ?: return@forEach
+            for ((id, regionItems) in byRegion) {
+                // Ensure region is in cache (should be after pre-load)
+                val region = regionCache.get(id) ?: overflowRegions[id] ?: RegionData(id)
 
                 resizingId = id
                 regionCache.remove(id)
                 resizingId = null
 
-                region.items.removeAll(regionItems)
-                regionItems.forEach { region.quadtree?.remove(it) }
+                region.items.addAll(regionItems)
+                if (region.quadtree == null) region.rebuildQuadtree(regionSize)
 
-                region.contentBounds.setEmpty()
-                region.items.forEach {
+                for (item in regionItems) {
+                    region.quadtree = region.quadtree?.insert(item)
                     if (region.contentBounds.isEmpty) {
-                        region.contentBounds.set(it.bounds)
+                        region.contentBounds.set(item.bounds)
                     } else {
-                        region.contentBounds.union(it.bounds)
+                        region.contentBounds.union(item.bounds)
                     }
                 }
 
-                if (region.items.isEmpty()) {
-                    removeRegionIndex(id)
-                } else {
-                    updateRegionIndex(id, region.contentBounds)
-                }
-
+                updateRegionIndex(id, region.contentBounds)
                 region.isDirty = true
 
-                if (regionItems.isNotEmpty()) {
-                    val removedBounds = RectF()
-                    removedBounds.set(regionItems[0].bounds)
-                    for (i in 1 until regionItems.size) {
-                        removedBounds.union(regionItems[i].bounds)
-                    }
-                    invalidateOverlappingThumbnails(removedBounds)
-                }
+                val batchBounds = RectF(regionItems[0].bounds)
+                for (i in 1 until regionItems.size) batchBounds.union(regionItems[i].bounds)
+                invalidateOverlappingThumbnails(batchBounds)
 
                 region.invalidateSize()
                 regionCache.put(id, region)
             }
             updateMetadataCache()
         }
+        val lockDuration = System.currentTimeMillis() - startLock
+        if (lockDuration > 50) {
+            Logger.w("RegionManager", "Slow write lock in addItemsInternal: ${lockDuration}ms")
+        }
     }
+
+    private fun transformItem(
+        item: CanvasItem,
+        transform: android.graphics.Matrix,
+    ): CanvasItem =
+        when (item) {
+            is Stroke -> {
+                val newPath = android.graphics.Path(item.path)
+                newPath.transform(transform)
+                val newPoints =
+                    item.points.map { p ->
+                        val pts = floatArrayOf(p.x, p.y)
+                        transform.mapPoints(pts)
+                        com.onyx.android.sdk.data.note
+                            .TouchPoint(pts[0], pts[1], p.pressure, p.size, p.timestamp)
+                    }
+                val newBounds = RectF(item.bounds)
+                transform.mapRect(newBounds)
+                val values = FloatArray(9)
+                transform.getValues(values)
+                val scale =
+                    kotlin.math.sqrt(
+                        values[android.graphics.Matrix.MSCALE_X] * values[android.graphics.Matrix.MSCALE_X] +
+                            values[android.graphics.Matrix.MSKEW_Y] * values[android.graphics.Matrix.MSKEW_Y],
+                    )
+                item.copy(path = newPath, points = newPoints, bounds = newBounds, width = item.width * scale)
+            }
+
+            is CanvasImage -> {
+                val newBounds = RectF(item.bounds)
+                transform.mapRect(newBounds)
+                val values = FloatArray(9)
+                transform.getValues(values)
+                val scaleX = values[android.graphics.Matrix.MSCALE_X]
+                val skewY = values[android.graphics.Matrix.MSKEW_Y]
+                val rotation = kotlin.math.atan2(skewY.toDouble(), scaleX.toDouble()).toFloat()
+                item.copy(bounds = newBounds, rotation = item.rotation + Math.toDegrees(rotation.toDouble()).toFloat())
+            }
+
+            else -> {
+                item
+            }
+        }
 
     fun getRegionIdsInRect(rect: RectF): List<RegionId> {
         val foundProxies = ArrayList<CanvasItem>()
-        stateLock.read {
-            skeletonQuadtree.retrieve(foundProxies, rect)
-        }
+        stateLock.read { skeletonQuadtree.retrieve(foundProxies, rect) }
         return foundProxies.map { (it as RegionProxy).id }.distinct()
     }
 
     suspend fun getRegionsInRect(rect: RectF): List<RegionData> {
         val ids = getRegionIdsInRect(rect)
         return ids.map { getRegion(it) }
+    }
+
+    suspend fun visitItemsInRect(
+        rect: RectF,
+        visitor: (CanvasItem) -> Unit,
+    ) {
+        val ids = getRegionIdsInRect(rect)
+        for (id in ids) {
+            val region = getRegion(id)
+            region.quadtree?.visit(rect, visitor)
+        }
+    }
+
+    suspend fun removeItemsByIds(
+        rect: RectF,
+        ids: Set<Long>,
+    ) {
+        val regionIds = getRegionIdsInRect(rect)
+        for (rId in regionIds) {
+            val region = getRegion(rId)
+            val toRemove = ArrayList<CanvasItem>()
+            region.items.forEach { item ->
+                if (ids.contains(item.order)) toRemove.add(item)
+            }
+            if (toRemove.isNotEmpty()) {
+                stateLock.write {
+                    resizingId = rId
+                    regionCache.remove(rId)
+                    resizingId = null
+                    region.items.removeAll(toRemove)
+                    toRemove.forEach { region.quadtree?.remove(it) }
+                    region.contentBounds.setEmpty()
+                    region.items.forEach {
+                        if (region.contentBounds.isEmpty) {
+                            region.contentBounds.set(it.bounds)
+                        } else {
+                            region.contentBounds.union(it.bounds)
+                        }
+                    }
+                    if (region.items.isEmpty()) {
+                        removeRegionIndex(rId)
+                    } else {
+                        updateRegionIndex(rId, region.contentBounds)
+                    }
+                    region.isDirty = true
+                    invalidateThumbnail(rId)
+                    region.invalidateSize()
+                    regionCache.put(rId, region)
+                    updateMetadataCache()
+                }
+            }
+        }
     }
 
     fun getContentBounds(): RectF = RectF(cachedContentBounds)
@@ -509,7 +847,6 @@ class RegionManager(
         stateLock.write {
             val unpinned = pinnedIds - ids
             pinnedIds = ids
-
             unpinned.forEach { id ->
                 overflowRegions.remove(id)?.let {
                     currentOverflowBytes -= it.getSizeCached()
@@ -543,9 +880,7 @@ class RegionManager(
                     }
                 }
             }
-            overflowRegions.forEach { (_, region) ->
-                if (region.isDirty) saveRegionInternal(region)
-            }
+            overflowRegions.forEach { (_, region) -> if (region.isDirty) saveRegionInternal(region) }
             storage.saveIndex(regionIndex)
         }
     }
@@ -594,6 +929,29 @@ class RegionManager(
                 rebuildSkeletonQuadtree()
                 updateMetadataCache()
             }
+        }
+    }
+
+    private fun checkInvariants() {
+        var corrupted = false
+        regionIndex.forEach { (id, bounds) ->
+            if (!regionProxies.containsKey(id)) {
+                Logger.e("RegionManager", "Invariant violation: Region $id in index but not in proxies")
+                corrupted = true
+            } else if (regionProxies[id]?.bounds != bounds) {
+                Logger.e("RegionManager", "Invariant violation: Region $id bounds mismatch in proxy")
+                corrupted = true
+            }
+        }
+
+        if (regionProxies.size != regionIndex.size) {
+            Logger.e("RegionManager", "Invariant violation: Proxy count ${regionProxies.size} != Index count ${regionIndex.size}")
+            corrupted = true
+        }
+
+        if (corrupted) {
+            Logger.w("RegionManager", "Spatial index corruption detected. Rebuilding...")
+            rebuildSkeletonQuadtree()
         }
     }
 }

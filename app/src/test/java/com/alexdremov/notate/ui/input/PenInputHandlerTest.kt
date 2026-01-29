@@ -2,8 +2,8 @@ package com.alexdremov.notate.ui.input
 
 import android.graphics.Matrix
 import android.view.View
-import com.alexdremov.notate.controller.CanvasController
 import com.alexdremov.notate.model.Stroke
+import com.alexdremov.notate.ui.controller.CanvasController
 import com.onyx.android.sdk.data.note.TouchPoint
 import com.onyx.android.sdk.pen.data.TouchPointList
 import io.mockk.Runs

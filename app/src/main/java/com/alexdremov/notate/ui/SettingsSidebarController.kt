@@ -38,6 +38,7 @@ class SettingsSidebarController(
     private val onStyleUpdate: (BackgroundStyle) -> Unit,
     private val onExportRequest: (ExportAction) -> Unit,
     private val onEditToolbar: () -> Unit,
+    private val onGeneratePatterns: (com.alexdremov.notate.util.PatternGenerator.PatternType, Float) -> Unit,
 ) {
     private val wrapperView: View = LayoutInflater.from(context).inflate(R.layout.sidebar_layout_wrapper, container, false)
     private val contentFrame: FrameLayout = wrapperView.findViewById(R.id.sidebar_content)
@@ -351,6 +352,61 @@ class SettingsSidebarController(
 
                 override fun onNothingSelected(parent: AdapterView<*>?) {}
             }
+
+        debugView.findViewById<View>(R.id.btn_debug_pattern_generator).setOnClickListener {
+            showPatternGeneratorMenu()
+        }
+    }
+
+    private fun showPatternGeneratorMenu() {
+        contentFrame.removeAllViews()
+        val patternView = LayoutInflater.from(context).inflate(R.layout.sidebar_pattern_generator, contentFrame, false)
+        contentFrame.addView(patternView)
+
+        tvTitle.text = "Pattern Generator"
+        btnBack.visibility = View.VISIBLE
+
+        val rgType: RadioGroup = patternView.findViewById(R.id.rg_pattern_type)
+        val seekArea: SeekBar = patternView.findViewById(R.id.seekbar_pattern_area)
+        val tvAreaValue: TextView = patternView.findViewById(R.id.tv_pattern_area_value)
+        val btnGenerate: Button = patternView.findViewById(R.id.btn_generate_pattern)
+
+        seekArea.setOnSeekBarChangeListener(
+            object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(
+                    seekBar: SeekBar?,
+                    progress: Int,
+                    fromUser: Boolean,
+                ) {
+                    val p = progress / 100f
+                    val label =
+                        when {
+                            p < 0.3f -> "Small / Low Complexity"
+                            p < 0.7f -> "Medium / Moderate Complexity"
+                            else -> "Large / High Complexity"
+                        }
+                    tvAreaValue.text = label
+                }
+
+                override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+
+                override fun onStopTrackingTouch(seekBar: SeekBar?) {}
+            },
+        )
+
+        btnGenerate.setOnClickListener {
+            val type =
+                when (rgType.checkedRadioButtonId) {
+                    R.id.rb_pattern_fractal -> com.alexdremov.notate.util.PatternGenerator.PatternType.FRACTAL
+                    R.id.rb_pattern_squares -> com.alexdremov.notate.util.PatternGenerator.PatternType.SQUARES
+                    R.id.rb_pattern_handwriting -> com.alexdremov.notate.util.PatternGenerator.PatternType.HANDWRITING
+                    else -> com.alexdremov.notate.util.PatternGenerator.PatternType.FRACTAL
+                }
+            val intensity = seekArea.progress / 100f
+            onGeneratePatterns(type, intensity)
+            // Optional: Close sidebar? Or stay to generate more? Let's stay.
+            Toast.makeText(context, "Generating pattern...", Toast.LENGTH_SHORT).show()
+        }
     }
 
     private fun showBackgroundSettings() {

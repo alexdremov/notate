@@ -2,6 +2,7 @@ package com.alexdremov.notate.vm
 
 import android.app.Application
 import android.net.Uri
+import android.provider.DocumentsContract
 import androidx.documentfile.provider.DocumentFile
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -642,11 +643,27 @@ class HomeViewModel(
                             Logger.d("HomeViewModel", "Attempting to propagate deletion to remote for ${item.name}")
                             val relativePath =
                                 if (projectUri.startsWith("content://")) {
-                                    if (currentPathVal == repository?.getRootPath()) {
-                                        item.name
-                                    } else {
-                                        item.name
-                                    }
+                                    val rootUri = Uri.parse(projectUri)
+                                    val itemUri = Uri.parse(item.path)
+
+                                    // Try to use DocumentsContract IDs for cleaner relative path if possible (ExternalStorageProvider)
+                                    val derivedPath =
+                                        try {
+                                            val treeId = DocumentsContract.getTreeDocumentId(rootUri)
+                                            val docId = DocumentsContract.getDocumentId(itemUri)
+
+                                            if (docId.startsWith(treeId) && docId.length > treeId.length) {
+                                                // E.g. treeId="primary:note", docId="primary:note/folder/file"
+                                                // Result: "folder/file"
+                                                docId.removePrefix(treeId).trimStart('/', ':')
+                                            } else {
+                                                null
+                                            }
+                                        } catch (e: Exception) {
+                                            null
+                                        }
+
+                                    derivedPath ?: item.fileName
                                 } else {
                                     File(item.path).relativeTo(File(projectUri)).path
                                 }
