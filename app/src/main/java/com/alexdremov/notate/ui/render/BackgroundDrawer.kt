@@ -19,6 +19,10 @@ object BackgroundDrawer {
     private const val MAX_PRIMITIVES = 20000
     private const val VECTOR_RENDER_THRESHOLD = 20000
 
+    // Thread-local scratch buffer to avoid allocations.
+    // Max size: 20000 lines * 4 floats = 80,000 floats (~320KB).
+    private val scratchBuffer = ThreadLocal.withInitial { FloatArray(MAX_PRIMITIVES * 4) }
+
     // Component for handling BitmapShader caching (Fallback for extreme density)
     private val patternCache = BackgroundPatternCache()
 
@@ -156,7 +160,16 @@ object BackgroundDrawer {
         if (!force && maxPoints > MAX_PRIMITIVES) return // Should have used cache
         if (maxPoints > Int.MAX_VALUE / 2) return // Prevent OOM
 
-        val pts = FloatArray((maxPoints * 2).toInt())
+        // Use scratch buffer
+        var pts = scratchBuffer.get()!!
+        val requiredSize = (maxPoints * 2).toInt()
+
+        // Resize if needed (rare case if MAX_PRIMITIVES logic matches)
+        if (pts.size < requiredSize) {
+            pts = FloatArray(requiredSize)
+            scratchBuffer.set(pts)
+        }
+
         var count = 0
 
         var x = startX
@@ -201,7 +214,14 @@ object BackgroundDrawer {
 
         if (!force && rows > MAX_PRIMITIVES) return
 
-        val pts = FloatArray((rows * 4).toInt())
+        // Use scratch buffer
+        var pts = scratchBuffer.get()!!
+        val requiredSize = (rows * 4).toInt()
+        if (pts.size < requiredSize) {
+            pts = FloatArray(requiredSize)
+            scratchBuffer.set(pts)
+        }
+
         var count = 0
 
         var y = startY
@@ -249,7 +269,14 @@ object BackgroundDrawer {
         if (!force && totalLines > MAX_PRIMITIVES) return
         if (totalLines > Int.MAX_VALUE / 4) return // Prevent OOM
 
-        val pts = FloatArray((totalLines * 4).toInt())
+        // Use scratch buffer
+        var pts = scratchBuffer.get()!!
+        val requiredSize = (totalLines * 4).toInt()
+        if (pts.size < requiredSize) {
+            pts = FloatArray(requiredSize)
+            scratchBuffer.set(pts)
+        }
+
         var count = 0
 
         // Vertical Loop
