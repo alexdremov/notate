@@ -154,33 +154,28 @@ class RegionManagerOverflowTest {
             // R3 added to Overflow. Total bytes exceeds 2KB. MUST evict R1 and R2.
             regionManager.addItem(createHeavyRegion(r6).items[0])
 
+            // Wait for saves to complete (file existence) before deleting
+            // This prevents the race where we delete -> async save happens -> file exists -> test fails
+            val r1File = File(tempDir, "r_0_0.bin")
+            for (i in 0 until 20) {
+                if (r1File.exists()) break
+                kotlinx.coroutines.delay(100)
+            }
+            val r2File = File(tempDir, "r_0_1.bin")
+            for (i in 0 until 20) {
+                if (r2File.exists()) break
+                kotlinx.coroutines.delay(100)
+            }
+
             // Verify R1 and R2 are NOT in memory
             storage.deleteRegion(r1)
             storage.deleteRegion(r2)
 
-            // Retry loop for R1 eviction
-            var r1Evicted = false
-            for (i in 0 until 20) {
-                val r1Data = regionManager.getRegion(r1)
-                if (r1Data.items.isEmpty()) {
-                    r1Evicted = true
-                    break
-                }
-                kotlinx.coroutines.delay(100)
-            }
-            assertTrue("R1 should have been evicted from overflow", r1Evicted)
+            val r1Data = regionManager.getRegion(r1)
+            assertTrue("R1 should have been evicted from overflow", r1Data.items.isEmpty())
 
-            // Retry loop for R2 eviction
-            var r2Evicted = false
-            for (i in 0 until 20) {
-                val r2Data = regionManager.getRegion(r2)
-                if (r2Data.items.isEmpty()) {
-                    r2Evicted = true
-                    break
-                }
-                kotlinx.coroutines.delay(100)
-            }
-            assertTrue("R2 should have been evicted from overflow", r2Evicted)
+            val r2Data = regionManager.getRegion(r2)
+            assertTrue("R2 should have been evicted from overflow", r2Data.items.isEmpty())
 
             // Verify R3 is still in memory (overflow)
             storage.deleteRegion(r3)
