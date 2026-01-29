@@ -131,10 +131,17 @@ class RegionManager(
                 ) {
                     if (key == resizingId) return
                     if (evicted) handleEviction(key, oldValue)
+
                     val inOverflow = stateLock.read { overflowRegions.containsKey(key) }
                     if (inOverflow) return
-                    if (oldValue.isDirty) scheduleSave(oldValue)
-                    oldValue.recycle()
+
+                    if (oldValue.isDirty) {
+                        scheduleSave(oldValue) {
+                            oldValue.recycle()
+                        }
+                    } else {
+                        oldValue.recycle()
+                    }
                 }
             }
 
@@ -152,9 +159,13 @@ class RegionManager(
         )
     }
 
-    private fun scheduleSave(region: RegionData) {
+    private fun scheduleSave(
+        region: RegionData,
+        onComplete: (() -> Unit)? = null,
+    ) {
         scope.launch(Dispatchers.IO) {
             saveRegionInternal(region)
+            onComplete?.invoke()
         }
     }
 
@@ -181,16 +192,20 @@ class RegionManager(
                     val oldestRegion = overflowRegions.remove(oldestKey)
                     if (oldestRegion != null) {
                         currentOverflowBytes -= oldestRegion.getSizeCached()
-                        if (oldestRegion.isDirty) scheduleSave(oldestRegion)
-                        oldestRegion.recycle()
+                        if (oldestRegion.isDirty) {
+                            scheduleSave(oldestRegion) {
+                                oldestRegion.recycle()
+                            }
+                        } else {
+                            oldestRegion.recycle()
+                        }
                     }
                 }
                 if (currentOverflowBytes + size <= maxOverflowBytes) {
                     overflowRegions[key] = region
                     currentOverflowBytes += size
-                } else {
-                    if (region.isDirty) scheduleSave(region)
                 }
+                // Redundant scheduleSave removed here; entryRemoved will handle it if not added to overflow.
             }
         }
     }

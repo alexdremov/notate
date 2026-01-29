@@ -116,7 +116,16 @@ class RegionManagerOverflowTest {
             regionManager.addItem(createHeavyRegion(r4).items[0])
 
             // Verify R1 is saved to disk and removed from cache
-            assertTrue("Evicted dirty region should be saved to disk", File(tempDir, "r_0_0.bin").exists())
+            // We use a retry loop because saving is asynchronous (Dispatchers.IO)
+            var found = false
+            for (i in 0 until 20) {
+                if (File(tempDir, "r_0_0.bin").exists()) {
+                    found = true
+                    break
+                }
+                kotlinx.coroutines.delay(100)
+            }
+            assertTrue("Evicted dirty region should be saved to disk", found)
         }
 
     @Test
