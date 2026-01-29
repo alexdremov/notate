@@ -514,24 +514,6 @@ class TileManager(
     ) {
         val key = TileCache.TileKey(col, row, level)
 
-        // Use synchronized block for atomic check-and-add
-        synchronized(generatingKeys) {
-            if (!forceRefresh && (generatingKeys.contains(key) || tileCache.get(key) != null)) return
-
-            // Throttle low-priority background work if cache is pressured
-            if (!forceRefresh && !isHighPriority &&
-                tileCache.isFull(generatingKeys.size, CanvasConfig.NEIGHBOR_PRECACHE_THRESHOLD_PERCENT)
-            ) {
-                return
-            }
-
-            generatingKeys.add(key)
-        }
-
-        // Cancel existing active job for this key if it's still running
-        // Note: We don't remove from pendingJobs here; we just update/overwrite it below
-        generationJobs.remove(key)?.cancel()
-
         val rm = canvasModel.getRegionManager()
         val rSize = rm?.regionSize ?: 2048f // Safe default
         val tileRect = getTileWorldRect(col, row, worldSize)
@@ -553,6 +535,23 @@ class TileManager(
             )
 
         synchronized(pendingLock) {
+            synchronized(generatingKeys) {
+                if (!forceRefresh && (generatingKeys.contains(key) || tileCache.get(key) != null)) return
+
+                // Throttle low-priority background work if cache is pressured
+                if (!forceRefresh && !isHighPriority &&
+                    tileCache.isFull(generatingKeys.size, CanvasConfig.NEIGHBOR_PRECACHE_THRESHOLD_PERCENT)
+                ) {
+                    return
+                }
+
+                generatingKeys.add(key)
+            }
+
+            // Cancel existing active job for this key if it's still running
+            // Note: We don't remove from pendingJobs here; we just update/overwrite it below
+            generationJobs.remove(key)?.cancel()
+
             val existing = pendingJobsByKey[key]
             if (existing != null) {
                 val list = pendingJobsByRegion[existing.regionId]
@@ -634,7 +633,10 @@ class TileManager(
                 // All jobs in this region were stale?
                 // Remove them all and recurse/retry
                 // We must clean up pendingJobsByKey as well
-                jobs.forEach { pendingJobsByKey.remove(it.key) }
+                jobs.forEach {
+                    pendingJobsByKey.remove(it.key)
+                    synchronized(generatingKeys) { generatingKeys.remove(it.key) }
+                }
                 jobs.clear()
                 pendingJobsByRegion.remove(rid)
                 currentProcessingRegion = null

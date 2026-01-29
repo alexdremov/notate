@@ -192,4 +192,64 @@ class TileManagerTest {
             // Verify that it tried to generate
             io.mockk.coVerify { mockModel.queryItems(any()) }
         }
+
+    @Test
+    fun `no stale jobs after heavy activity`() =
+        runTest(testDispatcher) {
+            val visibleRect = RectF(0f, 0f, 1000f, 1000f)
+            val canvas = mockk<Canvas>(relaxed = true)
+            io.mockk.coEvery { mockModel.queryItems(any()) } returns ArrayList<CanvasItem>()
+
+            // Simulate "Heavy Activity"
+            // 1. Rapid panning (render calls)
+            for (i in 0..10) {
+                val offset = i * 100f
+                val rect = RectF(offset, offset, offset + 500f, offset + 500f)
+                tileManager.render(canvas, rect, 1.0f)
+                // Don't wait fully, simulate rapid updates
+                if (i % 3 == 0) testDispatcher.scheduler.advanceTimeBy(10)
+            }
+
+            // 2. Concurrent refreshes
+            val refreshRect = RectF(200f, 200f, 400f, 400f)
+            tileManager.refreshTiles(refreshRect)
+            tileManager.refreshTiles(refreshRect)
+
+            // 3. Item updates
+            val item = mockk<Stroke>(relaxed = true)
+            every { item.bounds } returns RectF(100f, 100f, 200f, 200f)
+            every { item.style } returns com.alexdremov.notate.model.StrokeType.FOUNTAIN
+            every { item.order } returns 1L
+            tileManager.updateTilesWithItem(item)
+
+            // 4. Zooming (LOD Switch)
+            tileManager.render(canvas, visibleRect, 0.5f) // Zoom out (LOD change)
+            testDispatcher.scheduler.advanceTimeBy(50)
+            tileManager.render(canvas, visibleRect, 2.0f) // Zoom in (LOD change)
+
+            // Allow all jobs to finish
+            advanceUntilIdle()
+
+            // Verify Internal State via Reflection
+            val generatingKeysField = TileManager::class.java.getDeclaredField("generatingKeys")
+            generatingKeysField.isAccessible = true
+            val generatingKeys = generatingKeysField.get(tileManager) as Set<*>
+
+            val generationJobsField = TileManager::class.java.getDeclaredField("generationJobs")
+            generationJobsField.isAccessible = true
+            val generationJobs = generationJobsField.get(tileManager) as Map<*, *>
+
+            val pendingJobsByKeyField = TileManager::class.java.getDeclaredField("pendingJobsByKey")
+            pendingJobsByKeyField.isAccessible = true
+            val pendingJobsByKey = pendingJobsByKeyField.get(tileManager) as Map<*, *>
+
+            val activeJobCountField = TileManager::class.java.getDeclaredField("activeJobCount")
+            activeJobCountField.isAccessible = true
+            val activeJobCount = activeJobCountField.get(tileManager) as java.util.concurrent.atomic.AtomicInteger
+
+            assert(generatingKeys.isEmpty()) { "generatingKeys should be empty, but has ${generatingKeys.size} items" }
+            assert(generationJobs.isEmpty()) { "generationJobs should be empty, but has ${generationJobs.size} items" }
+            assert(pendingJobsByKey.isEmpty()) { "pendingJobsByKey should be empty, but has ${pendingJobsByKey.size} items" }
+            assert(activeJobCount.get() == 0) { "activeJobCount should be 0, but is ${activeJobCount.get()}" }
+        }
 }
