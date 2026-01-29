@@ -114,7 +114,7 @@ class RegionStorage(
 
         if (!file.exists()) {
             // Normal case for new regions, verbose log only
-            // Logger.v("RegionStorage", "Region file not found: $id")
+            Logger.v("RegionStorage", "Region file not found: $id")
             return null
         }
 
@@ -149,7 +149,7 @@ class RegionStorage(
                 data.items.add(image)
             }
 
-            // Logger.d("RegionStorage", "Loaded region $id (${data.items.size} items)")
+            Logger.d("RegionStorage", "Loaded region $id (${data.items.size} items)")
             data
         } catch (e: Exception) {
             Logger.e("RegionStorage", "Failed to load region $id (File: ${file.absolutePath}, Size: ${file.length()})", e)

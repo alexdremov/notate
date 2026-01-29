@@ -149,21 +149,6 @@ class SelectionManager {
         }
     }
 
-    fun addSelection(
-        ids: Set<Long>,
-        bounds: RectF,
-    ) {
-        // Fallback for when we don't have item details (rare/legacy)
-        // This is dangerous as it breaks the "bulletproof" promise, but needed for compatibility.
-        // We will assume these items are lost spatial-wise and just track the union bounds.
-        // Actually, 'addSelection' was only used in my previous refactor attempt.
-        // We can probably remove it or implement it carefully.
-        // Since we removed 'getSelectedItems', we should rely on selectAll.
-        synchronized(lock) {
-            // Not implemented - prefer selectAll
-        }
-    }
-
     fun deselect(item: CanvasItem) {
         synchronized(lock) {
             val idx = _ids.indexOf(item.order)

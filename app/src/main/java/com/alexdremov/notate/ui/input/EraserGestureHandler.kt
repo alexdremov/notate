@@ -73,14 +73,6 @@ class EraserGestureHandler(
 
     // --- Scribble Detection Methods ---
 
-    fun onStrokeFinished(stroke: Stroke) {
-        if (scope != null && isScribble(stroke)) {
-            scope.launch {
-                controller.commitEraser(stroke, EraserType.STROKE)
-            }
-        }
-    }
-
     private fun isScribble(stroke: Stroke): Boolean {
         if (stroke.points.size < 10) return false
 
