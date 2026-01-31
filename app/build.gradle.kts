@@ -117,14 +117,14 @@ dependencies {
     implementation("androidx.fragment:fragment-ktx:1.8.9")
 
     // Serialization
-    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.9.0")
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.10.0")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-protobuf:1.9.0")
 
     // Color Picker
     implementation("com.github.skydoves:colorpickerview:2.4.0")
 
     // Onyx SDK
-    implementation("com.onyx.android.sdk:onyxsdk-pen:1.5.0.4")
+    implementation("com.onyx.android.sdk:onyxsdk-pen:1.5.1")
     implementation("com.onyx.android.sdk:onyxsdk-base:1.8.3")
     implementation("org.lsposed.hiddenapibypass:hiddenapibypass:6.1")
 
