@@ -103,7 +103,7 @@ tasks.withType<Test> {
 }
 
 tasks.register<JacocoReport>("jacocoTestReport") {
-    dependsOn("testDebugUnitTest")
+    dependsOn("test")
     reports {
         xml.required.set(true)
         html.required.set(true)
