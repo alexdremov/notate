@@ -336,6 +336,10 @@ class CanvasRepository(
                                                 Logger.i("CanvasRepository", "Background unzip complete.")
                                             } catch (e: Exception) {
                                                 Logger.e("CanvasRepository", "Background unzip failed", e)
+                                                // Mark initialization as failed to prevent saving partial state
+                                                val field = CanvasSession::class.java.getDeclaredField("initializationFailed")
+                                                field.isAccessible = true
+                                                field.setBoolean(finalSession, true)
                                             }
                                         }
                                 }

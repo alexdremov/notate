@@ -19,17 +19,18 @@ object CanvasSerializer {
 
     fun toStrokeData(item: Stroke): StrokeData {
         val count = item.points.size
-        val floats = FloatArray(count * 6)
+        val stride = StrokeData.PACKED_POINT_STRIDE
+        val floats = FloatArray(count * stride)
         val longs = LongArray(count)
 
         for (i in 0 until count) {
             val p = item.points[i]
-            floats[i * 6] = p.x
-            floats[i * 6 + 1] = p.y
-            floats[i * 6 + 2] = p.pressure
-            floats[i * 6 + 3] = p.size
-            floats[i * 6 + 4] = p.tiltX.toFloat()
-            floats[i * 6 + 5] = p.tiltY.toFloat()
+            floats[i * stride] = p.x
+            floats[i * stride + 1] = p.y
+            floats[i * stride + 2] = p.pressure
+            floats[i * stride + 3] = p.size
+            floats[i * stride + 4] = p.tiltX.toFloat()
+            floats[i * stride + 5] = p.tiltY.toFloat()
             longs[i] = p.timestamp
         }
 

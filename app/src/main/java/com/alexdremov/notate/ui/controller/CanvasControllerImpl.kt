@@ -30,6 +30,10 @@ class CanvasControllerImpl(
     private val model: InfiniteCanvasModel,
     private val renderer: CanvasRenderer,
 ) : CanvasController {
+    companion object {
+        private const val LARGE_SELECTION_THRESHOLD = 512
+    }
+
     private val uiHandler = Handler(Looper.getMainLooper())
     private var viewportController: ViewportController? = null
     private val selectionManager = SelectionManager()
@@ -115,18 +119,11 @@ class CanvasControllerImpl(
         stroke: Stroke,
         type: EraserType,
     ) {
-        val invalidated = model.erase(stroke, type)
+        model.erase(stroke, type)
         withContext(Dispatchers.Main) {
-            if ((type == EraserType.LASSO || type == EraserType.STROKE) && invalidated != null) {
-                renderer.invalidateTiles(invalidated)
-            } else if (type == EraserType.STANDARD) {
-                renderer.refreshTiles(stroke.bounds)
-            }
             onContentChangedListener?.invoke()
         }
     }
-
-    override fun setStrokeWidth(width: Float) {}
 
     // --- Page Navigation ---
     override suspend fun getCurrentPageIndex(): Int {
@@ -624,95 +621,11 @@ class CanvasControllerImpl(
             }
 
             // Callback populates SelectionManager efficiently without accumulating a heavy List<CanvasItem>.
-            withContext(Dispatchers.IO) {
-                model.unstashItems(stashFile, transform) { item ->
-                    // Thread-safe call to populate metadata (ID + Bounds)
-                    // The heavy item object is then discarded/GC'd.
-                    if (shouldReselect) {
-                        selectionManager.select(item)
-                    }
-                }
-            }
-
-            endBatchSession()
-
-            updatePinnedRegions()
-            selectionManager.clearImposter()
-
-            withContext(Dispatchers.Main) {
-                if (shouldReselect) {
-                    renderer.setHiddenItems(selectionManager.getSelectedIds())
-
-                    // Invalidate old and new areas
-                    renderer.invalidateTiles(originalBounds)
-                    // Note: newBounds are implicitly handled by unstash/add which invalidates regions,
-                    // but we might want explicit invalidation if we had the new bounds here.
-                    // The original code invalidated newBounds too, but unstashItems returns them.
-                    // We'll rely on the fact that adding items invalidates their tiles.
-                    // Wait, original code captured newBounds from unstashItems.
-                    // Let's check model.unstashItems signature. It returns Pair<List<Long>, RectF>.
-                    // We ignored the return value in the refactor. Let's fix that.
-                    // Since we are inside a private method, let's just invalidate global or rely on item addition.
-                    // Actually, let's keep it simple: invalidate everything visible or just rely on renderer updates.
-                    // Original code: val (_, newBounds) = ...
-                    // Let's replicate that correctly.
-
-                    // RE-FIX: We need to capture the result of unstashItems properly.
-                    // However, for this extraction, I will stick to the provided structure but
-                    // I'll need to call unstashItems and use its result to be 100% correct with the original logic.
-                    // But wait, the original code used `val (_, newBounds) = ...`
-                    // I should probably do the same here.
-
-                    renderer.invalidate()
-                    generateSelectionImposter()
-                } else {
-                    renderer.setHiddenItems(emptySet())
-                    renderer.invalidateTiles(originalBounds)
-                    renderer.invalidate()
-                }
-
-                onContentChangedListener?.invoke()
-            }
-        } catch (e: Exception) {
-            Log.e("CanvasController", "Large move failed", e)
-            endBatchSession()
-        } finally {
-            stashFile.delete()
-            withContext(Dispatchers.Main) {
-                progressCallback?.invoke(false, null, 0)
-            }
-        }
-    }
-
-    // Corrected commitLargeSelectionMove to properly capture newBounds
-    private suspend fun commitLargeSelectionMoveCorrected(
-        ids: Set<Long>,
-        originalBounds: RectF,
-        transform: Matrix,
-        shouldReselect: Boolean,
-    ) {
-        val stashFile = File(context.cacheDir, "move_stash_${System.currentTimeMillis()}.bin")
-
-        try {
-            withContext(Dispatchers.Main) {
-                progressCallback?.invoke(true, "Optimizing Selection...", 10)
-            }
-
-            startBatchSession()
-
-            withContext(Dispatchers.IO) {
-                model.stashItems(originalBounds, ids, stashFile)
-            }
-
-            selectionManager.clearSelection()
-
-            withContext(Dispatchers.Main) {
-                progressCallback?.invoke(true, "Committing...", 60)
-            }
-
             val (_, newBounds) =
                 withContext(Dispatchers.IO) {
                     model.unstashItems(stashFile, transform) { item ->
+                        // Thread-safe call to populate metadata (ID + Bounds)
+                        // The heavy item object is then discarded/GC'd.
                         if (shouldReselect) {
                             selectionManager.select(item)
                         }
@@ -727,6 +640,8 @@ class CanvasControllerImpl(
             withContext(Dispatchers.Main) {
                 if (shouldReselect) {
                     renderer.setHiddenItems(selectionManager.getSelectedIds())
+
+                    // Invalidate old and new areas
                     renderer.invalidateTiles(originalBounds)
                     renderer.invalidateTiles(newBounds)
                     renderer.invalidate()

@@ -160,27 +160,29 @@ class CanvasActivity : AppCompatActivity() {
 
         // Intercept Back Press - Save in background and close immediately
         onBackPressedDispatcher.addCallback(this) {
-            val session = currentSessionRef.getAndSet(null)
-            val path = currentCanvasPath
-            if (session != null && path != null && !session.isClosed()) {
-                // Update metadata from UI one last time to capture final viewport for thumbnail
-                try {
-                    val finalMetadata =
-                        binding.canvasView.getCanvasData().copy(
-                            toolbarItems = viewModel.toolbarItems.value,
-                        )
-                    session.updateMetadata(finalMetadata)
-                } catch (e: Exception) {
-                    Logger.e("CanvasActivity", "Failed to capture final metadata on exit", e)
-                }
+            lifecycleScope.launch {
+                val session = currentSessionRef.getAndSet(null)
+                val path = currentCanvasPath
+                if (session != null && path != null && !session.isClosed()) {
+                    // Update metadata from UI one last time to capture final viewport for thumbnail
+                    try {
+                        val finalMetadata =
+                            binding.canvasView.getCanvasData().copy(
+                                toolbarItems = viewModel.toolbarItems.value,
+                            )
+                        session.updateMetadata(finalMetadata)
+                    } catch (e: Exception) {
+                        Logger.e("CanvasActivity", "Failed to capture final metadata on exit", e)
+                    }
 
-                // Launch background save and close on Process Scope to survive Activity destruction
-                ProcessLifecycleOwner.get().lifecycleScope.launch {
-                    canvasRepository.saveAndCloseSession(path, session)
+                    // Launch background save and close on Process Scope to survive Activity destruction
+                    ProcessLifecycleOwner.get().lifecycleScope.launch {
+                        canvasRepository.saveAndCloseSession(path, session)
+                    }
                 }
+                // Close UI immediately
+                finish()
             }
-            // Close UI immediately
-            finish()
         }
 
         // Initialize State Holder

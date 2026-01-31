@@ -262,7 +262,7 @@ class RegionManager(
             regionCache.get(id)?.let { return it }
         }
         val deferred =
-            loadingJobs.getOrPut(id) {
+            loadingJobs.computeIfAbsent(id) {
                 scope.async(Dispatchers.IO) { loadRegionFromDisk(id) }
             }
         return deferred.await()
