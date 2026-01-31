@@ -9,13 +9,26 @@ import com.alexdremov.notate.model.PenTool
 import com.alexdremov.notate.model.ToolType
 import com.alexdremov.notate.model.ToolbarItem
 import com.alexdremov.notate.util.Logger
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 
 class DrawingViewModel(
     application: Application,
 ) : AndroidViewModel(application) {
+    // Session State
+    private val canvasRepository =
+        com.alexdremov.notate.data
+            .CanvasRepository(application)
+    private val _currentSession = MutableStateFlow<com.alexdremov.notate.data.CanvasSession?>(null)
+    val currentSession: StateFlow<com.alexdremov.notate.data.CanvasSession?> = _currentSession.asStateFlow()
+
+    // Mutex protects session transitions and ensures saving happens safely
+    private val sessionMutex = kotlinx.coroutines.sync.Mutex()
+
     // New Toolbar State
     private val _toolbarItems = MutableStateFlow<List<ToolbarItem>>(emptyList())
     val toolbarItems: StateFlow<List<ToolbarItem>> = _toolbarItems.asStateFlow()
@@ -62,6 +75,113 @@ class DrawingViewModel(
         loadTools()
         _isCollapsibleToolbar.value = PreferencesManager.isCollapsibleToolbarEnabled(getApplication())
         _toolbarCollapseTimeout.value = PreferencesManager.getToolbarCollapseTimeout(getApplication())
+    }
+
+    suspend fun loadCanvasSession(path: String) {
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            sessionMutex.withLock {
+                // Safely close existing session
+                val oldSession = _currentSession.value
+                if (oldSession != null) {
+                    canvasRepository.releaseCanvasSession(oldSession)
+                    _currentSession.value = null
+                }
+
+                try {
+                    val session = canvasRepository.openCanvasSession(path)
+                    if (session != null) {
+                        _currentSession.value = session
+                        // Initialize toolbar from session metadata if available
+                        if (session.metadata.toolbarItems.isNotEmpty()) {
+                            _toolbarItems.value = session.metadata.toolbarItems
+                            saveToolbar()
+                        }
+                    } else {
+                        Logger.e("DrawingViewModel", "Failed to load session for $path", showToUser = true)
+                    }
+                } catch (e: Exception) {
+                    Logger.e("DrawingViewModel", "Exception loading session: $path", e, showToUser = true)
+                }
+            }
+        }
+    }
+
+    suspend fun saveCanvasSession(
+        path: String,
+        metadata: com.alexdremov.notate.data.CanvasData,
+        commit: Boolean,
+    ) {
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            sessionMutex.withLock {
+                val session =
+                    _currentSession.value ?: run {
+                        Logger.w("DrawingViewModel", "Skipping save: no active session")
+                        return@withLock
+                    }
+
+                if (session.isClosed()) {
+                    Logger.w("DrawingViewModel", "Skipping save: session is closed")
+                    return@withLock
+                }
+
+                try {
+                    // Update session with latest UI metadata before saving
+                    session.updateMetadata(metadata)
+
+                    val result = canvasRepository.saveCanvasSession(path, session, commitToZip = commit)
+                    // Update origin timestamps in-place
+                    session.updateOrigin(result.newLastModified, result.newSize)
+
+                    if (commit) {
+                        Logger.i("DrawingViewModel", "Full Save complete: ${result.savedPath}")
+                    }
+                } catch (e: Exception) {
+                    Logger.e("DrawingViewModel", "Failed to save canvas", e, showToUser = true)
+                }
+            }
+        }
+    }
+
+    suspend fun closeSession(
+        path: String,
+        finalMetadata: com.alexdremov.notate.data.CanvasData?,
+    ) {
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            sessionMutex.withLock {
+                val session = _currentSession.value ?: return@withLock
+                _currentSession.value = null // Detach immediately
+
+                if (finalMetadata != null) {
+                    session.updateMetadata(finalMetadata)
+                }
+
+                try {
+                    canvasRepository.saveAndCloseSession(path, session)
+                } catch (e: Exception) {
+                    Logger.e("DrawingViewModel", "Failed to close session properly", e)
+                    // Fallback release if saveAndClose fails (though it handles its own errors)
+                    canvasRepository.releaseCanvasSession(session)
+                }
+            }
+        }
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        // Final safety cleanup
+        val session = _currentSession.value
+        if (session != null) {
+            val repo = canvasRepository
+            // Launch on a scope that survives ViewModel clearing (e.g. ProcessLifecycleOwner or GlobalScope,
+            // but we don't have easy access here. Best effort is to use the repo directly if possible
+            // but `onCleared` is synchronous.
+            // Given saveAndCloseSession is handled by Activity's onDestroy/BackPress, this is just a backup for abrupt cleanup.)
+
+            // Note: We can't launch coroutines easily here.
+            // Ideally, Activity handles the lifecycle-bound close.
+            // This is just a pointer cleanup.
+            _currentSession.value = null
+        }
     }
 
     private fun loadTools() {
