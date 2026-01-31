@@ -31,6 +31,7 @@ class InfiniteCanvasModelTest {
         
         // Mock getContentBounds to return empty initially
         every { regionManager.getContentBounds() } returns RectF()
+        every { regionManager.regionSize } returns 1000f
         
         // Explicitly mock void suspend functions to ensure stability
         coEvery { regionManager.addItem(any()) } just Runs
@@ -173,5 +174,47 @@ class InfiniteCanvasModelTest {
         model.erase(eraserStroke, EraserType.LASSO)
         
         coVerify { regionManager.removeItems(any()) }
+    }
+    
+    @Test
+    fun `deleteItems should remove items via regionManager`() = runTest {
+        model.initializeSession(regionManager)
+        val stroke = createTestStroke(order = 100)
+        
+        model.deleteItems(listOf(stroke))
+        
+        coVerify { regionManager.removeItems(match { it.size == 1 && it[0] == stroke }) }
+        
+        // Test Undo
+        model.undo()
+        coVerify { regionManager.addItem(any()) }
+    }
+    
+    @Test
+    fun `replaceItems should remove old and add new items`() = runTest {
+        model.initializeSession(regionManager)
+        val oldStroke = createTestStroke(order = 100)
+        val newStroke = createTestStroke(order = 101)
+        
+        model.replaceItems(listOf(oldStroke), listOf(newStroke))
+        
+        coVerify { regionManager.removeItems(match { it.size == 1 && it[0] == oldStroke }) }
+        coVerify { regionManager.addItem(any()) }
+        
+        // Undo
+        model.undo()
+        // Should add old back
+        coVerify(exactly = 2) { regionManager.addItem(any()) } // 1 for replace call, 1 for undo (adding old back)
+    }
+    
+    @Test
+    fun `toCanvasData should return serialized data`() = runTest {
+        model.initializeSession(regionManager)
+        model.addItem(createTestStroke())
+        
+        val data = model.toCanvasData()
+        
+        assertThat(data).isNotNull()
+        assertThat(data.regionSize).isEqualTo(1000f)
     }
 }
