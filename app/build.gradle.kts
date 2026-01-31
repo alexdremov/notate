@@ -178,6 +178,7 @@ dependencies {
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.9.0")
     testImplementation("androidx.work:work-testing:2.10.0")
+    testImplementation("androidx.test:core-ktx:1.6.1")
 
     // Security & Networking
     implementation("androidx.security:security-crypto:1.1.0")

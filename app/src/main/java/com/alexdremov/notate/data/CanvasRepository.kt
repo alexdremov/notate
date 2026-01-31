@@ -397,7 +397,7 @@ class CanvasRepository(
     suspend fun saveAndCloseSession(
         path: String,
         session: CanvasSession,
-    ) = withContext(Dispatchers.IO) {
+    ): Unit = withContext(Dispatchers.IO) {
         sessionLock.withLock {
             val lastClient = session.release()
             if (lastClient) {
@@ -444,6 +444,7 @@ class CanvasRepository(
             } else {
                 Logger.i("CanvasRepository", "saveAndCloseSession: Session retained by other clients, performing standard save.")
                 saveCanvasSession(path, session, commitToZip = true)
+                Unit
             }
         }
     }
