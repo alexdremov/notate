@@ -18,7 +18,9 @@ import kotlinx.coroutines.withContext
 
 class DrawingViewModel(
     application: Application,
-    private val canvasRepository: com.alexdremov.notate.data.CanvasRepository = com.alexdremov.notate.data.CanvasRepository(application),
+    private val canvasRepository: com.alexdremov.notate.data.CanvasRepository =
+        com.alexdremov.notate.data
+            .CanvasRepository(application),
 ) : AndroidViewModel(application) {
     // Session State
     private val _currentSession = MutableStateFlow<com.alexdremov.notate.data.CanvasSession?>(null)
