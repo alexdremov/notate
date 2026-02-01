@@ -60,40 +60,43 @@ class CanvasControllerImplTest {
     }
 
     @Test
-    fun `commitStroke adds stroke to model and updates renderer`() = runTest {
-        val stroke = createTestStroke(1L, RectF(0f, 0f, 10f, 10f))
-        coEvery { model.addStroke(any()) } returns stroke
-        
-        controller.commitStroke(stroke)
-        testDispatcher.scheduler.advanceUntilIdle()
-        
-        coVerify { model.addStroke(stroke) }
-        coVerify { renderer.updateTilesWithStroke(stroke) }
-    }
+    fun `commitStroke adds stroke to model and updates renderer`() =
+        runTest {
+            val stroke = createTestStroke(1L, RectF(0f, 0f, 10f, 10f))
+            coEvery { model.addStroke(any()) } returns stroke
+
+            controller.commitStroke(stroke)
+            testDispatcher.scheduler.advanceUntilIdle()
+
+            coVerify { model.addStroke(stroke) }
+            coVerify { renderer.updateTilesWithStroke(stroke) }
+        }
 
     @Test
-    fun `previewEraser with standard type updates renderer with erasure`() = runTest {
-        val stroke = createTestStroke(1L, RectF(0f, 0f, 10f, 10f))
-        
-        controller.previewEraser(stroke, EraserType.STANDARD)
-        testDispatcher.scheduler.advanceUntilIdle()
-        
-        coVerify { model.erase(stroke, EraserType.STANDARD) }
-        coVerify { renderer.updateTilesWithErasure(stroke) }
-    }
+    fun `previewEraser with standard type updates renderer with erasure`() =
+        runTest {
+            val stroke = createTestStroke(1L, RectF(0f, 0f, 10f, 10f))
+
+            controller.previewEraser(stroke, EraserType.STANDARD)
+            testDispatcher.scheduler.advanceUntilIdle()
+
+            coVerify { model.erase(stroke, EraserType.STANDARD) }
+            coVerify { renderer.updateTilesWithErasure(stroke) }
+        }
 
     @Test
-    fun `deleteSelection removes items from model and invalidates renderer`() = runTest {
-        val stroke = createTestStroke(1L, RectF(0f, 0f, 10f, 10f))
-        controller.selectItem(stroke)
-        
-        controller.deleteSelection()
-        testDispatcher.scheduler.advanceUntilIdle()
-        
-        coVerify { model.deleteItemsByIds(any(), setOf(1L), any()) }
-        coVerify { renderer.invalidateTiles(any()) }
-        coVerify { renderer.setHiddenItems(emptySet()) }
-    }
+    fun `deleteSelection removes items from model and invalidates renderer`() =
+        runTest {
+            val stroke = createTestStroke(1L, RectF(0f, 0f, 10f, 10f))
+            controller.selectItem(stroke)
+
+            controller.deleteSelection()
+            testDispatcher.scheduler.advanceUntilIdle()
+
+            coVerify { model.deleteItemsByIds(any(), setOf(1L), any()) }
+            coVerify { renderer.invalidateTiles(any()) }
+            coVerify { renderer.setHiddenItems(emptySet()) }
+        }
 
     @Test
     fun `commitMoveSelection triggers large selection path when many items selected`() =
@@ -141,15 +144,17 @@ class CanvasControllerImplTest {
             coVerify { renderer.invalidateTiles(expectedNewBounds) }
         }
 
-    private fun createTestStroke(order: Long, bounds: RectF): Stroke {
-        return Stroke(
+    private fun createTestStroke(
+        order: Long,
+        bounds: RectF,
+    ): Stroke =
+        Stroke(
             path = Path(),
             points = emptyList(),
             color = 0,
             width = 2f,
             style = StrokeType.FINELINER,
             bounds = bounds,
-            strokeOrder = order
+            strokeOrder = order,
         )
-    }
 }

@@ -36,9 +36,10 @@ class DrawingViewModelTest {
 
         // PreferencesManager is an object, use mockkObject
         mockkObject(PreferencesManager)
-        every { PreferencesManager.getToolbarItems(any()) } returns listOf(
-            ToolbarItem.Pen(PenTool("p1", "Pen", ToolType.PEN))
-        )
+        every { PreferencesManager.getToolbarItems(any()) } returns
+            listOf(
+                ToolbarItem.Pen(PenTool("p1", "Pen", ToolType.PEN)),
+            )
         every { PreferencesManager.isCollapsibleToolbarEnabled(any()) } returns false
         every { PreferencesManager.getToolbarCollapseTimeout(any()) } returns 3000L
         every { PreferencesManager.saveToolbarItems(any(), any()) } just Runs
@@ -70,41 +71,45 @@ class DrawingViewModelTest {
         }
 
     @Test
-    fun `selectTool updates activeTool flow`() = runTest {
-        val penTool = PenTool("p1", "Pen", ToolType.PEN)
-        viewModel.selectTool("p1")
-        assert(viewModel.activeTool.value.id == "p1")
-        assert(viewModel.activeToolId.value == "p1")
-    }
+    fun `selectTool updates activeTool flow`() =
+        runTest {
+            val penTool = PenTool("p1", "Pen", ToolType.PEN)
+            viewModel.selectTool("p1")
+            assert(viewModel.activeTool.value.id == "p1")
+            assert(viewModel.activeToolId.value == "p1")
+        }
 
     @Test
-    fun `updateTool modifies existing tool in toolbarItems`() = runTest {
-        val updatedTool = PenTool("p1", "Updated Pen", ToolType.PEN, color = Color.RED)
-        viewModel.updateTool(updatedTool)
-        
-        val item = viewModel.toolbarItems.value.find { it.id == "p1" } as ToolbarItem.Pen
-        assert(item.penTool.name == "Updated Pen")
-        assert(item.penTool.color == Color.RED)
-    }
+    fun `updateTool modifies existing tool in toolbarItems`() =
+        runTest {
+            val updatedTool = PenTool("p1", "Updated Pen", ToolType.PEN, color = Color.RED)
+            viewModel.updateTool(updatedTool)
+
+            val item = viewModel.toolbarItems.value.find { it.id == "p1" } as ToolbarItem.Pen
+            assert(item.penTool.name == "Updated Pen")
+            assert(item.penTool.color == Color.RED)
+        }
 
     @Test
-    fun `removeToolbarItem updates flow and persists`() = runTest {
-        val item = viewModel.toolbarItems.value[0]
-        viewModel.removeToolbarItem(item)
-        
-        assert(!viewModel.toolbarItems.value.contains(item))
-        verify { PreferencesManager.saveToolbarItems(any(), any()) }
-    }
+    fun `removeToolbarItem updates flow and persists`() =
+        runTest {
+            val item = viewModel.toolbarItems.value[0]
+            viewModel.removeToolbarItem(item)
+
+            assert(!viewModel.toolbarItems.value.contains(item))
+            verify { PreferencesManager.saveToolbarItems(any(), any()) }
+        }
 
     @Test
-    fun `addToolbarItem avoids duplicates for non-pen items`() = runTest {
-        val action = ToolbarItem.Action(com.alexdremov.notate.model.ActionType.UNDO)
-        viewModel.addToolbarItem(action)
-        val initialSize = viewModel.toolbarItems.value.size
-        
-        viewModel.addToolbarItem(action)
-        assert(viewModel.toolbarItems.value.size == initialSize)
-    }
+    fun `addToolbarItem avoids duplicates for non-pen items`() =
+        runTest {
+            val action = ToolbarItem.Action(com.alexdremov.notate.model.ActionType.UNDO)
+            viewModel.addToolbarItem(action)
+            val initialSize = viewModel.toolbarItems.value.size
+
+            viewModel.addToolbarItem(action)
+            assert(viewModel.toolbarItems.value.size == initialSize)
+        }
 
     @Test
     fun `setEditMode should update isEditMode flow and drawing state`() =
