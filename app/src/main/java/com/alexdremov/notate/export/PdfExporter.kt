@@ -356,26 +356,39 @@ object PdfExporter {
                 val startY = floor((rect.top - offsetY) / spacing) * spacing + offsetY
                 var x = startX
                 var dotCount = 0
-                while (x < rect.right + spacing) {
-                    var y = startY
-                    while (y < rect.bottom + spacing) {
-                        if (x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom) {
-                            stream.moveTo(x + radius, y)
-                            stream.curveTo(x + radius, y + cd, x + cd, y + radius, x, y + radius)
-                            stream.curveTo(x - cd, y + radius, x - radius, y + cd, x - radius, y)
-                            stream.curveTo(x - radius, y - cd, x - cd, y - radius, x, y - radius)
-                            stream.curveTo(x + cd, y - radius, x + radius, y - cd, x + radius, y)
-                            dotCount++
-                            if (dotCount >= 500) {
-                                stream.fill()
-                                dotCount = 0
+                try {
+                    while (x < rect.right + spacing) {
+                        var y = startY
+                        while (y < rect.bottom + spacing) {
+                            if (x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom) {
+                                stream.moveTo(x + radius, y)
+                                stream.curveTo(x + radius, y + cd, x + cd, y + radius, x, y + radius)
+                                stream.curveTo(x - cd, y + radius, x - radius, y + cd, x - radius, y)
+                                stream.curveTo(x - radius, y - cd, x - cd, y - radius, x, y - radius)
+                                stream.curveTo(x + cd, y - radius, x + radius, y - cd, x + radius, y)
+                                dotCount++
+                                if (dotCount >= 500) {
+                                    stream.fill()
+                                    dotCount = 0
+                                }
                             }
+                            y += spacing
                         }
-                        y += spacing
+                        x += spacing
                     }
-                    x += spacing
+                    if (dotCount > 0) {
+                        stream.fill()
+                    }
+                } catch (e: Exception) {
+                    if (dotCount > 0) {
+                        try {
+                            stream.fill()
+                        } catch (fillException: Exception) {
+                            // Swallow to avoid masking the original exception
+                        }
+                    }
+                    throw e
                 }
-                if (dotCount > 0) stream.fill()
             }
 
             is BackgroundStyle.Lines -> {
