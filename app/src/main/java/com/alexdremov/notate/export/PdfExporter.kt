@@ -349,6 +349,7 @@ object PdfExporter {
         when (style) {
             is BackgroundStyle.Dots -> {
                 val radius = style.radius
+                // Bezier control point distance for circle approximation: 4*(√2-1)/3 ≈ 0.552
                 val k = 0.551915024494f
                 val cd = radius * k
                 val startX = floor((rect.left - offsetX) / spacing) * spacing + offsetX
