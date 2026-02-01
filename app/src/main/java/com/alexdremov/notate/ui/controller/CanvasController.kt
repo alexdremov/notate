@@ -40,8 +40,6 @@ interface CanvasController {
         type: EraserType,
     )
 
-    fun setStrokeWidth(width: Float)
-
     fun setViewportController(controller: ViewportController)
 
     // --- Page Navigation ---

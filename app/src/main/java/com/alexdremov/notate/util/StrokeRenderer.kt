@@ -249,13 +249,31 @@ object StrokeRenderer {
                 if (forceVector) {
                     when (stroke.style) {
                         StrokeType.FOUNTAIN -> FountainStrategy
-
                         StrokeType.HIGHLIGHTER -> HighlighterStrategy
-
                         StrokeType.DASH -> DashStrategy
-
-                        // Complex types (Ballpoint, Charcoal, Brush) fallback to Simple Path for Vector PDF
                         else -> SimplePathStrategy
+                    }
+                } else if (xfermode == android.graphics.PorterDuff.Mode.CLEAR || xfermode == android.graphics.PorterDuff.Mode.DST_OUT) {
+                    // Erasure Mode: Bypass strategies that use saveLayer (Highlighter) or modulate alpha (Ballpoint)
+                    // to ensure solid erasure of the stroke path.
+                    when (stroke.style) {
+                        StrokeType.HIGHLIGHTER -> {
+                            SimplePathStrategy
+                        }
+
+                        StrokeType.BALLPOINT -> {
+                            SimplePathStrategy
+                        }
+
+                        else -> {
+                            when (stroke.style) {
+                                StrokeType.FOUNTAIN -> FountainStrategy
+                                StrokeType.CHARCOAL -> CharcoalStrategy
+                                StrokeType.BRUSH -> BrushStrategy
+                                StrokeType.DASH -> DashStrategy
+                                else -> SimplePathStrategy
+                            }
+                        }
                     }
                 } else {
                     when (stroke.style) {

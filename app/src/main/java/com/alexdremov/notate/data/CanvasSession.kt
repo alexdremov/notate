@@ -51,6 +51,11 @@ class CanvasSession(
     // Background Initialization Job (e.g. JIT Unzip remainder)
     var initializationJob: kotlinx.coroutines.Job? = null
 
+    // Track if background initialization failed
+    @Volatile
+    var initializationFailed: Boolean = false
+        private set
+
     /**
      * Updates the metadata for this session.
      * Thread-safe.
@@ -61,9 +66,13 @@ class CanvasSession(
 
     /**
      * Waits for any pending initialization (like background unzip) to complete.
+     * Throws IllegalStateException if initialization failed to prevent data loss.
      */
     suspend fun waitForInitialization() {
         initializationJob?.join()
+        if (initializationFailed) {
+            throw IllegalStateException("Cannot save session: Background initialization (unzip) failed. Saving now would cause data loss.")
+        }
     }
 
     /**

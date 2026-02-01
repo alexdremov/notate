@@ -40,16 +40,7 @@ class InfiniteCanvasModel {
     val events: SharedFlow<ModelEvent> = _events.asSharedFlow()
 
     // History Manager
-    private val historyManager =
-        HistoryManager(
-            object : HistoryManager.StrokeExecutor {
-                override fun calculateBounds(action: HistoryAction) = calculateActionBounds(action)
-
-                override fun execute(action: HistoryAction) {}
-
-                override fun revert(action: HistoryAction) {}
-            },
-        )
+    private val historyManager = HistoryManager()
 
     sealed class ModelEvent {
         data class ItemsAdded(

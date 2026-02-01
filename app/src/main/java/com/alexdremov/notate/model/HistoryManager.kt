@@ -1,34 +1,22 @@
 package com.alexdremov.notate.model
 
 import android.graphics.RectF
-import java.util.Stack
+import java.util.ArrayDeque
 
 /**
  * Pure state manager for Undo/Redo stacks.
  * Decoupled from execution logic to allow Suspend/Async execution in the Model.
  */
-class HistoryManager(
-    // Optional callbacks if needed, but we try to keep it pure
-    private val executor: StrokeExecutor? = null,
-) {
+class HistoryManager {
     companion object {
         private const val MAX_HISTORY_SIZE = 100
     }
 
-    private val undoStack = Stack<HistoryAction>()
-    private val redoStack = Stack<HistoryAction>()
+    private val undoStack = ArrayDeque<HistoryAction>()
+    private val redoStack = ArrayDeque<HistoryAction>()
 
     private var isBatching = false
     private val currentBatch = ArrayList<HistoryAction>()
-
-    interface StrokeExecutor {
-        fun calculateBounds(action: HistoryAction): RectF
-
-        // Execute/Revert removed to allow suspend handling in Model
-        fun execute(action: HistoryAction) {}
-
-        fun revert(action: HistoryAction) {}
-    }
 
     fun startBatchSession() {
         isBatching = true
@@ -59,12 +47,6 @@ class HistoryManager(
         }
     }
 
-    // Legacy support if needed, but prefer addToStack
-    fun applyAction(action: HistoryAction) {
-        executor?.execute(action)
-        addToStack(action)
-    }
-
     /**
      * Pops action from Undo stack and pushes to Redo stack.
      * Returns the action for the caller to Revert.
@@ -93,19 +75,6 @@ class HistoryManager(
         return null
     }
 
-    // Legacy methods calling executor if present (for non-suspend paths if any)
-    fun undo(): RectF? {
-        val action = undoActionOnly() ?: return null
-        executor?.revert(action)
-        return executor?.calculateBounds(action)
-    }
-
-    fun redo(): RectF? {
-        val action = redoActionOnly() ?: return null
-        executor?.execute(action)
-        return executor?.calculateBounds(action)
-    }
-
     fun clear() {
         undoStack.clear()
         redoStack.clear()
@@ -113,9 +82,9 @@ class HistoryManager(
         isBatching = false
     }
 
-    private fun limitStackSize(stack: Stack<HistoryAction>) {
+    private fun limitStackSize(stack: ArrayDeque<HistoryAction>) {
         while (stack.size > MAX_HISTORY_SIZE) {
-            stack.removeAt(0)
+            stack.removeLast() // Remove oldest (bottom of stack)
         }
     }
 }

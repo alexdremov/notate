@@ -12,15 +12,28 @@ import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.protobuf.ProtoBuf
 import java.io.File
+import java.io.IOException
+import java.util.UUID
 
 class RegionStorage(
     private val baseDir: File,
     private val zipSource: File? = null,
 ) {
+    companion object {
+        private const val TAG = "RegionStorage"
+        private const val DIR_IMAGES = "images"
+        private const val DIR_THUMBNAILS = "thumbnails"
+        private const val FILE_INDEX = "index.bin"
+        private const val FILE_PREFIX_REGION = "r_"
+        private const val FILE_PREFIX_THUMB = "t_"
+        private const val EXT_BIN = ".bin"
+        private const val EXT_PNG = ".png"
+    }
+
     fun init() {
         if (!baseDir.exists()) {
             if (!baseDir.mkdirs()) {
-                Logger.e("RegionStorage", "Failed to create session directory: $baseDir")
+                Logger.e(TAG, "Failed to create session directory: $baseDir")
             }
         }
     }
@@ -30,9 +43,9 @@ class RegionStorage(
         context: android.content.Context,
     ): String? {
         try {
-            val imagesDir = File(baseDir, "images")
+            val imagesDir = File(baseDir, DIR_IMAGES)
             if (!imagesDir.exists() && !imagesDir.mkdirs()) {
-                Logger.e("RegionStorage", "Failed to create images directory: $imagesDir")
+                Logger.e(TAG, "Failed to create images directory: $imagesDir")
                 return null
             }
 
@@ -46,18 +59,40 @@ class RegionStorage(
                     "img"
                 }
 
-            val fileName = "${java.util.UUID.randomUUID()}.$extension"
+            val fileName = "${UUID.randomUUID()}.$extension"
             val destFile = File(imagesDir, fileName)
 
-            context.contentResolver.openInputStream(uri)?.use { input ->
-                destFile.outputStream().use { output ->
-                    input.copyTo(output)
-                }
-            } ?: return null
+            // Atomic write for image import
+            val parent = destFile.parentFile ?: imagesDir
+            val tmpFile = File(parent, "${destFile.name}.tmp")
 
-            return destFile.absolutePath
+            try {
+                context.contentResolver.openInputStream(uri)?.use { input ->
+                    tmpFile.outputStream().use { output ->
+                        input.copyTo(output)
+                    }
+                } ?: return null
+
+                if (tmpFile.renameTo(destFile)) {
+                    return destFile.absolutePath
+                } else {
+                    // Fallback copy if rename fails (e.g. cross-filesystem)
+                    Logger.w(TAG, "Image atomic rename failed, attempting copy")
+                    tmpFile.inputStream().use { input ->
+                        destFile.outputStream().use { output ->
+                            input.copyTo(output)
+                        }
+                    }
+                    tmpFile.delete()
+                    return destFile.absolutePath
+                }
+            } catch (e: Exception) {
+                Logger.e(TAG, "Failed to write image stream", e)
+                if (tmpFile.exists()) tmpFile.delete()
+                return null
+            }
         } catch (e: Exception) {
-            Logger.e("RegionStorage", "Failed to import image", e)
+            Logger.e(TAG, "Failed to import image", e)
             return null
         }
     }
@@ -92,7 +127,7 @@ class RegionStorage(
             writeAtomic(file, bytes)
             true
         } catch (e: Exception) {
-            Logger.e("RegionStorage", "Failed to save region ${data.id}", e)
+            Logger.e(TAG, "Failed to save region ${data.id}", e)
             false
         }
     }
@@ -108,13 +143,13 @@ class RegionStorage(
             if (com.alexdremov.notate.util.ZipUtils
                     .extractFile(zipSource, entryName, file)
             ) {
-                Logger.d("RegionStorage", "JIT Extracted region $id from ZIP")
+                Logger.d(TAG, "JIT Extracted region $id from ZIP")
             }
         }
 
         if (!file.exists()) {
             // Normal case for new regions, verbose log only
-            Logger.v("RegionStorage", "Region file not found: $id")
+            Logger.v(TAG, "Region file not found: $id")
             return null
         }
 
@@ -149,10 +184,10 @@ class RegionStorage(
                 data.items.add(image)
             }
 
-            Logger.d("RegionStorage", "Loaded region $id (${data.items.size} items)")
+            Logger.d(TAG, "Loaded region $id (${data.items.size} items)")
             data
         } catch (e: Exception) {
-            Logger.e("RegionStorage", "Failed to load region $id (File: ${file.absolutePath}, Size: ${file.length()})", e)
+            Logger.e(TAG, "Failed to load region $id (File: ${file.absolutePath}, Size: ${file.length()})", e)
             null
         }
     }
@@ -161,7 +196,7 @@ class RegionStorage(
         val file = getRegionFile(id)
         if (file.exists()) {
             if (!file.delete()) {
-                Logger.w("RegionStorage", "Failed to delete region file: $file")
+                Logger.w(TAG, "Failed to delete region file: $file")
             }
         }
     }
@@ -169,7 +204,7 @@ class RegionStorage(
     fun listStoredRegions(): List<RegionId> {
         val ids = ArrayList<RegionId>()
         val files = baseDir.listFiles() ?: return ids
-        val regex = Regex("^r_(-?\\d+)_(-?\\d+)\\.bin$")
+        val regex = Regex("^${FILE_PREFIX_REGION}(-?\\d+)_(-?\\d+)${Regex.escape(EXT_BIN)}$")
 
         for (file in files) {
             val match = regex.find(file.name)
@@ -186,12 +221,12 @@ class RegionStorage(
         return ids
     }
 
-    private fun getRegionFile(id: RegionId): File = File(baseDir, "r_${id.x}_${id.y}.bin")
+    private fun getRegionFile(id: RegionId): File = File(baseDir, "${FILE_PREFIX_REGION}${id.x}_${id.y}$EXT_BIN")
 
     private fun getThumbnailFile(id: RegionId): File {
-        val thumbDir = File(baseDir, "thumbnails")
+        val thumbDir = File(baseDir, DIR_THUMBNAILS)
         if (!thumbDir.exists()) thumbDir.mkdirs()
-        return File(thumbDir, "t_${id.x}_${id.y}.png")
+        return File(thumbDir, "${FILE_PREFIX_THUMB}${id.x}_${id.y}$EXT_PNG")
     }
 
     fun saveThumbnail(
@@ -205,7 +240,7 @@ class RegionStorage(
             }
             true
         } catch (e: Exception) {
-            Logger.e("RegionStorage", "Failed to save thumbnail for region $id", e)
+            Logger.e(TAG, "Failed to save thumbnail for region $id", e)
             false
         }
 
@@ -215,7 +250,7 @@ class RegionStorage(
         return try {
             android.graphics.BitmapFactory.decodeFile(file.absolutePath)
         } catch (e: Exception) {
-            Logger.e("RegionStorage", "Failed to load thumbnail for region $id", e)
+            Logger.e(TAG, "Failed to load thumbnail for region $id", e)
             null
         }
     }
@@ -224,7 +259,7 @@ class RegionStorage(
         val file = getThumbnailFile(id)
         if (file.exists()) {
             if (!file.delete()) {
-                Logger.w("RegionStorage", "Failed to delete thumbnail file: $file")
+                Logger.w(TAG, "Failed to delete thumbnail file: $file")
             }
         }
     }
@@ -235,33 +270,33 @@ class RegionStorage(
             index.map { (id, rect) ->
                 RegionBoundsProto(id.x, id.y, rect.left, rect.top, rect.right, rect.bottom)
             }
-        val file = File(baseDir, "index.bin")
+        val file = File(baseDir, FILE_INDEX)
         return try {
             val bytes = ProtoBuf.encodeToByteArray(ListSerializer(RegionBoundsProto.serializer()), list)
             writeAtomic(file, bytes)
-            Logger.d("RegionStorage", "Saved index (${index.size} regions)")
+            Logger.d(TAG, "Saved index (${index.size} regions)")
             true
         } catch (e: Exception) {
-            Logger.e("RegionStorage", "Failed to save index", e)
+            Logger.e(TAG, "Failed to save index", e)
             false
         }
     }
 
     @OptIn(ExperimentalSerializationApi::class)
     fun loadIndex(): Map<RegionId, RectF> {
-        val file = File(baseDir, "index.bin")
+        val file = File(baseDir, FILE_INDEX)
 
         // JIT Extraction for Index
         if (!file.exists() && zipSource != null && zipSource.exists()) {
             if (com.alexdremov.notate.util.ZipUtils
-                    .extractFile(zipSource, "index.bin", file)
+                    .extractFile(zipSource, FILE_INDEX, file)
             ) {
-                Logger.i("RegionStorage", "JIT Extracted index.bin from ZIP")
+                Logger.i(TAG, "JIT Extracted $FILE_INDEX from ZIP")
             }
         }
 
         if (!file.exists()) {
-            Logger.i("RegionStorage", "No index found (Fresh session)")
+            Logger.i(TAG, "No index found (Fresh session)")
             return emptyMap()
         }
 
@@ -272,10 +307,10 @@ class RegionStorage(
                 list.associate { proto ->
                     RegionId(proto.idX, proto.idY) to RectF(proto.left, proto.top, proto.right, proto.bottom)
                 }
-            Logger.d("RegionStorage", "Loaded index (${map.size} regions)")
+            Logger.d(TAG, "Loaded index (${map.size} regions)")
             map
         } catch (e: Exception) {
-            Logger.e("RegionStorage", "Failed to load index", e)
+            Logger.e(TAG, "Failed to load index", e)
             emptyMap()
         }
     }
@@ -287,9 +322,9 @@ class RegionStorage(
         val parent = file.parentFile
         if (parent != null && !parent.exists()) {
             if (!parent.mkdirs()) {
-                Logger.e("RegionStorage", "Atomic write: Failed to recreate directory $parent")
+                Logger.e(TAG, "Atomic write: Failed to recreate directory $parent")
             } else {
-                Logger.i("RegionStorage", "Atomic write: Recreated directory $parent")
+                Logger.i(TAG, "Atomic write: Recreated directory $parent")
             }
         }
 
@@ -299,17 +334,17 @@ class RegionStorage(
 
             // Verify temp file was written correctly
             if (!tmpFile.exists() || tmpFile.length() != bytes.size.toLong()) {
-                throw java.io.IOException("Temp file verification failed: expected ${bytes.size} bytes, got ${tmpFile.length()}")
+                throw IOException("Temp file verification failed: expected ${bytes.size} bytes, got ${tmpFile.length()}")
             }
 
             if (file.exists()) {
                 if (!file.delete()) {
                     // Delete failed - try overwriting instead
-                    Logger.w("RegionStorage", "Atomic write: Failed to delete existing target $file, attempting overwrite")
+                    Logger.w(TAG, "Atomic write: Failed to delete existing target $file, attempting overwrite")
                     file.writeBytes(bytes)
                     // Verify the overwrite
                     if (file.length() != bytes.size.toLong()) {
-                        throw java.io.IOException("Overwrite verification failed")
+                        throw IOException("Overwrite verification failed")
                     }
                     tmpFile.delete()
                     return
@@ -317,7 +352,7 @@ class RegionStorage(
             }
             if (!tmpFile.renameTo(file)) {
                 // Rename failed - try copy instead
-                Logger.w("RegionStorage", "Atomic write: Failed to rename temp file to $file, attempting copy")
+                Logger.w(TAG, "Atomic write: Failed to rename temp file to $file, attempting copy")
                 tmpFile.inputStream().use { input ->
                     file.outputStream().use { output ->
                         input.copyTo(output)
@@ -325,12 +360,12 @@ class RegionStorage(
                 }
                 // Verify the copy
                 if (file.length() != bytes.size.toLong()) {
-                    throw java.io.IOException("Copy verification failed")
+                    throw IOException("Copy verification failed")
                 }
                 tmpFile.delete()
             }
         } catch (e: Exception) {
-            Logger.e("RegionStorage", "Atomic write failed for $file", e)
+            Logger.e(TAG, "Atomic write failed for $file", e)
             if (tmpFile.exists()) tmpFile.delete()
             throw e
         }

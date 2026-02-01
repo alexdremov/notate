@@ -262,7 +262,7 @@ class RegionManager(
             regionCache.get(id)?.let { return it }
         }
         val deferred =
-            loadingJobs.getOrPut(id) {
+            loadingJobs.computeIfAbsent(id) {
                 scope.async(Dispatchers.IO) { loadRegionFromDisk(id) }
             }
         return deferred.await()
@@ -447,8 +447,11 @@ class RegionManager(
             regionCache.remove(id)
             resizingId = null
             region.items.add(item)
-            if (region.quadtree == null) region.rebuildQuadtree(regionSize)
-            region.quadtree = region.quadtree?.insert(item)
+            if (region.quadtree == null) {
+                region.rebuildQuadtree(regionSize)
+            } else {
+                region.quadtree = region.quadtree?.insert(item)
+            }
             if (region.contentBounds.isEmpty) {
                 region.contentBounds.set(item.bounds)
             } else {
@@ -703,11 +706,17 @@ class RegionManager(
                 regionCache.remove(id)
                 resizingId = null
 
-                region.items.addAll(regionItems)
-                if (region.quadtree == null) region.rebuildQuadtree(regionSize)
+                if (region.quadtree == null) {
+                    region.items.addAll(regionItems)
+                    region.rebuildQuadtree(regionSize)
+                } else {
+                    region.items.addAll(regionItems)
+                    for (item in regionItems) {
+                        region.quadtree = region.quadtree?.insert(item)
+                    }
+                }
 
                 for (item in regionItems) {
-                    region.quadtree = region.quadtree?.insert(item)
                     if (region.contentBounds.isEmpty) {
                         region.contentBounds.set(item.bounds)
                     } else {
