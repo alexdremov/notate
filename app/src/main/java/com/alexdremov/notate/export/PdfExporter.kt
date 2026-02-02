@@ -376,9 +376,7 @@ object PdfExporter {
                         }
                         x += spacing
                     }
-                    if (dotCount > 0) {
-                        stream.fill()
-                    }
+                    if (dotCount > 0) stream.fill()
                 } catch (e: Exception) {
                     if (dotCount > 0) {
                         try {

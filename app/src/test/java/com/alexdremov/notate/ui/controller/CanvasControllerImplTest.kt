@@ -102,7 +102,7 @@ class CanvasControllerImplTest {
     fun `commitMoveSelection triggers large selection path when many items selected`() =
         runTest {
             // Arrange
-            val largeCount = 130
+            val largeCount = 700
             val items =
                 (0 until largeCount).map { i ->
                     Stroke(

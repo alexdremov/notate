@@ -584,7 +584,7 @@ class CanvasControllerImpl(
 
             // Large Selection Strategy: Disk Stash
             // Prevents OOM by streaming items to disk instead of holding them all in a List<CanvasItem>.
-            if (ids.size > 128) {
+            if (ids.size > LARGE_SELECTION_THRESHOLD) {
                 commitLargeSelectionMove(ids, originalBounds, transform, shouldReselect)
             } else {
                 commitStandardSelectionMove(ids, transform, shouldReselect)

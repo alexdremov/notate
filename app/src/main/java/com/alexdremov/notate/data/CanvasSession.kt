@@ -56,6 +56,10 @@ class CanvasSession(
     var initializationFailed: Boolean = false
         private set
 
+    internal fun markInitializationFailed() {
+        initializationFailed = true
+    }
+
     /**
      * Updates the metadata for this session.
      * Thread-safe.
