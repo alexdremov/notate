@@ -139,6 +139,7 @@ class PenSettingsPopup(
         binding.rgEraserTypes.visibility = View.VISIBLE
         binding.divider2.visibility = View.GONE
         binding.tvColorLabel.visibility = View.GONE
+        binding.tvColorName.visibility = View.GONE
         binding.recyclerColors.visibility = View.GONE
         binding.btnRemove.visibility = View.GONE
         binding.layoutWidthLabels.visibility = View.GONE
@@ -173,6 +174,7 @@ class PenSettingsPopup(
         binding.rgEraserTypes.visibility = View.VISIBLE
         binding.divider2.visibility = View.GONE
         binding.tvColorLabel.visibility = View.GONE
+        binding.tvColorName.visibility = View.GONE
         binding.recyclerColors.visibility = View.GONE
         binding.btnRemove.visibility = View.GONE
 
@@ -215,6 +217,7 @@ class PenSettingsPopup(
         binding.sliderWidth.visibility = View.VISIBLE
         binding.divider2.visibility = View.VISIBLE
         binding.tvColorLabel.visibility = View.VISIBLE
+        binding.tvColorName.visibility = View.VISIBLE
         binding.recyclerColors.visibility = View.VISIBLE
         binding.btnRemove.visibility = View.VISIBLE
 

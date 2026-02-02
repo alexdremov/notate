@@ -657,8 +657,10 @@ class TileManager(
     }
 
     private fun launchJob(pJob: PendingJob) {
+        // Use LAZY start to prevent the job from finishing (and triggering completion)
+        // before we've had a chance to put it in the generationJobs map.
         val job =
-            scope.launch(dispatcher) {
+            scope.launch(dispatcher, start = kotlinx.coroutines.CoroutineStart.LAZY) {
                 try {
                     Logger.v("TileManager", "Job Start: ${pJob.key}")
                     // Task Cancellation Checks
@@ -694,6 +696,10 @@ class TileManager(
                 }
             }
 
+        // 1. Put in map FIRST
+        generationJobs[pJob.key] = job
+
+        // 2. Register completion
         job.invokeOnCompletion {
             val wasRemoved = generationJobs.remove(pJob.key, job)
             if (wasRemoved) {
@@ -704,7 +710,8 @@ class TileManager(
             scheduleJobs()
         }
 
-        generationJobs[pJob.key] = job
+        // 3. Start execution
+        job.start()
     }
 
     private suspend fun generateTileBitmap(

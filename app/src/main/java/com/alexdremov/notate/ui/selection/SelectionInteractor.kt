@@ -179,6 +179,10 @@ class SelectionInteractor(
         // Increased threshold to 40f to accommodate finger jitter
         val wasBodyTap = activeHandle == HandleType.BODY && dragDistanceAccumulator < 40f && !isTransformingMultiTouch
 
+        isDragging = false
+        isTransformingMultiTouch = false
+        activeHandle = HandleType.NONE
+
         if (wasInteracting) {
             EpdFastModeController.exitFastMode()
 
@@ -200,10 +204,6 @@ class SelectionInteractor(
                 view.showActionPopup()
             }
         }
-
-        isDragging = false
-        isTransformingMultiTouch = false
-        activeHandle = HandleType.NONE
     }
 
     private fun handleSingleTouchDrag(
