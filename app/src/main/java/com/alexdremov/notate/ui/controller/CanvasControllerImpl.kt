@@ -119,8 +119,13 @@ class CanvasControllerImpl(
         stroke: Stroke,
         type: EraserType,
     ) {
-        model.erase(stroke, type)
+        val invalidated = model.erase(stroke, type)
         withContext(Dispatchers.Main) {
+            if (type == EraserType.STANDARD) {
+                renderer.updateTilesWithErasure(stroke)
+            } else if (invalidated != null) {
+                renderer.refreshTiles(invalidated)
+            }
             onContentChangedListener?.invoke()
         }
     }

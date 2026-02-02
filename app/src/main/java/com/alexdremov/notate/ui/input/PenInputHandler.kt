@@ -484,20 +484,23 @@ class PenInputHandler(
         var hasPoints = false
 
         synchronized(strokeBuilder) {
-            if (!dwellDetector.isShapeRecognized && touchPoint.timestamp > lastProcessedTimestamp) {
-                strokeBuilder.addPoint(endPoint)
-                lastProcessedTimestamp = touchPoint.timestamp
-            }
-
-            hasPoints = strokeBuilder.hasPoints()
-            if (hasPoints) {
-                if (isEraser) {
-                    builtEraserStroke = strokeBuilder.build(android.graphics.Color.BLACK, toolSnapshot.width, StrokeType.FINELINER)
-                } else {
-                    builtOriginalStroke = strokeBuilder.build(toolSnapshot.color, toolSnapshot.width, toolSnapshot.strokeType)
+            try {
+                if (!dwellDetector.isShapeRecognized && touchPoint.timestamp > lastProcessedTimestamp) {
+                    strokeBuilder.addPoint(endPoint)
+                    lastProcessedTimestamp = touchPoint.timestamp
                 }
+
+                hasPoints = strokeBuilder.hasPoints()
+                if (hasPoints) {
+                    if (isEraser) {
+                        builtEraserStroke = strokeBuilder.build(android.graphics.Color.BLACK, toolSnapshot.width, StrokeType.FINELINER)
+                    } else {
+                        builtOriginalStroke = strokeBuilder.build(toolSnapshot.color, toolSnapshot.width, toolSnapshot.strokeType)
+                    }
+                }
+            } finally {
+                strokeBuilder.clear()
             }
-            strokeBuilder.clear()
         }
 
         scope.launch {

@@ -242,54 +242,57 @@ object PdfExporter {
                                         android.graphics.BitmapFactory.decodeFile(path)
                                     }
                                 if (bitmap != null) {
-                                    val pdImage =
-                                        if (bitmap.hasAlpha()) {
-                                            LosslessFactory.createFromImage(document, bitmap)
+                                    try {
+                                        val pdImage =
+                                            if (bitmap.hasAlpha()) {
+                                                LosslessFactory.createFromImage(document, bitmap)
+                                            } else {
+                                                JPEGFactory.createFromImage(document, bitmap, 0.9f)
+                                            }
+                                        contentStream.saveGraphicsState()
+                                        if (item.rotation != 0f) {
+                                            contentStream.transform(
+                                                com.tom_roush.pdfbox.util.Matrix.getTranslateInstance(
+                                                    item.bounds.centerX(),
+                                                    item.bounds.centerY(),
+                                                ),
+                                            )
+                                            contentStream.transform(
+                                                com.tom_roush.pdfbox.util.Matrix.getRotateInstance(
+                                                    Math.toRadians(item.rotation.toDouble()),
+                                                    0f,
+                                                    0f,
+                                                ),
+                                            )
+                                            contentStream.transform(
+                                                com.tom_roush.pdfbox.util.Matrix
+                                                    .getScaleInstance(1f, -1f),
+                                            )
+                                            contentStream.transform(
+                                                com.tom_roush.pdfbox.util.Matrix.getTranslateInstance(
+                                                    -item.bounds.width() / 2,
+                                                    -item.bounds.height() / 2,
+                                                ),
+                                            )
                                         } else {
-                                            JPEGFactory.createFromImage(document, bitmap, 0.9f)
+                                            contentStream.transform(
+                                                com.tom_roush.pdfbox.util.Matrix
+                                                    .getTranslateInstance(item.bounds.left, item.bounds.top),
+                                            )
+                                            contentStream.transform(
+                                                com.tom_roush.pdfbox.util.Matrix
+                                                    .getScaleInstance(1f, -1f),
+                                            )
+                                            contentStream.transform(
+                                                com.tom_roush.pdfbox.util.Matrix
+                                                    .getTranslateInstance(0f, -item.bounds.height()),
+                                            )
                                         }
-                                    contentStream.saveGraphicsState()
-                                    if (item.rotation != 0f) {
-                                        contentStream.transform(
-                                            com.tom_roush.pdfbox.util.Matrix.getTranslateInstance(
-                                                item.bounds.centerX(),
-                                                item.bounds.centerY(),
-                                            ),
-                                        )
-                                        contentStream.transform(
-                                            com.tom_roush.pdfbox.util.Matrix.getRotateInstance(
-                                                Math.toRadians(item.rotation.toDouble()),
-                                                0f,
-                                                0f,
-                                            ),
-                                        )
-                                        contentStream.transform(
-                                            com.tom_roush.pdfbox.util.Matrix
-                                                .getScaleInstance(1f, -1f),
-                                        )
-                                        contentStream.transform(
-                                            com.tom_roush.pdfbox.util.Matrix.getTranslateInstance(
-                                                -item.bounds.width() / 2,
-                                                -item.bounds.height() / 2,
-                                            ),
-                                        )
-                                    } else {
-                                        contentStream.transform(
-                                            com.tom_roush.pdfbox.util.Matrix
-                                                .getTranslateInstance(item.bounds.left, item.bounds.top),
-                                        )
-                                        contentStream.transform(
-                                            com.tom_roush.pdfbox.util.Matrix
-                                                .getScaleInstance(1f, -1f),
-                                        )
-                                        contentStream.transform(
-                                            com.tom_roush.pdfbox.util.Matrix
-                                                .getTranslateInstance(0f, -item.bounds.height()),
-                                        )
+                                        contentStream.drawImage(pdImage, 0f, 0f, item.bounds.width(), item.bounds.height())
+                                        contentStream.restoreGraphicsState()
+                                    } finally {
+                                        bitmap.recycle()
                                     }
-                                    contentStream.drawImage(pdImage, 0f, 0f, item.bounds.width(), item.bounds.height())
-                                    contentStream.restoreGraphicsState()
-                                    bitmap.recycle()
                                 }
                             } catch (e: Exception) {
                                 Logger.e("PdfExporter", "Failed to render image in vector export", e)
