@@ -156,23 +156,26 @@ class CanvasActivity : AppCompatActivity() {
         onBackPressedDispatcher.addCallback(this) {
             val path = currentCanvasPath
             if (path != null) {
-                ProcessLifecycleOwner.get().lifecycleScope.launch {
+                // Launch on Activity Scope to capture data safely while Activity is alive
+                lifecycleScope.launch {
                     val finalMetadata =
                         try {
-                            withContext(Dispatchers.Main) {
-                                binding.canvasView.getCanvasData().copy(
-                                    toolbarItems = viewModel.toolbarItems.value,
-                                )
-                            }
+                            binding.canvasView.getCanvasData().copy(
+                                toolbarItems = viewModel.toolbarItems.value,
+                            )
                         } catch (e: Exception) {
                             Logger.e("CanvasActivity", "Failed to capture final metadata", e)
                             null
                         }
 
-                    // Close session on Process Scope
-                    viewModel.closeSession(path, finalMetadata)
+                    // Hand off to Process Scope for saving
+                    ProcessLifecycleOwner.get().lifecycleScope.launch {
+                        viewModel.closeSession(path, finalMetadata)
+                    }
+                    
+                    // Finish after data capture
+                    finish()
                 }
-                finish()
             } else {
                 finish()
             }

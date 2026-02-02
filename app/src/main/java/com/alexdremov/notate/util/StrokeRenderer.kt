@@ -257,23 +257,12 @@ object StrokeRenderer {
                     // Erasure Mode: Bypass strategies that use saveLayer (Highlighter) or modulate alpha (Ballpoint)
                     // to ensure solid erasure of the stroke path.
                     when (stroke.style) {
-                        StrokeType.HIGHLIGHTER -> {
-                            SimplePathStrategy
-                        }
-
-                        StrokeType.BALLPOINT -> {
-                            SimplePathStrategy
-                        }
-
-                        else -> {
-                            when (stroke.style) {
-                                StrokeType.FOUNTAIN -> FountainStrategy
-                                StrokeType.CHARCOAL -> CharcoalStrategy
-                                StrokeType.BRUSH -> BrushStrategy
-                                StrokeType.DASH -> DashStrategy
-                                else -> SimplePathStrategy
-                            }
-                        }
+                        StrokeType.HIGHLIGHTER, StrokeType.BALLPOINT -> SimplePathStrategy
+                        StrokeType.FOUNTAIN -> FountainStrategy
+                        StrokeType.CHARCOAL -> CharcoalStrategy
+                        StrokeType.BRUSH -> BrushStrategy
+                        StrokeType.DASH -> DashStrategy
+                        else -> SimplePathStrategy
                     }
                 } else {
                     when (stroke.style) {

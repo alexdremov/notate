@@ -84,7 +84,7 @@ class HistoryManager {
 
     private fun limitStackSize(stack: ArrayDeque<HistoryAction>) {
         while (stack.size > MAX_HISTORY_SIZE) {
-            stack.removeLast() // Remove oldest (last in deque)
+            stack.removeLast() // Remove oldest (last in deque, since we use push/addFirst)
         }
     }
 }

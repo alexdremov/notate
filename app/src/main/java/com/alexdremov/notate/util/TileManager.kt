@@ -745,7 +745,6 @@ class TileManager(
             // Robustly clear the bitmap to ensure transparency
             bitmap.eraseColor(Color.TRANSPARENT)
             val tileCanvas = Canvas(bitmap)
-            tileCanvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
 
             // 6. Render
             renderItems(tileCanvas, items, worldRect, scale)

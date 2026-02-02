@@ -31,6 +31,8 @@ class CanvasControllerImpl(
     private val renderer: CanvasRenderer,
 ) : CanvasController {
     companion object {
+        // Threshold for switching to "Disk Stash" move strategy to avoid OOM.
+        // Value 512 chosen based on memory profiling of 500+ items selection.
         private const val LARGE_SELECTION_THRESHOLD = 512
     }
 

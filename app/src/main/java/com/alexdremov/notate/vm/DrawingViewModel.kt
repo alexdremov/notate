@@ -3,6 +3,7 @@ package com.alexdremov.notate.vm
 import android.app.Application
 import android.graphics.Color
 import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.lifecycleScope
 import com.alexdremov.notate.data.PreferencesManager
 import com.alexdremov.notate.model.ActionType
 import com.alexdremov.notate.model.PenTool
@@ -10,6 +11,7 @@ import com.alexdremov.notate.model.ToolType
 import com.alexdremov.notate.model.ToolbarItem
 import com.alexdremov.notate.util.Logger
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -172,14 +174,14 @@ class DrawingViewModel(
         val session = _currentSession.value
         if (session != null) {
             val repo = canvasRepository
-            // Launch on a scope that survives ViewModel clearing (e.g. ProcessLifecycleOwner or GlobalScope,
-            // but we don't have easy access here. Best effort is to use the repo directly if possible
-            // but `onCleared` is synchronous.
-            // Given saveAndCloseSession is handled by Activity's onDestroy/BackPress, this is just a backup for abrupt cleanup.)
-
-            // Note: We can't launch coroutines easily here.
-            // Ideally, Activity handles the lifecycle-bound close.
-            // This is just a pointer cleanup.
+            // Release session on process scope as a fallback if Activity didn't close it properly
+            androidx.lifecycle.ProcessLifecycleOwner.get().lifecycleScope.launch(Dispatchers.IO) {
+                try {
+                    repo.releaseCanvasSession(session)
+                } catch (e: Exception) {
+                    Logger.e("DrawingViewModel", "Failed to release session in onCleared", e)
+                }
+            }
             _currentSession.value = null
         }
     }
