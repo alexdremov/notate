@@ -7,6 +7,7 @@ plugins {
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.serialization")
     id("org.jetbrains.kotlin.plugin.compose")
+    id("jacoco")
 }
 
 android {
@@ -46,6 +47,7 @@ android {
         }
         debug {
             // Standard debug build uses default ~/.android/debug.keystore
+            enableUnitTestCoverage = true
         }
     }
 
@@ -93,6 +95,38 @@ android {
     }
 }
 
+tasks.withType<Test> {
+    configure<JacocoTaskExtension> {
+        isIncludeNoLocationClasses = true
+        excludes = listOf("jdk.internal.*")
+    }
+}
+
+tasks.register<JacocoReport>("jacocoTestReport") {
+    dependsOn("testDebugUnitTest")
+    reports {
+        xml.required.set(true)
+        html.required.set(true)
+    }
+
+    val debugTree =
+        fileTree("${project.buildDir}/tmp/kotlin-classes/debug") {
+            exclude(
+                "**/R.class",
+                "**/R$*.class",
+                "**/BuildConfig.*",
+                "**/Manifest*.*",
+                "**/*Test*.*",
+                "android/**/*.*",
+            )
+        }
+    val mainSrc = "${project.projectDir}/src/main/java"
+
+    sourceDirectories.setFrom(files(mainSrc))
+    classDirectories.setFrom(files(debugTree))
+    executionData.setFrom(files("${project.buildDir}/outputs/unit_test_code_coverage/debugUnitTest/testDebugUnitTest.exec"))
+}
+
 dependencies {
     implementation("androidx.core:core-ktx:1.17.0")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.10.0")
@@ -117,14 +151,14 @@ dependencies {
     implementation("androidx.fragment:fragment-ktx:1.8.9")
 
     // Serialization
-    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.9.0")
-    implementation("org.jetbrains.kotlinx:kotlinx-serialization-protobuf:1.9.0")
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.10.0")
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-protobuf:1.10.0")
 
     // Color Picker
     implementation("com.github.skydoves:colorpickerview:2.4.0")
 
     // Onyx SDK
-    implementation("com.onyx.android.sdk:onyxsdk-pen:1.5.0.4")
+    implementation("com.onyx.android.sdk:onyxsdk-pen:1.5.1")
     implementation("com.onyx.android.sdk:onyxsdk-base:1.8.3")
     implementation("org.lsposed.hiddenapibypass:hiddenapibypass:6.1")
 
@@ -144,6 +178,7 @@ dependencies {
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.9.0")
     testImplementation("androidx.work:work-testing:2.10.0")
+    testImplementation("androidx.test:core-ktx:1.6.1")
 
     // Security & Networking
     implementation("androidx.security:security-crypto:1.1.0")

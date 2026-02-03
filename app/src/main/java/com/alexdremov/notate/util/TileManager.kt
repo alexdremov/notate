@@ -749,6 +749,7 @@ class TileManager(
 
             // 5. Allocate Bitmap (Late Allocation)
             val bitmap = tileCache.obtainBitmap()
+            // Robustly clear the bitmap to ensure transparency
             bitmap.eraseColor(Color.TRANSPARENT)
             val tileCanvas = Canvas(bitmap)
 
