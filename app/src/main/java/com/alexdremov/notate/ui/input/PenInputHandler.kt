@@ -255,9 +255,6 @@ class PenInputHandler(
         }
     }
 
-    fun destroy() {
-    }
-
     private var selectionStartX: Float? = null
     private var selectionStartY: Float? = null
 
@@ -339,9 +336,13 @@ class PenInputHandler(
                 currentTool = eraserTool!!
                 isTemporaryEraserActive = true
                 isCurrentStrokeEraser = true
-                view.post { updateTouchHelperTool() }
             }
         }
+
+        // Force refresh configuration to ensure driver state matches tool state.
+        // This fixes a race condition where switching tools (especially via toolbar) might not propagate
+        // to the native driver in time for the next stroke, causing "Old Hardware Ink" to appear.
+        updateTouchHelperTool()
 
         // Always enter A2 mode for writing to ensure low latency and visibility of fast strokes
         com.onyx.android.sdk.api.device.EpdDeviceManager
@@ -478,12 +479,12 @@ class PenInputHandler(
         val tempShape = pendingPerfectShape
         val isEraser = isCurrentStrokeEraser || toolSnapshot.type == ToolType.ERASER || b
 
-        scope.launch {
-            var builtEraserStroke: com.alexdremov.notate.model.Stroke? = null
-            var builtOriginalStroke: com.alexdremov.notate.model.Stroke? = null
-            var hasPoints = false
+        var builtEraserStroke: com.alexdremov.notate.model.Stroke? = null
+        var builtOriginalStroke: com.alexdremov.notate.model.Stroke? = null
+        var hasPoints = false
 
-            synchronized(strokeBuilder) {
+        synchronized(strokeBuilder) {
+            try {
                 if (!dwellDetector.isShapeRecognized && touchPoint.timestamp > lastProcessedTimestamp) {
                     strokeBuilder.addPoint(endPoint)
                     lastProcessedTimestamp = touchPoint.timestamp
@@ -497,8 +498,12 @@ class PenInputHandler(
                         builtOriginalStroke = strokeBuilder.build(toolSnapshot.color, toolSnapshot.width, toolSnapshot.strokeType)
                     }
                 }
+            } finally {
+                strokeBuilder.clear()
             }
+        }
 
+        scope.launch {
             if (hasPoints) {
                 if (isEraser) {
                     val effectiveEraserType =
@@ -599,10 +604,6 @@ class PenInputHandler(
 
             if (toolSnapshot.type == ToolType.ERASER) {
                 controller.endBatchSession()
-            }
-
-            synchronized(strokeBuilder) {
-                strokeBuilder.clear()
             }
 
             eraserHandler.reset()

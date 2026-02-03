@@ -180,7 +180,7 @@ class FixedPageLayout(
             val patternArea = PatternLayoutHelper.calculatePatternArea(pageRect, style)
             val (offsetX, offsetY) = PatternLayoutHelper.calculateOffsets(patternArea, style)
 
-            BackgroundDrawer.draw(canvas, style, patternArea, offsetX, offsetY)
+            BackgroundDrawer.draw(canvas, style, patternArea, offsetX = offsetX, offsetY = offsetY)
 
             canvas.restore()
 

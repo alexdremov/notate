@@ -38,7 +38,6 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
 import java.util.LinkedList
 
 class OnyxCanvasView
@@ -396,7 +395,6 @@ class OnyxCanvasView
         override fun surfaceDestroyed(holder: SurfaceHolder) {
             EpdController.leaveScribbleMode(this)
             touchHelper?.closeRawDrawing()
-            penInputHandler.destroy()
         }
 
         private fun invalidateCanvas() {
@@ -513,17 +511,14 @@ class OnyxCanvasView
             invalidateCanvas()
         }
 
-        fun getCanvasData(): CanvasData {
+        suspend fun getCanvasData(): CanvasData {
             val values = FloatArray(9)
             matrix.getValues(values)
             canvasModel.viewportOffsetX = values[Matrix.MTRANS_X]
             canvasModel.viewportOffsetY = values[Matrix.MTRANS_Y]
             canvasModel.viewportScale = viewportInteractor.getCurrentScale()
-            // CRITICAL: Since we can't make this suspend without breaking Activity callers,
-            // and getCanvasData is mostly used for saving, we'll use runBlocking for this leaf call.
-            // This is ONLY okay because toCanvasData is now mutex-protected and very fast
-            // (it just captures state, doesn't do IO).
-            return runBlocking { canvasModel.toCanvasData() }
+            // Capture state from model capturing its mutex
+            return canvasModel.toCanvasData()
         }
 
         suspend fun loadMetadata(data: CanvasData) {

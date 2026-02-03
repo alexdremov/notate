@@ -1,5 +1,8 @@
 # Notate
 
+[![Run Tests](https://github.com/alexdremov/notate/actions/workflows/test.yml/badge.svg)](https://github.com/alexdremov/notate/actions/workflows/test.yml)
+[![GitHub release (latest by date)](https://img.shields.io/github/v/release/alexdremov/notate)](https://github.com/alexdremov/notate/releases/latest)
+
 **Beautiful High-Performance Infinite Canvas for Onyx Boox e-ink devices**
 
 <p align="center"><img width="50%" src="assets/infinite.jpeg"><img width="50%" src="assets/finite.jpeg"></p>

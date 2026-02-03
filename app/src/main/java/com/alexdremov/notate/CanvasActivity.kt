@@ -33,14 +33,10 @@ import com.onyx.android.sdk.api.device.epd.EpdController
 import com.onyx.android.sdk.api.device.epd.UpdateMode
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
-import java.util.concurrent.atomic.AtomicReference
 import androidx.compose.ui.geometry.Rect as ComposeRect
 
 class CanvasActivity : AppCompatActivity() {
@@ -55,17 +51,15 @@ class CanvasActivity : AppCompatActivity() {
     private lateinit var sidebarController: SettingsSidebarController
     private lateinit var toolbarCoordinator: ToolbarCoordinator
     private lateinit var exportCoordinator: CanvasExportCoordinator
+
+    // Repository retained for SyncManager, but session management is delegated to ViewModel
     private lateinit var canvasRepository: com.alexdremov.notate.data.CanvasRepository
     private lateinit var syncManager: com.alexdremov.notate.data.SyncManager
 
     private var autoSaveJob: Job? = null
 
-    // Thread-safe session management
-    // The mutex protects session transitions and save operations
-    private val sessionMutex = Mutex()
-    private val currentSessionRef = AtomicReference<com.alexdremov.notate.data.CanvasSession?>(null)
-
     private var currentCanvasPath: String? = null
+    private var isFixedPageState: androidx.compose.runtime.MutableState<Boolean>? = null
 
     private val exportLauncher =
         registerForActivityResult(ActivityResultContracts.CreateDocument("application/pdf")) { uri ->
@@ -160,27 +154,31 @@ class CanvasActivity : AppCompatActivity() {
 
         // Intercept Back Press - Save in background and close immediately
         onBackPressedDispatcher.addCallback(this) {
-            val session = currentSessionRef.getAndSet(null)
             val path = currentCanvasPath
-            if (session != null && path != null && !session.isClosed()) {
-                // Update metadata from UI one last time to capture final viewport for thumbnail
-                try {
+            if (path != null) {
+                // Launch on Activity Scope to capture data safely while Activity is alive
+                lifecycleScope.launch {
                     val finalMetadata =
-                        binding.canvasView.getCanvasData().copy(
-                            toolbarItems = viewModel.toolbarItems.value,
-                        )
-                    session.updateMetadata(finalMetadata)
-                } catch (e: Exception) {
-                    Logger.e("CanvasActivity", "Failed to capture final metadata on exit", e)
-                }
+                        try {
+                            binding.canvasView.getCanvasData().copy(
+                                toolbarItems = viewModel.toolbarItems.value,
+                            )
+                        } catch (e: Exception) {
+                            Logger.e("CanvasActivity", "Failed to capture final metadata", e)
+                            null
+                        }
 
-                // Launch background save and close on Process Scope to survive Activity destruction
-                ProcessLifecycleOwner.get().lifecycleScope.launch {
-                    canvasRepository.saveAndCloseSession(path, session)
+                    // Hand off to Process Scope for saving
+                    ProcessLifecycleOwner.get().lifecycleScope.launch {
+                        viewModel.closeSession(path, finalMetadata)
+                    }
+                    
+                    // Finish after data capture
+                    finish()
                 }
+            } else {
+                finish()
             }
-            // Close UI immediately
-            finish()
         }
 
         // Initialize State Holder
@@ -468,14 +466,34 @@ class CanvasActivity : AppCompatActivity() {
                         binding.toolbarContainer.isDragEnabled = !isEdit
                     }
                 }
+
+                // Session Observation
+                launch {
+                    viewModel.currentSession.collect { session ->
+                        if (session != null) {
+                            withContext(Dispatchers.Main) {
+                                val tUiStart = System.currentTimeMillis()
+
+                                binding.canvasView.getModel().initializeSession(session.regionManager)
+                                binding.canvasView.loadMetadata(session.metadata)
+
+                                val isFixed = session.metadata.canvasType == com.alexdremov.notate.data.CanvasType.FIXED_PAGES
+                                isFixedPageState?.value = isFixed
+                                viewModel.setFixedPageMode(isFixed)
+
+                                // Toolbar init logic is now in ViewModel's loadCanvasSession
+
+                                Logger.d("CanvasActivity", "UI Load:  ${System.currentTimeMillis() - tUiStart}ms")
+                            }
+                        }
+                    }
+                }
             }
         }
 
         loadCanvas()
         setupAutoSave()
     }
-
-    private var isFixedPageState: androidx.compose.runtime.MutableState<Boolean>? = null
 
     private fun setupAutoSave() {
         binding.canvasView.onContentChanged = {
@@ -496,36 +514,8 @@ class CanvasActivity : AppCompatActivity() {
 
     private fun loadCanvas() {
         val path = currentCanvasPath ?: return
-        lifecycleScope.launch(Dispatchers.IO) {
-            // Close previous session safely via Repository
-            val oldSession = currentSessionRef.getAndSet(null)
-            if (oldSession != null) {
-                canvasRepository.releaseCanvasSession(oldSession)
-            }
-
-            val session = canvasRepository.openCanvasSession(path)
-
-            if (session != null) {
-                currentSessionRef.set(session)
-                withContext(Dispatchers.Main) {
-                    val tUiStart = System.currentTimeMillis()
-
-                    binding.canvasView.getModel().initializeSession(session.regionManager)
-                    binding.canvasView.loadMetadata(session.metadata)
-
-                    val isFixed = session.metadata.canvasType == com.alexdremov.notate.data.CanvasType.FIXED_PAGES
-                    isFixedPageState?.value = isFixed
-                    viewModel.setFixedPageMode(isFixed)
-
-                    if (session.metadata.toolbarItems.isNotEmpty()) {
-                        viewModel.setToolbarItems(session.metadata.toolbarItems)
-                    }
-
-                    Logger.d("CanvasActivity", "UI Load:  ${System.currentTimeMillis() - tUiStart}ms")
-                }
-            } else {
-                Logger.e("CanvasActivity", "Failed to load session for $path", showToUser = true)
-            }
+        lifecycleScope.launch {
+            viewModel.loadCanvasSession(path)
         }
     }
 
@@ -566,15 +556,7 @@ class CanvasActivity : AppCompatActivity() {
     override fun onDestroy() {
         super.onDestroy()
         autoSaveJob?.cancel()
-
-        // Schedule session cleanup on process scope (after any pending saves)
-        val session = currentSessionRef.getAndSet(null)
-        if (session != null) {
-            ProcessLifecycleOwner.get().lifecycleScope.launch(Dispatchers.IO) {
-                // Release via Repository
-                canvasRepository.releaseCanvasSession(session)
-            }
-        }
+        // Session cleanup is handled by ViewModel or explicit close in onBackPressed
     }
 
     /**
@@ -585,7 +567,7 @@ class CanvasActivity : AppCompatActivity() {
             try {
                 saveCanvasSuspend(commit)
             } catch (e: Exception) {
-                // Already logged in saveCanvasSuspend
+                Logger.e("CanvasActivity", "Auto-save failed", e)
             }
         }
     }
@@ -596,16 +578,8 @@ class CanvasActivity : AppCompatActivity() {
     private suspend fun saveCanvasSuspend(commit: Boolean = true) {
         val path = currentCanvasPath ?: return
 
-        // Fast path: If session is already cleared (e.g. via Back Press), skip save.
-        // This prevents redundant operations and potential crashes when accessing UI from background.
-        if (currentSessionRef.get() == null) return
-
-        com.alexdremov.notate.data.SaveStatusManager
-            .startSaving(path)
-
         try {
-            // Capture metadata from UI thread BEFORE acquiring mutex
-            // This is safe because we're just reading view state
+            // Capture metadata from UI thread
             val updatedMetadata =
                 withContext(Dispatchers.Main) {
                     try {
@@ -623,50 +597,9 @@ class CanvasActivity : AppCompatActivity() {
                 return
             }
 
-            withContext(NonCancellable) {
-                // We keep sessionMutex locally to prevent race between load/save within Activity
-                sessionMutex.withLock {
-                    // Get session INSIDE the lock to prevent races with loadCanvas
-                    val session = currentSessionRef.get()
-
-                    // Guard:  No session yet (load still in progress or failed)
-                    if (session == null) {
-                        Logger.w("CanvasActivity", "Skipping save: no active session")
-                        return@withLock
-                    }
-
-                    // Guard: Session already closed
-                    if (session.isClosed()) {
-                        Logger.w("CanvasActivity", "Skipping save: session is closed")
-                        return@withLock
-                    }
-
-                    // Update metadata in the session (in-place, no copy)
-                    session.updateMetadata(updatedMetadata)
-
-                    Logger.d("CanvasActivity", "Saving canvas session to $path (Commit=$commit)")
-
-                    try {
-                        val result = canvasRepository.saveCanvasSession(path, session, commitToZip = commit)
-
-                        // Update origin timestamps for conflict detection (in-place)
-                        session.updateOrigin(result.newLastModified, result.newSize)
-
-                        if (commit) {
-                            Logger.i("CanvasActivity", "Full Save complete: ${result.savedPath}")
-                        } else {
-                            // Verbose only for flush
-                            // Logger.v("CanvasActivity", "Session flushed.")
-                        }
-                    } catch (e: Exception) {
-                        Logger.e("CanvasActivity", "Failed to save canvas", e, showToUser = true)
-                        // Don't rethrow - allow app to continue
-                    }
-                }
-            }
-        } finally {
-            com.alexdremov.notate.data.SaveStatusManager
-                .finishSaving(path)
+            viewModel.saveCanvasSession(path, updatedMetadata, commit)
+        } catch (e: Exception) {
+            Logger.e("CanvasActivity", "saveCanvasSuspend exception", e)
         }
     }
 

@@ -336,6 +336,8 @@ class CanvasRepository(
                                                 Logger.i("CanvasRepository", "Background unzip complete.")
                                             } catch (e: Exception) {
                                                 Logger.e("CanvasRepository", "Background unzip failed", e)
+                                                // Mark initialization as failed to prevent saving partial state
+                                                finalSession.markInitializationFailed()
                                             }
                                         }
                                 }
@@ -393,56 +395,58 @@ class CanvasRepository(
     suspend fun saveAndCloseSession(
         path: String,
         session: CanvasSession,
-    ) = withContext(Dispatchers.IO) {
-        sessionLock.withLock {
-            val lastClient = session.release()
-            if (lastClient) {
-                val name = session.sessionDir.name
-                activeSessions.remove(name) // Remove from active cache immediately so new opens fail fast (Lock held)
+    ): Unit =
+        withContext(Dispatchers.IO) {
+            sessionLock.withLock {
+                val lastClient = session.release()
+                if (lastClient) {
+                    val name = session.sessionDir.name
+                    activeSessions.remove(name) // Remove from active cache immediately so new opens fail fast (Lock held)
 
-                Logger.i("CanvasRepository", "Launching background WorkManager save and close for: $name")
+                    Logger.i("CanvasRepository", "Launching background WorkManager save and close for: $name")
 
-                try {
-                    // 1. Flush to disk (fast, incremental)
-                    saveCanvasSession(path, session, commitToZip = false)
+                    try {
+                        // 1. Flush to disk (fast, incremental)
+                        saveCanvasSession(path, session, commitToZip = false)
 
-                    // 2. Schedule Background Zipping via WorkManager
-                    val workData =
-                        Data
-                            .Builder()
-                            .putString(SaveWorker.KEY_SESSION_PATH, session.sessionDir.absolutePath)
-                            .putString(SaveWorker.KEY_TARGET_PATH, path)
-                            .build()
+                        // 2. Schedule Background Zipping via WorkManager
+                        val workData =
+                            Data
+                                .Builder()
+                                .putString(SaveWorker.KEY_SESSION_PATH, session.sessionDir.absolutePath)
+                                .putString(SaveWorker.KEY_TARGET_PATH, path)
+                                .build()
 
-                    val workRequest =
-                        OneTimeWorkRequest
-                            .Builder(SaveWorker::class.java)
-                            .setInputData(workData)
-                            .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
-                            .setBackoffCriteria(BackoffPolicy.LINEAR, 10, TimeUnit.SECONDS)
-                            .build()
+                        val workRequest =
+                            OneTimeWorkRequest
+                                .Builder(SaveWorker::class.java)
+                                .setInputData(workData)
+                                .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
+                                .setBackoffCriteria(BackoffPolicy.LINEAR, 10, TimeUnit.SECONDS)
+                                .build()
 
-                    WorkManager
-                        .getInstance(context)
-                        .enqueueUniqueWork(
-                            "SaveWorker_$name",
-                            ExistingWorkPolicy.REPLACE,
-                            workRequest,
-                        )
-                } catch (e: Exception) {
-                    Logger.e("CanvasRepository", "Failed to prepare background save for $path", e)
-                } finally {
-                    // 3. Close Session (Release memory and FileLock)
-                    // The Worker will re-acquire a lock if possible/needed, or write regardless.
-                    session.close()
-                    Logger.i("CanvasRepository", "Session flushed and closed, worker enqueued: $name")
+                        WorkManager
+                            .getInstance(context)
+                            .enqueueUniqueWork(
+                                "SaveWorker_$name",
+                                ExistingWorkPolicy.REPLACE,
+                                workRequest,
+                            )
+                    } catch (e: Exception) {
+                        Logger.e("CanvasRepository", "Failed to prepare background save for $path", e)
+                    } finally {
+                        // 3. Close Session (Release memory and FileLock)
+                        // The Worker will re-acquire a lock if possible/needed, or write regardless.
+                        session.close()
+                        Logger.i("CanvasRepository", "Session flushed and closed, worker enqueued: $name")
+                    }
+                } else {
+                    Logger.i("CanvasRepository", "saveAndCloseSession: Session retained by other clients, performing standard save.")
+                    saveCanvasSession(path, session, commitToZip = true)
+                    Unit
                 }
-            } else {
-                Logger.i("CanvasRepository", "saveAndCloseSession: Session retained by other clients, performing standard save.")
-                saveCanvasSession(path, session, commitToZip = true)
             }
         }
-    }
 
     @OptIn(ExperimentalSerializationApi::class)
     suspend fun saveCanvasSession(
