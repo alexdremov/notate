@@ -139,14 +139,14 @@ class PenSettingsPopup(
     }
 
     private fun setupTextUI() {
-        binding.tvTitle.text = "Text Settings"
+        binding.tvTitle.text = context.getString(R.string.text_settings)
         binding.gridStyles.visibility = View.GONE
         binding.rgEraserTypes.visibility = View.GONE
         binding.divider1.visibility = View.GONE
 
         // Show Font Size (Width)
         binding.layoutWidthLabels.visibility = View.VISIBLE
-        binding.tvWidthLabel.text = "Font Size"
+        binding.tvWidthLabel.text = context.getString(R.string.font_size)
         binding.sliderWidth.visibility = View.VISIBLE
 
         // Divider before colors
@@ -165,287 +165,24 @@ class PenSettingsPopup(
         binding.sliderWidth.valueTo = 100f
         binding.sliderWidth.stepSize = 1f
         binding.sliderWidth.value = currentSize.coerceIn(10f, 100f)
-        binding.tvWidthValue.text = "${binding.sliderWidth.value.toInt()} px"
+        binding.tvWidthValue.text = "${binding.sliderWidth.value.toInt()}${context.getString(R.string.px_unit)}"
 
         binding.sliderWidth.addOnChangeListener { _, value, _ ->
-            binding.tvWidthValue.text = "${value.toInt()} px"
+            binding.tvWidthValue.text = "${value.toInt()}${context.getString(R.string.px_unit)}"
             updateTool { it.copy(width = value) }
         }
 
-        // Initialize Color UI (reusing Pen logic parts)
+        // Initialize Color UI
         binding.tvColorName.text =
             com.alexdremov.notate.util.ColorNamer
                 .getColorName(currentTool.color)
 
-        // Re-use color adapter logic from setupPenUI or init
-        // We need to ensure colorAdapter is initialized.
-        // It is initialized in setupPenUI currently. I should move it to init or a common setup.
         setupColorAdapter()
     }
 
     private fun setupColorAdapter() {
-        colorAdapter =
-            ColorAdapter(
-                colors = favorites,
-                onColorSelected = { color ->
-                    updateTool { it.copy(color = color) }
-                    binding.tvColorName.text =
-                        com.alexdremov.notate.util.ColorNamer
-                            .getColorName(color)
-                },
-                onAddClicked = {
-                    binding.viewFlipper.displayedChild = 1 // Go to Presets Page (Index 1)
-                    refreshHighQuality(binding.gridColorPresets)
-                },
-            )
-        binding.recyclerColors.layoutManager =
-            androidx.recyclerview.widget.GridLayoutManager(context, 2, androidx.recyclerview.widget.GridLayoutManager.HORIZONTAL, false)
-        binding.recyclerColors.adapter = colorAdapter
+        if (::colorAdapter.isInitialized) return
 
-        binding.recyclerColors.addOnScrollListener(
-            object : RecyclerView.OnScrollListener() {
-                override fun onScrollStateChanged(
-                    recyclerView: RecyclerView,
-                    newState: Int,
-                ) {
-                    if (newState == RecyclerView.SCROLL_STATE_DRAGGING) {
-                        com.alexdremov.notate.util.EpdFastModeController
-                            .enterFastMode()
-                    } else if (newState == RecyclerView.SCROLL_STATE_IDLE) {
-                        com.alexdremov.notate.util.EpdFastModeController
-                            .exitFastMode()
-                    }
-                }
-            },
-        )
-
-        // Attach ItemTouchHelper (reusing code from setupPenUI)
-        val itemTouchHelper =
-            ItemTouchHelper(
-                object : ItemTouchHelper.Callback() {
-                    private var isOutside = false
-
-                    override fun getMovementFlags(
-                        recyclerView: RecyclerView,
-                        viewHolder: RecyclerView.ViewHolder,
-                    ): Int {
-                        if (viewHolder.adapterPosition == favorites.size) {
-                            return makeMovementFlags(0, 0)
-                        }
-                        val dragFlags = ItemTouchHelper.UP or ItemTouchHelper.DOWN or ItemTouchHelper.LEFT or ItemTouchHelper.RIGHT
-                        val swipeFlags = 0
-                        return makeMovementFlags(dragFlags, swipeFlags)
-                    }
-
-                    override fun onMove(
-                        recyclerView: RecyclerView,
-                        viewHolder: RecyclerView.ViewHolder,
-                        target: RecyclerView.ViewHolder,
-                    ): Boolean {
-                        if (target.adapterPosition == favorites.size) return false
-
-                        val fromPos = viewHolder.adapterPosition
-                        val toPos = target.adapterPosition
-                        if (fromPos == RecyclerView.NO_POSITION || toPos == RecyclerView.NO_POSITION) return false
-
-                        Collections.swap(favorites, fromPos, toPos)
-                        colorAdapter.notifyItemMoved(fromPos, toPos)
-                        PreferencesManager.saveFavoriteColors(context, favorites)
-                        return true
-                    }
-
-                    override fun onSwiped(
-                        viewHolder: RecyclerView.ViewHolder,
-                        direction: Int,
-                    ) {
-                    }
-
-                    override fun onChildDraw(
-                        c: android.graphics.Canvas,
-                        recyclerView: RecyclerView,
-                        viewHolder: RecyclerView.ViewHolder,
-                        dX: Float,
-                        dY: Float,
-                        actionState: Int,
-                        isCurrentlyActive: Boolean,
-                    ) {
-                        super.onChildDraw(c, recyclerView, viewHolder, dX, dY, actionState, isCurrentlyActive)
-
-                        if (actionState == ItemTouchHelper.ACTION_STATE_DRAG && isCurrentlyActive) {
-                            val itemView = viewHolder.itemView
-                            val centerX = itemView.left + dX + itemView.width / 2f
-                            val centerY = itemView.top + dY + itemView.height / 2f
-
-                            isOutside = centerX < 0 || centerX > recyclerView.width ||
-                                centerY < 0 || centerY > recyclerView.height
-
-                            itemView.alpha = if (isOutside) 0.5f else 1.0f
-                        }
-                    }
-
-                    override fun clearView(
-                        recyclerView: RecyclerView,
-                        viewHolder: RecyclerView.ViewHolder,
-                    ) {
-                        super.clearView(recyclerView, viewHolder)
-                        viewHolder.itemView.alpha = 1.0f
-
-                        if (isOutside) {
-                            val pos = viewHolder.adapterPosition
-                            if (pos != RecyclerView.NO_POSITION && pos < favorites.size) {
-                                favorites.removeAt(pos)
-                                colorAdapter.notifyItemRemoved(pos)
-                                PreferencesManager.saveFavoriteColors(context, favorites)
-                            }
-                            isOutside = false
-                        }
-                    }
-
-                    override fun isLongPressDragEnabled(): Boolean = true
-                },
-            )
-        itemTouchHelper.attachToRecyclerView(binding.recyclerColors)
-    }
-
-    private fun setupSelectUI() {
-        binding.tvTitle.text = "Select Tool"
-        binding.gridStyles.visibility = View.GONE
-        binding.rgEraserTypes.visibility = View.VISIBLE
-        binding.divider2.visibility = View.GONE
-        binding.tvColorLabel.visibility = View.GONE
-        binding.tvColorName.visibility = View.GONE
-        binding.recyclerColors.visibility = View.GONE
-        binding.btnRemove.visibility = View.GONE
-        binding.layoutWidthLabels.visibility = View.GONE
-        binding.sliderWidth.visibility = View.GONE
-        binding.divider1.visibility = View.GONE
-
-        // Reuse Eraser Radio Buttons but change text
-        binding.rbEraserStandard.text = "Rectangle"
-        binding.rbEraserStroke.text = "Lasso"
-        binding.rbEraserLasso.visibility = View.GONE // Only need 2 options
-
-        // Bind Selection Type
-        when (currentTool.selectionType) {
-            com.alexdremov.notate.model.SelectionType.RECTANGLE -> binding.rbEraserStandard.isChecked = true
-            com.alexdremov.notate.model.SelectionType.LASSO -> binding.rbEraserStroke.isChecked = true
-        }
-
-        binding.rgEraserTypes.setOnCheckedChangeListener { _, checkedId ->
-            val type =
-                when (checkedId) {
-                    R.id.rbEraserStandard -> com.alexdremov.notate.model.SelectionType.RECTANGLE
-                    R.id.rbEraserStroke -> com.alexdremov.notate.model.SelectionType.LASSO
-                    else -> com.alexdremov.notate.model.SelectionType.RECTANGLE
-                }
-            updateTool { it.copy(selectionType = type) }
-        }
-    }
-
-    private fun setupEraserUI() {
-        binding.tvTitle.text = "Eraser Settings"
-        binding.gridStyles.visibility = View.GONE
-        binding.rgEraserTypes.visibility = View.VISIBLE
-        binding.divider2.visibility = View.GONE
-        binding.tvColorLabel.visibility = View.GONE
-        binding.tvColorName.visibility = View.GONE
-        binding.recyclerColors.visibility = View.GONE
-        binding.btnRemove.visibility = View.GONE
-
-        // Bind Eraser Type Selection
-        when (currentTool.eraserType) {
-            com.alexdremov.notate.model.EraserType.STANDARD -> binding.rbEraserStandard.isChecked = true
-            com.alexdremov.notate.model.EraserType.STROKE -> binding.rbEraserStroke.isChecked = true
-            com.alexdremov.notate.model.EraserType.LASSO -> binding.rbEraserLasso.isChecked = true
-        }
-
-        updateWidthSliderVisibility(currentTool.eraserType)
-
-        binding.rgEraserTypes.setOnCheckedChangeListener { _, checkedId ->
-            val type =
-                when (checkedId) {
-                    R.id.rbEraserStandard -> com.alexdremov.notate.model.EraserType.STANDARD
-                    R.id.rbEraserStroke -> com.alexdremov.notate.model.EraserType.STROKE
-                    R.id.rbEraserLasso -> com.alexdremov.notate.model.EraserType.LASSO
-                    else -> com.alexdremov.notate.model.EraserType.STANDARD
-                }
-            updateWidthSliderVisibility(type)
-            updateTool { it.copy(eraserType = type) }
-        }
-    }
-
-    private fun updateWidthSliderVisibility(eraserType: com.alexdremov.notate.model.EraserType) {
-        val isLasso = eraserType == com.alexdremov.notate.model.EraserType.LASSO
-        val visibility = if (isLasso) View.GONE else View.VISIBLE
-        binding.layoutWidthLabels.visibility = visibility
-        binding.sliderWidth.visibility = visibility
-        binding.divider1.visibility = visibility
-    }
-
-    private fun setupPenUI() {
-        binding.tvTitle.text = "Pen Style"
-        binding.gridStyles.visibility = View.VISIBLE
-        binding.rgEraserTypes.visibility = View.GONE
-        binding.divider1.visibility = View.VISIBLE
-        binding.layoutWidthLabels.visibility = View.VISIBLE
-        binding.sliderWidth.visibility = View.VISIBLE
-        binding.divider2.visibility = View.VISIBLE
-        binding.tvColorLabel.visibility = View.VISIBLE
-        binding.tvColorName.visibility = View.VISIBLE
-        binding.recyclerColors.visibility = View.VISIBLE
-        binding.btnRemove.visibility = View.VISIBLE
-
-        // --- Style Selection ---
-        val styleViews =
-            mapOf(
-                StrokeType.FOUNTAIN to binding.styleFountain,
-                StrokeType.BALLPOINT to binding.styleBallpoint,
-                StrokeType.FINELINER to binding.styleFineliner,
-                StrokeType.HIGHLIGHTER to binding.styleHighlighter,
-                StrokeType.BRUSH to binding.styleBrush,
-                StrokeType.CHARCOAL to binding.styleCharcoal,
-                StrokeType.DASH to binding.styleDash,
-            )
-
-        fun updateSliderRange(type: StrokeType) {
-            val maxMm = type.maxWidthMm
-
-            // If the current value is outside the new range, clamp it first
-            if (binding.sliderWidth.value > maxMm) {
-                binding.sliderWidth.value = maxMm
-            }
-            // Update the max value
-            binding.sliderWidth.valueTo = maxMm
-        }
-
-        fun updateStyleSelection(selectedType: StrokeType) {
-            styleViews.forEach { (type, view) ->
-                view.isSelected = (type == selectedType)
-                if (type == selectedType) {
-                    view.setColorFilter(Color.BLACK) // Darken icon if needed, or rely on selector background
-                } else {
-                    view.clearColorFilter()
-                }
-            }
-            updateSliderRange(selectedType)
-        }
-
-        styleViews.forEach { (type, view) ->
-            view.setOnClickListener {
-                updateTool { it.copy(strokeType = type) }
-                updateStyleSelection(type)
-            }
-        }
-
-        // Initialize selection UI state
-        updateStyleSelection(currentTool.strokeType)
-
-        // --- Color Name ---
-        binding.tvColorName.text =
-            com.alexdremov.notate.util.ColorNamer
-                .getColorName(currentTool.color)
-
-        // --- Favorites RecyclerView ---
         colorAdapter =
             ColorAdapter(
                 colors = favorites,
@@ -572,6 +309,147 @@ class PenSettingsPopup(
                 },
             )
         itemTouchHelper.attachToRecyclerView(binding.recyclerColors)
+    }
+
+    private fun setupSelectUI() {
+        binding.tvTitle.text = context.getString(R.string.select_tool_title)
+        binding.gridStyles.visibility = View.GONE
+        binding.rgEraserTypes.visibility = View.VISIBLE
+        binding.divider2.visibility = View.GONE
+        binding.tvColorLabel.visibility = View.GONE
+        binding.tvColorName.visibility = View.GONE
+        binding.recyclerColors.visibility = View.GONE
+        binding.btnRemove.visibility = View.GONE
+        binding.layoutWidthLabels.visibility = View.GONE
+        binding.sliderWidth.visibility = View.GONE
+        binding.divider1.visibility = View.GONE
+
+        // Reuse Eraser Radio Buttons but change text
+        binding.rbEraserStandard.text = context.getString(R.string.rectangle_selection)
+        binding.rbEraserStroke.text = context.getString(R.string.lasso_selection)
+        binding.rbEraserLasso.visibility = View.GONE // Only need 2 options
+
+        // Bind Selection Type
+        when (currentTool.selectionType) {
+            com.alexdremov.notate.model.SelectionType.RECTANGLE -> binding.rbEraserStandard.isChecked = true
+            com.alexdremov.notate.model.SelectionType.LASSO -> binding.rbEraserStroke.isChecked = true
+        }
+
+        binding.rgEraserTypes.setOnCheckedChangeListener { _, checkedId ->
+            val type =
+                when (checkedId) {
+                    R.id.rbEraserStandard -> com.alexdremov.notate.model.SelectionType.RECTANGLE
+                    R.id.rbEraserStroke -> com.alexdremov.notate.model.SelectionType.LASSO
+                    else -> com.alexdremov.notate.model.SelectionType.RECTANGLE
+                }
+            updateTool { it.copy(selectionType = type) }
+        }
+    }
+
+    private fun setupEraserUI() {
+        binding.tvTitle.text = context.getString(R.string.eraser_settings)
+        binding.gridStyles.visibility = View.GONE
+        binding.rgEraserTypes.visibility = View.VISIBLE
+        binding.divider2.visibility = View.GONE
+        binding.tvColorLabel.visibility = View.GONE
+        binding.tvColorName.visibility = View.GONE
+        binding.recyclerColors.visibility = View.GONE
+        binding.btnRemove.visibility = View.GONE
+
+        // Bind Eraser Type Selection
+        when (currentTool.eraserType) {
+            com.alexdremov.notate.model.EraserType.STANDARD -> binding.rbEraserStandard.isChecked = true
+            com.alexdremov.notate.model.EraserType.STROKE -> binding.rbEraserStroke.isChecked = true
+            com.alexdremov.notate.model.EraserType.LASSO -> binding.rbEraserLasso.isChecked = true
+        }
+
+        updateWidthSliderVisibility(currentTool.eraserType)
+
+        binding.rgEraserTypes.setOnCheckedChangeListener { _, checkedId ->
+            val type =
+                when (checkedId) {
+                    R.id.rbEraserStandard -> com.alexdremov.notate.model.EraserType.STANDARD
+                    R.id.rbEraserStroke -> com.alexdremov.notate.model.EraserType.STROKE
+                    R.id.rbEraserLasso -> com.alexdremov.notate.model.EraserType.LASSO
+                    else -> com.alexdremov.notate.model.EraserType.STANDARD
+                }
+            updateWidthSliderVisibility(type)
+            updateTool { it.copy(eraserType = type) }
+        }
+    }
+
+    private fun updateWidthSliderVisibility(eraserType: com.alexdremov.notate.model.EraserType) {
+        val isLasso = eraserType == com.alexdremov.notate.model.EraserType.LASSO
+        val visibility = if (isLasso) View.GONE else View.VISIBLE
+        binding.layoutWidthLabels.visibility = visibility
+        binding.sliderWidth.visibility = visibility
+        binding.divider1.visibility = visibility
+    }
+
+    private fun setupPenUI() {
+        binding.tvTitle.text = context.getString(R.string.pen_style)
+        binding.gridStyles.visibility = View.VISIBLE
+        binding.rgEraserTypes.visibility = View.GONE
+        binding.divider1.visibility = View.VISIBLE
+        binding.layoutWidthLabels.visibility = View.VISIBLE
+        binding.sliderWidth.visibility = View.VISIBLE
+        binding.divider2.visibility = View.VISIBLE
+        binding.tvColorLabel.visibility = View.VISIBLE
+        binding.tvColorName.visibility = View.VISIBLE
+        binding.recyclerColors.visibility = View.VISIBLE
+        binding.btnRemove.visibility = View.VISIBLE
+
+        // --- Style Selection ---
+        val styleViews =
+            mapOf(
+                StrokeType.FOUNTAIN to binding.styleFountain,
+                StrokeType.BALLPOINT to binding.styleBallpoint,
+                StrokeType.FINELINER to binding.styleFineliner,
+                StrokeType.HIGHLIGHTER to binding.styleHighlighter,
+                StrokeType.BRUSH to binding.styleBrush,
+                StrokeType.CHARCOAL to binding.styleCharcoal,
+                StrokeType.DASH to binding.styleDash,
+            )
+
+        fun updateSliderRange(type: StrokeType) {
+            val maxMm = type.maxWidthMm
+
+            // If the current value is outside the new range, clamp it first
+            if (binding.sliderWidth.value > maxMm) {
+                binding.sliderWidth.value = maxMm
+            }
+            // Update the max value
+            binding.sliderWidth.valueTo = maxMm
+        }
+
+        fun updateStyleSelection(selectedType: StrokeType) {
+            styleViews.forEach { (type, view) ->
+                view.isSelected = (type == selectedType)
+                if (type == selectedType) {
+                    view.setColorFilter(Color.BLACK) // Darken icon if needed, or rely on selector background
+                } else {
+                    view.clearColorFilter()
+                }
+            }
+            updateSliderRange(selectedType)
+        }
+
+        styleViews.forEach { (type, view) ->
+            view.setOnClickListener {
+                updateTool { it.copy(strokeType = type) }
+                updateStyleSelection(type)
+            }
+        }
+
+        // Initialize selection UI state
+        updateStyleSelection(currentTool.strokeType)
+
+        // --- Color Name ---
+        binding.tvColorName.text =
+            com.alexdremov.notate.util.ColorNamer
+                .getColorName(currentTool.color)
+
+        setupColorAdapter()
     }
 
     private fun setupPresetsPage() {

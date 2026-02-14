@@ -366,7 +366,12 @@ class SelectionInteractor(
         val distCurr = vCurrX * ux + vCurrY * uy
 
         // Guard against division by zero or flipping (if crossing the pivot)
-        if (kotlin.math.abs(distLast) > 1f && (distLast * distCurr) > 0) {
+        val matrixValues = FloatArray(9)
+        matrix.getValues(matrixValues)
+        val currentScale = hypot(matrixValues[Matrix.MSCALE_X], matrixValues[Matrix.MSKEW_Y])
+        val threshold = 1f / currentScale
+
+        if (kotlin.math.abs(distLast) > threshold && (distLast * distCurr) > 0) {
             val scaleFactor = distCurr / distLast
 
             // Construct Matrix to scale along Local Axis in World Space

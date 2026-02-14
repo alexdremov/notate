@@ -40,6 +40,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.res.vectorResource
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
@@ -746,7 +747,7 @@ fun ToolbarEditPanel(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Text("Edit Toolbar", style = MaterialTheme.typography.titleMedium)
+        Text(stringResource(R.string.edit_toolbar), style = MaterialTheme.typography.titleMedium)
 
         // Collapsible Toggle
         Row(
@@ -754,7 +755,7 @@ fun ToolbarEditPanel(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween,
         ) {
-            Text("Collapsible", style = MaterialTheme.typography.bodyMedium)
+            Text(stringResource(R.string.collapsible), style = MaterialTheme.typography.bodyMedium)
             Switch(
                 checked = isCollapsible,
                 onCheckedChange = { viewModel.setCollapsibleToolbar(it) },
@@ -763,7 +764,7 @@ fun ToolbarEditPanel(
 
         androidx.compose.material3.Divider()
 
-        Text("Tap to Add", style = MaterialTheme.typography.labelSmall, color = Color.Gray)
+        Text(stringResource(R.string.tap_to_add), style = MaterialTheme.typography.labelSmall, color = Color.Gray)
 
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -772,7 +773,7 @@ fun ToolbarEditPanel(
             // Add Pen
             AddItemButton(
                 item = ToolbarItem.Pen(PenTool.defaultPens().first { it.type == ToolType.PEN }),
-                label = "Pen",
+                label = stringResource(R.string.pen_tool),
                 onClick = { viewModel.addPen() },
             )
 
@@ -780,7 +781,7 @@ fun ToolbarEditPanel(
             val defaultText = PenTool.defaultPens().find { it.type == ToolType.TEXT }!!
             AddItemButton(
                 item = ToolbarItem.Pen(defaultText),
-                label = "Text",
+                label = stringResource(R.string.text_tool),
                 onClick = { viewModel.addToolbarItem(ToolbarItem.Pen(defaultText)) },
             )
         }
@@ -793,7 +794,7 @@ fun ToolbarEditPanel(
             val defaultEraser = PenTool.defaultPens().find { it.type == ToolType.ERASER }!!
             AddItemButton(
                 item = ToolbarItem.Eraser(defaultEraser),
-                label = "Eraser",
+                label = stringResource(R.string.eraser_tool),
                 onClick = { viewModel.addToolbarItem(ToolbarItem.Eraser(defaultEraser)) },
             )
 
@@ -801,7 +802,7 @@ fun ToolbarEditPanel(
             val defaultSelect = PenTool.defaultPens().find { it.type == ToolType.SELECT }!!
             AddItemButton(
                 item = ToolbarItem.Select(defaultSelect),
-                label = "Select",
+                label = stringResource(R.string.select_tool),
                 onClick = { viewModel.addToolbarItem(ToolbarItem.Select(defaultSelect)) },
             )
         }
@@ -813,14 +814,14 @@ fun ToolbarEditPanel(
             // Add Undo
             AddItemButton(
                 item = ToolbarItem.Action(ActionType.UNDO),
-                label = "Undo",
+                label = stringResource(R.string.undo_action),
                 onClick = { viewModel.addToolbarItem(ToolbarItem.Action(ActionType.UNDO)) },
             )
 
             // Add Redo
             AddItemButton(
                 item = ToolbarItem.Action(ActionType.REDO),
-                label = "Redo",
+                label = stringResource(R.string.redo_action),
                 onClick = { viewModel.addToolbarItem(ToolbarItem.Action(ActionType.REDO)) },
             )
         }
@@ -832,7 +833,7 @@ fun ToolbarEditPanel(
             // Add Image
             AddItemButton(
                 item = ToolbarItem.Action(ActionType.INSERT_IMAGE),
-                label = "Image",
+                label = stringResource(R.string.image_action),
                 onClick = { viewModel.addToolbarItem(ToolbarItem.Action(ActionType.INSERT_IMAGE)) },
             )
 
@@ -840,7 +841,7 @@ fun ToolbarEditPanel(
             if (isFixedPageMode) {
                 AddItemButton(
                     item = ToolbarItem.Widget(WidgetType.PAGE_NAVIGATION),
-                    label = "Nav",
+                    label = stringResource(R.string.nav_tool),
                     onClick = { viewModel.addToolbarItem(ToolbarItem.Widget(WidgetType.PAGE_NAVIGATION)) },
                 )
             }
@@ -852,7 +853,7 @@ fun ToolbarEditPanel(
             onClick = onDone,
             modifier = Modifier.fillMaxWidth(),
         ) {
-            Text("Done")
+            Text(stringResource(R.string.done_action))
         }
     }
 }
