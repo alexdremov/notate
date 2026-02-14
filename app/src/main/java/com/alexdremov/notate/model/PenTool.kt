@@ -12,6 +12,7 @@ enum class ToolType {
     PEN,
     ERASER,
     SELECT,
+    TEXT,
 }
 
 @Serializable
@@ -38,7 +39,7 @@ data class PenTool(
     @ProtoNumber(4)
     var color: Int = Color.BLACK,
     @ProtoNumber(5)
-    var width: Float = 3f,
+    var width: Float = 3f, // Acts as FontSize for TEXT tool
     @ProtoNumber(6)
     var strokeType: StrokeType = StrokeType.FOUNTAIN,
     @ProtoNumber(7)
@@ -70,6 +71,7 @@ data class PenTool(
                     EraserType.STANDARD,
                     SelectionType.RECTANGLE,
                 ),
+                PenTool("text_tool", "Text", ToolType.TEXT, Color.BLACK, 40f, StrokeType.FINELINER),
             )
     }
 }

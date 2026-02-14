@@ -12,15 +12,18 @@ import com.alexdremov.notate.model.BackgroundStyle
 import com.alexdremov.notate.model.CanvasItem
 import com.alexdremov.notate.model.InfiniteCanvasModel
 import com.alexdremov.notate.model.Stroke
+import com.alexdremov.notate.model.TextItem
 import com.alexdremov.notate.ui.render.BackgroundDrawer
 import com.alexdremov.notate.ui.render.background.PatternLayoutHelper
 import com.alexdremov.notate.util.CharcoalPenRenderer
 import com.alexdremov.notate.util.FountainPenRenderer
 import com.alexdremov.notate.util.Logger
 import com.alexdremov.notate.util.StrokeRenderer
+import com.alexdremov.notate.util.TextRenderer
 import com.onyx.android.sdk.api.device.epd.EpdController
 import com.tom_roush.pdfbox.android.PDFBoxResourceLoader
 import com.tom_roush.pdfbox.io.MemoryUsageSetting
+import com.tom_roush.pdfbox.multipdf.LayerUtility
 import com.tom_roush.pdfbox.pdmodel.PDDocument
 import com.tom_roush.pdfbox.pdmodel.PDPage
 import com.tom_roush.pdfbox.pdmodel.PDPageContentStream
@@ -229,6 +232,8 @@ object PdfExporter {
                     for (item in items) {
                         if (item is Stroke) {
                             renderStrokeToPdf(contentStream, item, alphaCache)
+                        } else if (item is TextItem) {
+                            renderTextToPdf(document, contentStream, item, context)
                         } else if (item is com.alexdremov.notate.model.CanvasImage) {
                             try {
                                 val uriStr = item.uri
@@ -431,6 +436,57 @@ object PdfExporter {
             }
 
             else -> {}
+    private fun renderTextToPdf(
+        document: PDDocument,
+        stream: PDPageContentStream,
+        item: TextItem,
+        context: android.content.Context
+    ) {
+        val w = ceil(item.bounds.width()).toInt().coerceAtLeast(1)
+        val h = ceil(item.bounds.height()).toInt().coerceAtLeast(1)
+
+        val pdfDoc = PdfDocument()
+        val pageInfo = PdfDocument.PageInfo.Builder(w, h, 1).create()
+        val page = pdfDoc.startPage(pageInfo)
+
+        val renderItem = item.copy(
+            bounds = RectF(0f, 0f, w.toFloat(), h.toFloat()),
+            rotation = 0f
+        )
+
+        TextRenderer.draw(page.canvas, renderItem, context)
+        pdfDoc.finishPage(page)
+
+        val os = java.io.ByteArrayOutputStream()
+        pdfDoc.writeTo(os)
+        pdfDoc.close()
+
+        var tempDoc: PDDocument? = null
+        try {
+            tempDoc = PDDocument.load(os.toByteArray())
+            val layerUtility = LayerUtility(document)
+            val form = layerUtility.importPageAsForm(tempDoc, tempDoc.getPage(0))
+
+            stream.saveGraphicsState()
+
+            val centerX = item.bounds.centerX()
+            val centerY = item.bounds.centerY()
+            val rad = Math.toRadians(item.rotation.toDouble()).toFloat()
+
+            // Transformation pipeline:
+            // 1. Translate to Center
+            // 2. Rotate
+            // 3. Translate to top-left of the form (relative to center)
+            stream.transform(com.tom_roush.pdfbox.util.Matrix.getTranslateInstance(centerX, centerY))
+            stream.transform(com.tom_roush.pdfbox.util.Matrix.getRotateInstance(rad.toDouble(), 0f, 0f))
+            stream.transform(com.tom_roush.pdfbox.util.Matrix.getTranslateInstance(-w / 2f, -h / 2f))
+
+            stream.drawForm(form)
+            stream.restoreGraphicsState()
+        } catch (e: Exception) {
+            Logger.e("PdfExporter", "Failed to render text block to PDF", e)
+        } finally {
+            tempDoc?.close()
         }
     }
 

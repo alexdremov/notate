@@ -19,6 +19,8 @@ import com.alexdremov.notate.data.CanvasType
 import com.alexdremov.notate.model.InfiniteCanvasModel
 import com.alexdremov.notate.model.PenTool
 import com.alexdremov.notate.model.Stroke
+import com.alexdremov.notate.model.TextItem
+import com.alexdremov.notate.model.ToolType
 import com.alexdremov.notate.ui.controller.CanvasControllerImpl
 import com.alexdremov.notate.ui.controller.ViewportController
 import com.alexdremov.notate.ui.input.PenInputHandler
@@ -250,8 +252,62 @@ class OnyxCanvasView
                                 }
                             }
                         }
+
+                        override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
+                            if (currentTool.type == ToolType.TEXT) {
+                                viewScope.launch {
+                                    val inv = Matrix()
+                                    matrix.invert(inv)
+                                    val pts = floatArrayOf(e.x, e.y)
+                                    inv.mapPoints(pts)
+                                    val worldX = pts[0]
+                                    val worldY = pts[1]
+
+                                    val item = canvasController.getItemAt(worldX, worldY)
+
+                                    if (item is TextItem) {
+                                        showTextEditor(item)
+                                    } else {
+                                        showTextEditor(null, worldX, worldY)
+                                    }
+                                }
+                                return true
+                            }
+                            // Also allow tapping on a TextItem with Select tool to edit it?
+                            // For now stick to Text Tool for editing to keep modes clean.
+                            return super.onSingleTapConfirmed(e)
+                        }
                     },
                 )
+        }
+
+        private fun showTextEditor(
+            item: TextItem?,
+            x: Float = 0f,
+            y: Float = 0f,
+        ) {
+            val initialText = item?.text ?: ""
+            val fontSize = item?.fontSize ?: currentTool.width
+            val color = item?.color ?: currentTool.color
+
+            val dialog =
+                com.alexdremov.notate.ui.dialog.TextEditDialog(
+                    context,
+                    initialText,
+                    fontSize,
+                    color,
+                ) { newText ->
+                    viewScope.launch {
+                        if (item != null) {
+                            canvasController.updateText(item, newText)
+                        } else {
+                            if (newText.isNotBlank()) {
+                                canvasController.addText(newText, x, y, fontSize, color)
+                            }
+                        }
+                    }
+                }
+            dialog.show()
         }
 
         // --- Touch Routing ---
@@ -261,8 +317,10 @@ class OnyxCanvasView
 
             detectTwoFingerTap(event)
 
-            // 1. Gesture Detector (Long Press)
-            gestureDetector.onTouchEvent(event)
+            // 1. Gesture Detector (Long Press, Tap)
+            if (gestureDetector.onTouchEvent(event)) {
+                return true
+            }
 
             // 2. Selection Interaction (High Priority)
             val action = event.actionMasked

@@ -87,6 +87,17 @@ class PenSettingsPopup(
     }
 
     private fun setupMainUI() {
+        // Common: Remove Tool
+        binding.btnRemove.setOnClickListener {
+            onRemove(currentTool)
+            dismiss()
+        }
+
+        if (currentTool.type == com.alexdremov.notate.model.ToolType.TEXT) {
+            setupTextUI()
+            return
+        }
+
         // Layout is wrapped in ScrollView in XML to prevent clipping on smaller screens
         if (currentTool.type == com.alexdremov.notate.model.ToolType.ERASER) {
             setupEraserUI()
@@ -125,12 +136,173 @@ class PenSettingsPopup(
                 }
             },
         )
+    }
 
-        // --- Remove Tool ---
-        binding.btnRemove.setOnClickListener {
-            onRemove(currentTool)
-            dismiss()
+    private fun setupTextUI() {
+        binding.tvTitle.text = "Text Settings"
+        binding.gridStyles.visibility = View.GONE
+        binding.rgEraserTypes.visibility = View.GONE
+        binding.divider1.visibility = View.GONE
+        
+        // Show Font Size (Width)
+        binding.layoutWidthLabels.visibility = View.VISIBLE
+        binding.tvWidthLabel.text = "Font Size"
+        binding.sliderWidth.visibility = View.VISIBLE
+        
+        // Divider before colors
+        binding.divider2.visibility = View.VISIBLE
+        
+        // Show Color
+        binding.tvColorLabel.visibility = View.VISIBLE
+        binding.tvColorName.visibility = View.VISIBLE
+        binding.recyclerColors.visibility = View.VISIBLE
+        binding.btnRemove.visibility = View.VISIBLE
+
+        // Configure Slider for Font Size (px)
+        // Range: 10px to 100px
+        val currentSize = currentTool.width
+        binding.sliderWidth.valueFrom = 10f
+        binding.sliderWidth.valueTo = 100f
+        binding.sliderWidth.stepSize = 1f
+        binding.sliderWidth.value = currentSize.coerceIn(10f, 100f)
+        binding.tvWidthValue.text = "${binding.sliderWidth.value.toInt()} px"
+
+        binding.sliderWidth.addOnChangeListener { _, value, _ ->
+            binding.tvWidthValue.text = "${value.toInt()} px"
+            updateTool { it.copy(width = value) }
         }
+        
+        // Initialize Color UI (reusing Pen logic parts)
+        binding.tvColorName.text = com.alexdremov.notate.util.ColorNamer.getColorName(currentTool.color)
+        
+        // Re-use color adapter logic from setupPenUI or init
+        // We need to ensure colorAdapter is initialized.
+        // It is initialized in setupPenUI currently. I should move it to init or a common setup.
+        setupColorAdapter()
+    }
+
+    private fun setupColorAdapter() {
+         colorAdapter =
+            ColorAdapter(
+                colors = favorites,
+                onColorSelected = { color ->
+                    updateTool { it.copy(color = color) }
+                    binding.tvColorName.text =
+                        com.alexdremov.notate.util.ColorNamer
+                            .getColorName(color)
+                },
+                onAddClicked = {
+                    binding.viewFlipper.displayedChild = 1 // Go to Presets Page (Index 1)
+                    refreshHighQuality(binding.gridColorPresets)
+                },
+            )
+        binding.recyclerColors.layoutManager =
+            androidx.recyclerview.widget.GridLayoutManager(context, 2, androidx.recyclerview.widget.GridLayoutManager.HORIZONTAL, false)
+        binding.recyclerColors.adapter = colorAdapter
+
+        binding.recyclerColors.addOnScrollListener(
+            object : RecyclerView.OnScrollListener() {
+                override fun onScrollStateChanged(
+                    recyclerView: RecyclerView,
+                    newState: Int,
+                ) {
+                    if (newState == RecyclerView.SCROLL_STATE_DRAGGING) {
+                        com.alexdremov.notate.util.EpdFastModeController
+                            .enterFastMode()
+                    } else if (newState == RecyclerView.SCROLL_STATE_IDLE) {
+                        com.alexdremov.notate.util.EpdFastModeController
+                            .exitFastMode()
+                    }
+                }
+            },
+        )
+        
+        // Attach ItemTouchHelper (reusing code from setupPenUI)
+        val itemTouchHelper =
+            ItemTouchHelper(
+                object : ItemTouchHelper.Callback() {
+                    private var isOutside = false
+
+                    override fun getMovementFlags(
+                        recyclerView: RecyclerView,
+                        viewHolder: RecyclerView.ViewHolder,
+                    ): Int {
+                        if (viewHolder.adapterPosition == favorites.size) {
+                            return makeMovementFlags(0, 0)
+                        }
+                        val dragFlags = ItemTouchHelper.UP or ItemTouchHelper.DOWN or ItemTouchHelper.LEFT or ItemTouchHelper.RIGHT
+                        val swipeFlags = 0
+                        return makeMovementFlags(dragFlags, swipeFlags)
+                    }
+
+                    override fun onMove(
+                        recyclerView: RecyclerView,
+                        viewHolder: RecyclerView.ViewHolder,
+                        target: RecyclerView.ViewHolder,
+                    ): Boolean {
+                        if (target.adapterPosition == favorites.size) return false
+
+                        val fromPos = viewHolder.adapterPosition
+                        val toPos = target.adapterPosition
+                        if (fromPos == RecyclerView.NO_POSITION || toPos == RecyclerView.NO_POSITION) return false
+
+                        Collections.swap(favorites, fromPos, toPos)
+                        colorAdapter.notifyItemMoved(fromPos, toPos)
+                        PreferencesManager.saveFavoriteColors(context, favorites)
+                        return true
+                    }
+
+                    override fun onSwiped(
+                        viewHolder: RecyclerView.ViewHolder,
+                        direction: Int,
+                    ) {
+                    }
+
+                    override fun onChildDraw(
+                        c: android.graphics.Canvas,
+                        recyclerView: RecyclerView,
+                        viewHolder: RecyclerView.ViewHolder,
+                        dX: Float,
+                        dY: Float,
+                        actionState: Int,
+                        isCurrentlyActive: Boolean,
+                    ) {
+                        super.onChildDraw(c, recyclerView, viewHolder, dX, dY, actionState, isCurrentlyActive)
+
+                        if (actionState == ItemTouchHelper.ACTION_STATE_DRAG && isCurrentlyActive) {
+                            val itemView = viewHolder.itemView
+                            val centerX = itemView.left + dX + itemView.width / 2f
+                            val centerY = itemView.top + dY + itemView.height / 2f
+
+                            isOutside = centerX < 0 || centerX > recyclerView.width ||
+                                centerY < 0 || centerY > recyclerView.height
+
+                            itemView.alpha = if (isOutside) 0.5f else 1.0f
+                        }
+                    }
+
+                    override fun clearView(
+                        recyclerView: RecyclerView,
+                        viewHolder: RecyclerView.ViewHolder,
+                    ) {
+                        super.clearView(recyclerView, viewHolder)
+                        viewHolder.itemView.alpha = 1.0f
+
+                        if (isOutside) {
+                            val pos = viewHolder.adapterPosition
+                            if (pos != RecyclerView.NO_POSITION && pos < favorites.size) {
+                                favorites.removeAt(pos)
+                                colorAdapter.notifyItemRemoved(pos)
+                                PreferencesManager.saveFavoriteColors(context, favorites)
+                            }
+                            isOutside = false
+                        }
+                    }
+
+                    override fun isLongPressDragEnabled(): Boolean = true
+                },
+            )
+        itemTouchHelper.attachToRecyclerView(binding.recyclerColors)
     }
 
     private fun setupSelectUI() {

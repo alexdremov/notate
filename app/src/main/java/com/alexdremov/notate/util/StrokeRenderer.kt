@@ -194,6 +194,13 @@ object StrokeRenderer {
                     ImageRenderer.draw(canvas, paint, item, context, scale)
                     if (xfermode != null) paint.xfermode = null
                 }
+
+                is com.alexdremov.notate.model.TextItem -> {
+                    // Propagate paint (with potential xfermode) to TextRenderer
+                    if (xfermode != null) paint.xfermode = android.graphics.PorterDuffXfermode(xfermode)
+                    TextRenderer.draw(canvas, item, context, paint)
+                    if (xfermode != null) paint.xfermode = null
+                }
             }
         }
     }

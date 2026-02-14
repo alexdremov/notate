@@ -5,6 +5,7 @@ import com.alexdremov.notate.config.CanvasConfig
 import com.alexdremov.notate.model.BackgroundStyle
 import com.alexdremov.notate.model.Stroke
 import com.alexdremov.notate.model.Tag
+import com.alexdremov.notate.model.TextItem
 import com.alexdremov.notate.util.Logger
 import com.alexdremov.notate.util.StrokeGeometry
 import com.onyx.android.sdk.api.device.epd.EpdController
@@ -56,6 +57,28 @@ object CanvasSerializer {
             order = item.order,
             rotation = item.rotation,
             opacity = item.opacity,
+        )
+
+    fun toTextItemData(item: TextItem): TextItemData =
+        TextItemData(
+            text = item.text,
+            x = item.bounds.left,
+            y = item.bounds.top,
+            width = item.bounds.width(),
+            height = item.bounds.height(),
+            fontSize = item.fontSize,
+            color = item.color,
+            zIndex = item.zIndex,
+            order = item.order,
+            rotation = item.rotation,
+            opacity = item.opacity,
+            alignment =
+                when (item.alignment) {
+                    android.text.Layout.Alignment.ALIGN_OPPOSITE -> 1
+                    android.text.Layout.Alignment.ALIGN_CENTER -> 2
+                    else -> 0
+                },
+            backgroundColor = item.backgroundColor,
         )
 
     fun toData(
@@ -140,6 +163,25 @@ object CanvasSerializer {
             zIndex = sData.zIndex,
         )
     }
+
+    fun fromTextItemData(tData: TextItemData): TextItem =
+        TextItem(
+            text = tData.text,
+            fontSize = tData.fontSize,
+            color = tData.color,
+            bounds = RectF(tData.x, tData.y, tData.x + tData.width, tData.y + tData.height),
+            alignment =
+                when (tData.alignment) {
+                    1 -> android.text.Layout.Alignment.ALIGN_OPPOSITE
+                    2 -> android.text.Layout.Alignment.ALIGN_CENTER
+                    else -> android.text.Layout.Alignment.ALIGN_NORMAL
+                },
+            backgroundColor = tData.backgroundColor,
+            zIndex = tData.zIndex,
+            order = tData.order,
+            rotation = tData.rotation,
+            opacity = tData.opacity,
+        )
 
     data class LoadedCanvasState(
         val quadtree: com.alexdremov.notate.util.Quadtree,

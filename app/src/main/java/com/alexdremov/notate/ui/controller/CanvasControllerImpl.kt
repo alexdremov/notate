@@ -436,6 +436,89 @@ class CanvasControllerImpl(
         }
     }
 
+    override suspend fun addText(
+        text: String,
+        x: Float,
+        y: Float,
+        fontSize: Float,
+        color: Int,
+    ) {
+        operationMutex.withLock {
+            // Default width for new text box
+            val defaultWidth = 500f
+            // Estimate height (single line approx)
+            val estimatedHeight = fontSize * 1.5f
+            
+            val bounds = RectF(x, y, x + defaultWidth, y + estimatedHeight)
+            
+            val textItem = com.alexdremov.notate.model.TextItem(
+                text = text,
+                fontSize = fontSize,
+                color = color,
+                bounds = bounds
+            )
+
+            val added = model.addItem(textItem)
+            if (added != null) {
+                withContext(Dispatchers.Main) {
+                    renderer.updateTilesWithItem(added)
+                    // Select the new text item to allow immediate moving/resizing
+                    selectionManager.clearSelection()
+                    selectionManager.select(added)
+                    renderer.setHiddenItems(selectionManager.getSelectedIds())
+                    renderer.hideItemsInCache(listOf(added))
+                    generateSelectionImposter()
+                    renderer.invalidate()
+                    onContentChangedListener?.invoke()
+                }
+            }
+        }
+    }
+
+    override suspend fun updateText(
+        oldItem: com.alexdremov.notate.model.TextItem,
+        newText: String,
+    ) {
+        operationMutex.withLock {
+            // Measure new height
+            val newHeight = com.alexdremov.notate.util.TextRenderer.measureHeight(
+                context, 
+                newText, 
+                oldItem.bounds.width(), 
+                oldItem.fontSize
+            )
+            
+            // Create new item with updated text and bounds
+            val newBounds = RectF(
+                oldItem.bounds.left,
+                oldItem.bounds.top,
+                oldItem.bounds.right,
+                oldItem.bounds.top + newHeight
+            )
+            
+            val newItem = oldItem.copy(text = newText, bounds = newBounds)
+            
+            // Apply to Model
+            model.replaceItems(listOf(oldItem), listOf(newItem))
+            
+            withContext(Dispatchers.Main) {
+                // Calculate invalidation area (Union of old and new)
+                val unionBounds = RectF(oldItem.bounds)
+                unionBounds.union(newBounds)
+                unionBounds.inset(-10f, -10f) // Inflate for safety (shadows, anti-aliasing)
+
+                // Force refresh
+                renderer.refreshTiles(unionBounds)
+                
+                // Update renderer cache with new item
+                renderer.updateTilesWithItem(newItem)
+                
+                renderer.invalidate()
+                onContentChangedListener?.invoke()
+            }
+        }
+    }
+
     override suspend fun startMoveSelection() {
         if (!selectionManager.hasSelection()) return
 
@@ -546,14 +629,74 @@ class CanvasControllerImpl(
             }
 
             is CanvasImage -> {
-                val newBounds = RectF(item.bounds)
-                transform.mapRect(newBounds)
-                val values = FloatArray(9)
-                transform.getValues(values)
-                val scaleX = values[Matrix.MSCALE_X]
-                val skewY = values[Matrix.MSKEW_Y]
-                val rotation = kotlin.math.atan2(skewY.toDouble(), scaleX.toDouble()).toFloat()
-                item.copy(bounds = newBounds, rotation = item.rotation + Math.toDegrees(rotation.toDouble()).toFloat())
+                // 1. Calculate new center in World Space
+                val center = floatArrayOf(item.bounds.centerX(), item.bounds.centerY())
+                transform.mapPoints(center)
+
+                // 2. Calculate new width and height (decomposing scaling from the matrix)
+                val vW = floatArrayOf(item.bounds.width(), 0f)
+                transform.mapVectors(vW)
+                val newWidth = kotlin.math.hypot(vW[0], vW[1])
+
+                val vH = floatArrayOf(0f, item.bounds.height())
+                transform.mapVectors(vH)
+                val newHeight = kotlin.math.hypot(vH[0], vH[1])
+
+                // 3. Calculate rotation change
+                val vRot = floatArrayOf(1f, 0f)
+                transform.mapVectors(vRot)
+                val deltaRot = Math.toDegrees(kotlin.math.atan2(vRot[1].toDouble(), vRot[0].toDouble())).toFloat()
+
+                val newBounds = RectF(
+                    center[0] - newWidth / 2f,
+                    center[1] - newHeight / 2f,
+                    center[0] + newWidth / 2f,
+                    center[1] + newHeight / 2f
+                )
+
+                item.copy(bounds = newBounds, rotation = item.rotation + deltaRot)
+            }
+
+            is com.alexdremov.notate.model.TextItem -> {
+                // 1. Calculate new center in World Space
+                val center = floatArrayOf(item.bounds.centerX(), item.bounds.centerY())
+                transform.mapPoints(center)
+
+                // 2. Calculate new width (scaling along the local horizontal axis)
+                val vW = floatArrayOf(item.bounds.width(), 0f)
+                transform.mapVectors(vW)
+                val newWidth = kotlin.math.hypot(vW[0], vW[1])
+
+                // 3. Calculate rotation change
+                val vRot = floatArrayOf(1f, 0f)
+                transform.mapVectors(vRot)
+                val deltaRot = Math.toDegrees(kotlin.math.atan2(vRot[1].toDouble(), vRot[0].toDouble())).toFloat()
+
+                // 4. USER REQUEST: Keep font size constant.
+                // Text reflows into the new width.
+                val fontSize = item.fontSize
+
+                // 5. Re-measure height based on new width
+                val newHeight = com.alexdremov.notate.util.TextRenderer.measureHeight(
+                    context,
+                    item.text,
+                    newWidth,
+                    fontSize
+                )
+
+                // 6. Reconstruct logical bounds (axis-aligned in logical space)
+                val newBounds = RectF(
+                    center[0] - newWidth / 2f,
+                    center[1] - newHeight / 2f,
+                    center[0] + newWidth / 2f,
+                    center[1] + newHeight / 2f
+                )
+
+                item.copy(
+                    bounds = newBounds,
+                    fontSize = fontSize,
+                    rotation = item.rotation + deltaRot
+                )
             }
 
             else -> {
@@ -709,6 +852,7 @@ class CanvasControllerImpl(
                 newBounds.set(newItems[0].bounds)
                 for (i in 1 until newItems.size) newBounds.union(newItems[i].bounds)
             }
+            newBounds.inset(-5f, -5f) // Safety padding
 
             // Also calculate original bounds for invalidation
             val originalBounds = RectF()
@@ -716,6 +860,7 @@ class CanvasControllerImpl(
                 originalBounds.set(originalItems[0].bounds)
                 for (i in 1 until originalItems.size) originalBounds.union(originalItems[i].bounds)
             }
+            originalBounds.inset(-5f, -5f) // Safety padding
 
             // Apply to Model
             if (ids.size > 50) {
@@ -761,16 +906,21 @@ class CanvasControllerImpl(
             } else {
                 withContext(Dispatchers.Main) {
                     // Atomic transition for finalizing move:
-                    if (originalItems.isNotEmpty()) {
-                        renderer.hideItemsInCache(originalItems)
-                    }
+                    // 1. Unhide everything (so standard rendering logic takes over)
+                    renderer.setHiddenItems(emptySet())
+                    
+                    // 2. Explicitly remove old items from cache if the renderer supports it
+                    // (This might be redundant if invalidateTiles forces a full refresh, but safe)
+                    renderer.hideItemsInCache(originalItems)
+
+                    // 3. Update cache with new items immediately
                     if (committedItems.isNotEmpty()) {
                         renderer.updateTilesWithItems(committedItems)
                     }
-                    renderer.setHiddenItems(emptySet())
 
-                    renderer.invalidateTiles(originalBounds)
-                    renderer.invalidateTiles(newBounds)
+                    // 4. Force refresh of the dirty areas (Old position -> Clear, New Position -> Draw)
+                    renderer.refreshTiles(originalBounds) // Use refreshTiles for stronger invalidation
+                    renderer.refreshTiles(newBounds)
 
                     renderer.invalidate()
                     onContentChangedListener?.invoke()

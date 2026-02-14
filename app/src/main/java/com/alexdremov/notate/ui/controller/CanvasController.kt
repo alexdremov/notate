@@ -91,6 +91,19 @@ interface CanvasController {
         height: Float,
     )
 
+    suspend fun addText(
+        text: String,
+        x: Float,
+        y: Float,
+        fontSize: Float,
+        color: Int,
+    )
+
+    suspend fun updateText(
+        oldItem: com.alexdremov.notate.model.TextItem,
+        newText: String,
+    )
+
     suspend fun startMoveSelection()
 
     suspend fun moveSelection(
