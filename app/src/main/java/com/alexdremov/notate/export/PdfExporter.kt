@@ -440,7 +440,7 @@ object PdfExporter {
         document: PDDocument,
         stream: PDPageContentStream,
         item: TextItem,
-        context: android.content.Context
+        context: android.content.Context,
     ) {
         val w = ceil(item.bounds.width()).toInt().coerceAtLeast(1)
         val h = ceil(item.bounds.height()).toInt().coerceAtLeast(1)
@@ -449,10 +449,11 @@ object PdfExporter {
         val pageInfo = PdfDocument.PageInfo.Builder(w, h, 1).create()
         val page = pdfDoc.startPage(pageInfo)
 
-        val renderItem = item.copy(
-            bounds = RectF(0f, 0f, w.toFloat(), h.toFloat()),
-            rotation = 0f
-        )
+        val renderItem =
+            item.copy(
+                bounds = RectF(0f, 0f, w.toFloat(), h.toFloat()),
+                rotation = 0f,
+            )
 
         TextRenderer.draw(page.canvas, renderItem, context)
         pdfDoc.finishPage(page)
@@ -477,9 +478,18 @@ object PdfExporter {
             // 1. Translate to Center
             // 2. Rotate
             // 3. Translate to top-left of the form (relative to center)
-            stream.transform(com.tom_roush.pdfbox.util.Matrix.getTranslateInstance(centerX, centerY))
-            stream.transform(com.tom_roush.pdfbox.util.Matrix.getRotateInstance(rad.toDouble(), 0f, 0f))
-            stream.transform(com.tom_roush.pdfbox.util.Matrix.getTranslateInstance(-w / 2f, -h / 2f))
+            stream.transform(
+                com.tom_roush.pdfbox.util.Matrix
+                    .getTranslateInstance(centerX, centerY),
+            )
+            stream.transform(
+                com.tom_roush.pdfbox.util.Matrix
+                    .getRotateInstance(rad.toDouble(), 0f, 0f),
+            )
+            stream.transform(
+                com.tom_roush.pdfbox.util.Matrix
+                    .getTranslateInstance(-w / 2f, -h / 2f),
+            )
 
             stream.drawForm(form)
             stream.restoreGraphicsState()

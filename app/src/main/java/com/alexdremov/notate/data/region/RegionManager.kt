@@ -508,7 +508,7 @@ class RegionManager(
                             removedCount++
                         }
                         if (removedCount > 1) {
-                             Logger.w("RegionManager", "Removed $removedCount duplicates of item ${item.order} from Quadtree")
+                            Logger.w("RegionManager", "Removed $removedCount duplicates of item ${item.order} from Quadtree")
                         }
                     }
 

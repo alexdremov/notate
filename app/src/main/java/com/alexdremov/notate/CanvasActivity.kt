@@ -330,14 +330,6 @@ class CanvasActivity : AppCompatActivity() {
             }
         binding.toolbarContainer.addView(composeToolbar)
 
-        binding.toolbarContainer.setOnTouchListener { _, event ->
-            if (event.action == android.view.MotionEvent.ACTION_DOWN) {
-                lifecycleScope.launch { binding.canvasView.getController().clearSelection() }
-                binding.canvasView.dismissActionPopup()
-            }
-            false
-        }
-
         sidebarController =
             SettingsSidebarController(
                 this,
@@ -634,11 +626,22 @@ class CanvasActivity : AppCompatActivity() {
         targetRect: android.graphics.Rect,
     ) {
         Logger.d("NotateDebug", "handleToolClick ID=$toolId")
-        lifecycleScope.launch { binding.canvasView.getController().clearSelection() }
+
+        val item = viewModel.toolbarItems.value.find { it.id == toolId }
+        val isSelectionSafeTool =
+            when (item) {
+                is ToolbarItem.Pen -> item.penTool.type == ToolType.TEXT
+                is ToolbarItem.Select -> true
+                else -> false
+            }
+
+        // If clicking same tool (opening settings) OR switching to TEXT/SELECT, preserve selection.
+        if (viewModel.activeToolId.value != toolId && !isSelectionSafeTool) {
+            lifecycleScope.launch { binding.canvasView.getController().clearSelection() }
+        }
         binding.canvasView.dismissActionPopup()
 
         if (viewModel.activeToolId.value == toolId) {
-            val item = viewModel.toolbarItems.value.find { it.id == toolId }
             val tool =
                 when (item) {
                     is ToolbarItem.Pen -> item.penTool
@@ -651,7 +654,17 @@ class CanvasActivity : AppCompatActivity() {
                 com.alexdremov.notate.ui.dialog.PenSettingsPopup(
                     this,
                     tool,
-                    onUpdate = { updatedTool -> viewModel.updateTool(updatedTool) },
+                    onUpdate = { updatedTool ->
+                        viewModel.updateTool(updatedTool)
+                        if (updatedTool.type == ToolType.TEXT) {
+                            lifecycleScope.launch {
+                                binding.canvasView.getController().updateSelectedTextStyle(
+                                    fontSize = updatedTool.width,
+                                    color = updatedTool.color,
+                                )
+                            }
+                        }
+                    },
                     onRemove = { toolToRemove -> viewModel.removePen(toolToRemove.id) },
                     onDismiss = {
                         com.alexdremov.notate.util.EpdFastModeController

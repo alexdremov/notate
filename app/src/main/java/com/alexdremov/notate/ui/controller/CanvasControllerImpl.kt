@@ -448,15 +448,16 @@ class CanvasControllerImpl(
             val defaultWidth = 500f
             // Estimate height (single line approx)
             val estimatedHeight = fontSize * 1.5f
-            
+
             val bounds = RectF(x, y, x + defaultWidth, y + estimatedHeight)
-            
-            val textItem = com.alexdremov.notate.model.TextItem(
-                text = text,
-                fontSize = fontSize,
-                color = color,
-                bounds = bounds
-            )
+
+            val textItem =
+                com.alexdremov.notate.model.TextItem(
+                    text = text,
+                    fontSize = fontSize,
+                    color = color,
+                    bounds = bounds,
+                )
 
             val added = model.addItem(textItem)
             if (added != null) {
@@ -481,26 +482,29 @@ class CanvasControllerImpl(
     ) {
         operationMutex.withLock {
             // Measure new height
-            val newHeight = com.alexdremov.notate.util.TextRenderer.measureHeight(
-                context, 
-                newText, 
-                oldItem.bounds.width(), 
-                oldItem.fontSize
-            )
-            
+            val newHeight =
+                com.alexdremov.notate.util.TextRenderer.measureHeight(
+                    context,
+                    newText,
+                    oldItem.bounds.width(),
+                    oldItem.fontSize,
+                )
+
             // Create new item with updated text and bounds
-            val newBounds = RectF(
-                oldItem.bounds.left,
-                oldItem.bounds.top,
-                oldItem.bounds.right,
-                oldItem.bounds.top + newHeight
-            )
-            
+            val newBounds =
+                RectF(
+                    oldItem.bounds.left,
+                    oldItem.bounds.top,
+                    oldItem.bounds.right,
+                    oldItem.bounds.top + newHeight,
+                )
+
             val newItem = oldItem.copy(text = newText, bounds = newBounds)
-            
-            // Apply to Model
-            model.replaceItems(listOf(oldItem), listOf(newItem))
-            
+
+            // Apply to Model and get the committed item with new ID
+            val committedItems = model.replaceItems(listOf(oldItem), listOf(newItem))
+            val committedItem = committedItems.firstOrNull() as? com.alexdremov.notate.model.TextItem ?: return@withLock
+
             withContext(Dispatchers.Main) {
                 // Calculate invalidation area (Union of old and new)
                 val unionBounds = RectF(oldItem.bounds)
@@ -509,10 +513,84 @@ class CanvasControllerImpl(
 
                 // Force refresh
                 renderer.refreshTiles(unionBounds)
-                
+
                 // Update renderer cache with new item
-                renderer.updateTilesWithItem(newItem)
-                
+                renderer.updateTilesWithItem(committedItem)
+
+                // Re-select to allow immediate further editing/moving
+                selectionManager.clearSelection()
+                selectionManager.select(committedItem)
+                renderer.setHiddenItems(selectionManager.getSelectedIds())
+                renderer.hideItemsInCache(listOf(committedItem))
+                generateSelectionImposter()
+
+                renderer.invalidate()
+                onContentChangedListener?.invoke()
+            }
+        }
+    }
+
+    override suspend fun updateSelectedTextStyle(
+        fontSize: Float?,
+        color: Int?,
+    ) {
+        if (!selectionManager.hasSelection()) return
+
+        operationMutex.withLock {
+            val selectedItems = fetchSelectedItems()
+            val textItems = selectedItems.filterIsInstance<com.alexdremov.notate.model.TextItem>()
+
+            if (textItems.isEmpty()) return@withLock
+
+            val updatedItems =
+                textItems.map { item ->
+                    val newFontSize = fontSize ?: item.fontSize
+                    val newColor = color ?: item.color
+
+                    // Re-measure height if font size changed
+                    val newHeight =
+                        if (newFontSize != item.fontSize) {
+                            com.alexdremov.notate.util.TextRenderer.measureHeight(
+                                context,
+                                item.text,
+                                item.bounds.width(),
+                                newFontSize,
+                            )
+                        } else {
+                            item.bounds.height()
+                        }
+
+                    val newBounds =
+                        RectF(
+                            item.bounds.left,
+                            item.bounds.top,
+                            item.bounds.right,
+                            item.bounds.top + newHeight,
+                        )
+
+                    item.copy(fontSize = newFontSize, color = newColor, bounds = newBounds)
+                }
+
+            val committedItems = model.replaceItems(textItems, updatedItems)
+
+            withContext(Dispatchers.Main) {
+                val totalBounds = RectF()
+                textItems.forEach { totalBounds.union(selectionManager.getItemWorldAABB(it)) }
+                committedItems.forEach { totalBounds.union(selectionManager.getItemWorldAABB(it)) }
+                totalBounds.inset(-30f, -30f) // Slightly larger padding for safety
+
+                renderer.refreshTiles(totalBounds)
+                renderer.updateTilesWithItems(committedItems)
+
+                // Re-select updated items to keep handles correct and allow further updates
+                selectionManager.clearSelection()
+                selectionManager.selectAll(committedItems)
+
+                // Sync renderer hidden state with new selection
+                renderer.setHiddenItems(selectionManager.getSelectedIds())
+                renderer.hideItemsInCache(committedItems)
+                generateSelectionImposter()
+
                 renderer.invalidate()
                 onContentChangedListener?.invoke()
             }
@@ -647,12 +725,13 @@ class CanvasControllerImpl(
                 transform.mapVectors(vRot)
                 val deltaRot = Math.toDegrees(kotlin.math.atan2(vRot[1].toDouble(), vRot[0].toDouble())).toFloat()
 
-                val newBounds = RectF(
-                    center[0] - newWidth / 2f,
-                    center[1] - newHeight / 2f,
-                    center[0] + newWidth / 2f,
-                    center[1] + newHeight / 2f
-                )
+                val newBounds =
+                    RectF(
+                        center[0] - newWidth / 2f,
+                        center[1] - newHeight / 2f,
+                        center[0] + newWidth / 2f,
+                        center[1] + newHeight / 2f,
+                    )
 
                 item.copy(bounds = newBounds, rotation = item.rotation + deltaRot)
             }
@@ -677,25 +756,27 @@ class CanvasControllerImpl(
                 val fontSize = item.fontSize
 
                 // 5. Re-measure height based on new width
-                val newHeight = com.alexdremov.notate.util.TextRenderer.measureHeight(
-                    context,
-                    item.text,
-                    newWidth,
-                    fontSize
-                )
+                val newHeight =
+                    com.alexdremov.notate.util.TextRenderer.measureHeight(
+                        context,
+                        item.text,
+                        newWidth,
+                        fontSize,
+                    )
 
                 // 6. Reconstruct logical bounds (axis-aligned in logical space)
-                val newBounds = RectF(
-                    center[0] - newWidth / 2f,
-                    center[1] - newHeight / 2f,
-                    center[0] + newWidth / 2f,
-                    center[1] + newHeight / 2f
-                )
+                val newBounds =
+                    RectF(
+                        center[0] - newWidth / 2f,
+                        center[1] - newHeight / 2f,
+                        center[0] + newWidth / 2f,
+                        center[1] + newHeight / 2f,
+                    )
 
                 item.copy(
                     bounds = newBounds,
                     fontSize = fontSize,
-                    rotation = item.rotation + deltaRot
+                    rotation = item.rotation + deltaRot,
                 )
             }
 
@@ -908,7 +989,7 @@ class CanvasControllerImpl(
                     // Atomic transition for finalizing move:
                     // 1. Unhide everything (so standard rendering logic takes over)
                     renderer.setHiddenItems(emptySet())
-                    
+
                     // 2. Explicitly remove old items from cache if the renderer supports it
                     // (This might be redundant if invalidateTiles forces a full refresh, but safe)
                     renderer.hideItemsInCache(originalItems)

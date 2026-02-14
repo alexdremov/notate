@@ -224,7 +224,7 @@ dependencies {
             }
         }
     }
-    
+
     modules {
         module("org.jetbrains:annotations-java5") {
             replacedBy("org.jetbrains:annotations", "annotations-java5 is a subset of annotations and causes duplicate classes")

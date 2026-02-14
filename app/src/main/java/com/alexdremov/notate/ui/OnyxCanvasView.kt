@@ -254,27 +254,30 @@ class OnyxCanvasView
                         }
 
                         override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
-                            if (currentTool.type == ToolType.TEXT) {
-                                viewScope.launch {
-                                    val inv = Matrix()
-                                    matrix.invert(inv)
-                                    val pts = floatArrayOf(e.x, e.y)
-                                    inv.mapPoints(pts)
-                                    val worldX = pts[0]
-                                    val worldY = pts[1]
+                            viewScope.launch {
+                                val inv = Matrix()
+                                matrix.invert(inv)
+                                val pts = floatArrayOf(e.x, e.y)
+                                inv.mapPoints(pts)
+                                val worldX = pts[0]
+                                val worldY = pts[1]
 
-                                    val item = canvasController.getItemAt(worldX, worldY)
+                                val item = canvasController.getItemAt(worldX, worldY)
 
+                                if (currentTool.type == ToolType.TEXT) {
                                     if (item is TextItem) {
                                         showTextEditor(item)
                                     } else {
                                         showTextEditor(null, worldX, worldY)
                                     }
+                                    return@launch
+                                } else if (currentTool.type == ToolType.SELECT && item is TextItem) {
+                                    showTextEditor(item)
+                                    return@launch
                                 }
-                                return true
                             }
-                            // Also allow tapping on a TextItem with Select tool to edit it?
-                            // For now stick to Text Tool for editing to keep modes clean.
+
+                            if (currentTool.type == ToolType.TEXT) return true
                             return super.onSingleTapConfirmed(e)
                         }
                     },

@@ -143,15 +143,15 @@ class PenSettingsPopup(
         binding.gridStyles.visibility = View.GONE
         binding.rgEraserTypes.visibility = View.GONE
         binding.divider1.visibility = View.GONE
-        
+
         // Show Font Size (Width)
         binding.layoutWidthLabels.visibility = View.VISIBLE
         binding.tvWidthLabel.text = "Font Size"
         binding.sliderWidth.visibility = View.VISIBLE
-        
+
         // Divider before colors
         binding.divider2.visibility = View.VISIBLE
-        
+
         // Show Color
         binding.tvColorLabel.visibility = View.VISIBLE
         binding.tvColorName.visibility = View.VISIBLE
@@ -171,10 +171,12 @@ class PenSettingsPopup(
             binding.tvWidthValue.text = "${value.toInt()} px"
             updateTool { it.copy(width = value) }
         }
-        
+
         // Initialize Color UI (reusing Pen logic parts)
-        binding.tvColorName.text = com.alexdremov.notate.util.ColorNamer.getColorName(currentTool.color)
-        
+        binding.tvColorName.text =
+            com.alexdremov.notate.util.ColorNamer
+                .getColorName(currentTool.color)
+
         // Re-use color adapter logic from setupPenUI or init
         // We need to ensure colorAdapter is initialized.
         // It is initialized in setupPenUI currently. I should move it to init or a common setup.
@@ -182,7 +184,7 @@ class PenSettingsPopup(
     }
 
     private fun setupColorAdapter() {
-         colorAdapter =
+        colorAdapter =
             ColorAdapter(
                 colors = favorites,
                 onColorSelected = { color ->
@@ -216,7 +218,7 @@ class PenSettingsPopup(
                 }
             },
         )
-        
+
         // Attach ItemTouchHelper (reusing code from setupPenUI)
         val itemTouchHelper =
             ItemTouchHelper(
