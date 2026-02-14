@@ -27,13 +27,15 @@ object TextRenderer {
             // Note: Syntax Highlight requires a grammar locator, which we skip for simplicity in V1
             // or we could add a basic one. For now, let's skip SyntaxHighlightPlugin to avoid extra setup complexity
             // unless requested. Strikethrough, Tables, TaskList are straightforward.
-            
-            markwon = Markwon.builder(context)
-                .usePlugin(StrikethroughPlugin.create())
-                .usePlugin(TablePlugin.create(context))
-                .usePlugin(TaskListPlugin.create(context))
-                .build()
-            
+
+            markwon =
+                Markwon
+                    .builder(context)
+                    .usePlugin(StrikethroughPlugin.create())
+                    .usePlugin(TablePlugin.create(context))
+                    .usePlugin(TaskListPlugin.create(context))
+                    .build()
+
             markwonRef = WeakReference(markwon)
         }
         return markwon
@@ -43,18 +45,20 @@ object TextRenderer {
         context: Context,
         text: String,
         width: Float,
-        fontSize: Float
+        fontSize: Float,
     ): Float {
         val markwon = getMarkwon(context)
         val spanned = markwon.toMarkdown(text)
         val paint = TextPaint(Paint.ANTI_ALIAS_FLAG)
         paint.textSize = fontSize
-        
-        val layout = StaticLayout.Builder.obtain(spanned, 0, spanned.length, paint, ceil(width).toInt().coerceAtLeast(1))
-            .setLineSpacing(0f, 1.0f)
-            .setIncludePad(true)
-            .build()
-            
+
+        val layout =
+            StaticLayout.Builder
+                .obtain(spanned, 0, spanned.length, paint, ceil(width).toInt().coerceAtLeast(1))
+                .setLineSpacing(0f, 1.0f)
+                .setIncludePad(true)
+                .build()
+
         return layout.height.toFloat()
     }
 
@@ -72,22 +76,24 @@ object TextRenderer {
             // Cache Logic
             var layout = item.renderCache
             val targetWidth = ceil(item.bounds.width()).toInt().coerceAtLeast(1)
-            
+
             if (layout == null || layout.text != item.text || layout.width != targetWidth) {
                 // Recreate Layout
                 val spanned = markwon.toMarkdown(item.text)
                 val textPaint = TextPaint(Paint.ANTI_ALIAS_FLAG)
                 textPaint.textSize = item.fontSize
                 textPaint.color = item.color
-                
+
                 // Adjust density? Usually textSize is in pixels here if we don't scale it.
                 // Assuming item.fontSize is in canvas units (pixels).
 
-                layout = StaticLayout.Builder.obtain(spanned, 0, spanned.length, textPaint, targetWidth)
-                    .setAlignment(item.alignment)
-                    .setLineSpacing(0f, 1.0f)
-                    .setIncludePad(true)
-                    .build()
+                layout =
+                    StaticLayout.Builder
+                        .obtain(spanned, 0, spanned.length, textPaint, targetWidth)
+                        .setAlignment(item.alignment)
+                        .setLineSpacing(0f, 1.0f)
+                        .setIncludePad(true)
+                        .build()
 
                 item.renderCache = layout
             }
@@ -96,7 +102,7 @@ object TextRenderer {
             canvas.save()
             // Translate to position
             canvas.translate(item.bounds.left, item.bounds.top)
-            
+
             // Rotation
             if (item.rotation != 0f) {
                 // Rotate around center of the text box
@@ -115,25 +121,25 @@ object TextRenderer {
                 val height = layout.height.toFloat()
                 canvas.drawRect(0f, 0f, item.bounds.width(), height, bgPaint)
             }
-            
+
             // Apply external paint properties (Xfermode) to Layout Paint
             val originalXfermode = layout.paint.xfermode
             if (paint?.xfermode != null) {
                 layout.paint.xfermode = paint.xfermode
             }
-            
+
             // Opacity
             val originalAlpha = layout.paint.alpha
             if (item.opacity < 1.0f) {
-               layout.paint.alpha = (item.opacity * 255).toInt()
+                layout.paint.alpha = (item.opacity * 255).toInt()
             }
 
             layout.draw(canvas)
-            
+
             // Restore Paint State
             layout.paint.xfermode = originalXfermode
-             if (item.opacity < 1.0f) {
-               layout.paint.alpha = originalAlpha
+            if (item.opacity < 1.0f) {
+                layout.paint.alpha = originalAlpha
             }
 
             canvas.restore()

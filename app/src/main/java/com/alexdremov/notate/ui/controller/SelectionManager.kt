@@ -271,15 +271,14 @@ class SelectionManager {
         }
     }
 
-    private fun getItemRotation(item: CanvasItem): Float {
-        return when (item) {
+    fun getItemRotation(item: CanvasItem): Float =
+        when (item) {
             is TextItem -> item.rotation
             is CanvasImage -> item.rotation
             else -> 0f
         }
-    }
 
-    private fun getItemWorldAABB(item: CanvasItem): RectF {
+    fun getItemWorldAABB(item: CanvasItem): RectF {
         val rot = getItemRotation(item)
         if (rot == 0f) return item.bounds
 

@@ -682,7 +682,7 @@ fun RenderToolbarItemIcon(item: ToolbarItem) {
                 Text(
                     text = "T",
                     style = MaterialTheme.typography.titleLarge,
-                    color = Color.Black
+                    color = Color.Black,
                 )
             } else {
                 val resId =

@@ -17,7 +17,6 @@ data class TextItem(
     val rotation: Float = 0f,
     val opacity: Float = 1.0f,
 ) : CanvasItem {
-
     @Transient
     var renderCache: StaticLayout? = null
 

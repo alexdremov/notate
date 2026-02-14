@@ -106,6 +106,14 @@ interface CanvasController {
         newText: String,
     )
 
+    /**
+     * Updates the style (font size, color) of all selected text items.
+     */
+    suspend fun updateSelectedTextStyle(
+        fontSize: Float? = null,
+        color: Int? = null,
+    )
+
     suspend fun startMoveSelection()
 
     suspend fun moveSelection(
