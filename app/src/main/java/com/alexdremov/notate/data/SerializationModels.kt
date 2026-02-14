@@ -52,6 +52,7 @@ data class RegionProto(
     @ProtoNumber(2) val idY: Int,
     @ProtoNumber(3) val strokes: List<StrokeData> = emptyList(),
     @ProtoNumber(4) val images: List<CanvasImageData> = emptyList(),
+    @ProtoNumber(5) val texts: List<TextItemData> = emptyList(),
 )
 
 @Serializable
@@ -84,6 +85,23 @@ data class CanvasImageData(
     val rotation: Float = 0f,
     @ProtoNumber(9)
     val opacity: Float = 1.0f,
+)
+
+@Serializable
+data class TextItemData(
+    @ProtoNumber(1) val text: String,
+    @ProtoNumber(2) val x: Float,
+    @ProtoNumber(3) val y: Float,
+    @ProtoNumber(4) val width: Float,
+    @ProtoNumber(5) val height: Float,
+    @ProtoNumber(6) val fontSize: Float,
+    @ProtoNumber(7) val color: Int,
+    @ProtoNumber(8) val zIndex: Float,
+    @ProtoNumber(9) val order: Long,
+    @ProtoNumber(10) val rotation: Float = 0f,
+    @ProtoNumber(11) val opacity: Float = 1.0f,
+    @ProtoNumber(12) val alignment: Int = 0, // 0: Normal, 1: Opposite, 2: Center
+    @ProtoNumber(13) val backgroundColor: Int = 0,
 )
 
 @Serializable

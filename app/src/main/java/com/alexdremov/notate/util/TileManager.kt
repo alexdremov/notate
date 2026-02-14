@@ -162,6 +162,7 @@ class TileManager(
         val snapshot = tileCache.snapshot()
         val unionBounds = RectF()
         items.forEach { unionBounds.union(it.bounds) }
+        unionBounds.inset(-50f, -50f) // Safety margin for text/strokes rendering outside bounds
 
         for ((key, bitmap) in snapshot) {
             if (bitmap == null || bitmap.isRecycled || bitmap == tileCache.errorBitmap) continue

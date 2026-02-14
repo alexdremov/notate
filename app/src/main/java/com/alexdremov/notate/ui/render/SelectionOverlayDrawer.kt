@@ -143,6 +143,18 @@ class SelectionOverlayDrawer(
             canvas.drawCircle(hx, hy, handleRadius, handleBorderPaint)
         }
 
+        // Draw Mid-Handles (Side Pull Points) - Squares
+        val squareSize = handleRadius * 0.65f
+        for (i in 0 until 4) {
+            val idx1 = i * 2
+            val idx2 = ((i + 1) % 4) * 2
+            val mx = (screenCorners[idx1] + screenCorners[idx2]) / 2f
+            val my = (screenCorners[idx1 + 1] + screenCorners[idx2 + 1]) / 2f
+
+            canvas.drawRect(mx - squareSize, my - squareSize, mx + squareSize, my + squareSize, handlePaint)
+            canvas.drawRect(mx - squareSize, my - squareSize, mx + squareSize, my + squareSize, handleBorderPaint)
+        }
+
         drawRotateHandle(canvas, screenCorners, handleRadius)
     }
 
@@ -163,7 +175,7 @@ class SelectionOverlayDrawer(
         val ux = dy / len
         val uy = -dx / len
 
-        val handleOffset = 50f
+        val handleOffset = 80f
         val rhx = mx + ux * handleOffset
         val rhy = my + uy * handleOffset
 

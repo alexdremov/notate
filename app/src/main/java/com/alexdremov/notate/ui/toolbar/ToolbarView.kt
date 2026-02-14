@@ -677,17 +677,26 @@ fun SettingsButton(onClick: () -> Unit) {
 fun RenderToolbarItemIcon(item: ToolbarItem) {
     when (item) {
         is ToolbarItem.Pen -> {
-            val resId =
-                when (item.penTool.strokeType) {
-                    StrokeType.BALLPOINT -> R.drawable.stylus_ballpoint_24
-                    StrokeType.FINELINER -> R.drawable.stylus_fineliner_24
-                    StrokeType.HIGHLIGHTER -> R.drawable.stylus_highlighter_24
-                    StrokeType.BRUSH -> R.drawable.stylus_brush_24
-                    StrokeType.CHARCOAL -> R.drawable.stylus_pen_24
-                    StrokeType.DASH -> R.drawable.stylus_dash_24
-                    else -> R.drawable.stylus_fountain_pen_24
-                }
-            Icon(painter = painterResource(resId), contentDescription = item.penTool.name, tint = Color.Black)
+            // Handle Text Tool specially to show 'T'
+            if (item.penTool.type == ToolType.TEXT) {
+                Text(
+                    text = "T",
+                    style = MaterialTheme.typography.titleLarge,
+                    color = Color.Black
+                )
+            } else {
+                val resId =
+                    when (item.penTool.strokeType) {
+                        StrokeType.BALLPOINT -> R.drawable.stylus_ballpoint_24
+                        StrokeType.FINELINER -> R.drawable.stylus_fineliner_24
+                        StrokeType.HIGHLIGHTER -> R.drawable.stylus_highlighter_24
+                        StrokeType.BRUSH -> R.drawable.stylus_brush_24
+                        StrokeType.CHARCOAL -> R.drawable.stylus_pen_24
+                        StrokeType.DASH -> R.drawable.stylus_dash_24
+                        else -> R.drawable.stylus_fountain_pen_24
+                    }
+                Icon(painter = painterResource(resId), contentDescription = item.penTool.name, tint = Color.Black)
+            }
         }
 
         is ToolbarItem.Eraser -> {
@@ -762,11 +771,24 @@ fun ToolbarEditPanel(
         ) {
             // Add Pen
             AddItemButton(
-                item = ToolbarItem.Pen(PenTool.defaultPens()[0]), // Dummy for icon
+                item = ToolbarItem.Pen(PenTool.defaultPens().first { it.type == ToolType.PEN }),
                 label = "Pen",
                 onClick = { viewModel.addPen() },
             )
 
+            // Add Text
+            val defaultText = PenTool.defaultPens().find { it.type == ToolType.TEXT }!!
+            AddItemButton(
+                item = ToolbarItem.Pen(defaultText),
+                label = "Text",
+                onClick = { viewModel.addToolbarItem(ToolbarItem.Pen(defaultText)) },
+            )
+        }
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceEvenly,
+        ) {
             // Add Eraser
             val defaultEraser = PenTool.defaultPens().find { it.type == ToolType.ERASER }!!
             AddItemButton(
@@ -774,12 +796,7 @@ fun ToolbarEditPanel(
                 label = "Eraser",
                 onClick = { viewModel.addToolbarItem(ToolbarItem.Eraser(defaultEraser)) },
             )
-        }
 
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceEvenly,
-        ) {
             // Add Select
             val defaultSelect = PenTool.defaultPens().find { it.type == ToolType.SELECT }!!
             AddItemButton(
@@ -787,12 +804,24 @@ fun ToolbarEditPanel(
                 label = "Select",
                 onClick = { viewModel.addToolbarItem(ToolbarItem.Select(defaultSelect)) },
             )
+        }
 
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceEvenly,
+        ) {
             // Add Undo
             AddItemButton(
                 item = ToolbarItem.Action(ActionType.UNDO),
                 label = "Undo",
                 onClick = { viewModel.addToolbarItem(ToolbarItem.Action(ActionType.UNDO)) },
+            )
+
+            // Add Redo
+            AddItemButton(
+                item = ToolbarItem.Action(ActionType.REDO),
+                label = "Redo",
+                onClick = { viewModel.addToolbarItem(ToolbarItem.Action(ActionType.REDO)) },
             )
         }
 
@@ -800,13 +829,6 @@ fun ToolbarEditPanel(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceEvenly,
         ) {
-            // Add Redo
-            AddItemButton(
-                item = ToolbarItem.Action(ActionType.REDO),
-                label = "Redo",
-                onClick = { viewModel.addToolbarItem(ToolbarItem.Action(ActionType.REDO)) },
-            )
-
             // Add Image
             AddItemButton(
                 item = ToolbarItem.Action(ActionType.INSERT_IMAGE),

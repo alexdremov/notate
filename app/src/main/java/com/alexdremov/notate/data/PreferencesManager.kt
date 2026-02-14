@@ -371,6 +371,13 @@ object PreferencesManager {
                             .Select(tool),
                     )
                 }
+
+                com.alexdremov.notate.model.ToolType.TEXT -> {
+                    items.add(
+                        com.alexdremov.notate.model.ToolbarItem
+                            .Pen(tool), // Text is treated as a Pen tool in ToolbarItem for now or needs a new wrapper
+                    )
+                }
             }
         }
 

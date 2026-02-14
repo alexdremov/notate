@@ -153,6 +153,7 @@ class InfiniteCanvasModel {
                 when (item) {
                     is Stroke -> item.copy(strokeOrder = nextOrder++)
                     is CanvasImage -> item.copy(order = nextOrder++)
+                    is TextItem -> item.copy(order = nextOrder++)
                     else -> throw IllegalArgumentException("Unsupported CanvasItem type: ${item::class.java.name}")
                 }
 
@@ -196,6 +197,10 @@ class InfiniteCanvasModel {
                         ) {
                             toRemove.add(item)
                         } else if (item is CanvasImage && RectF.intersects(item.bounds, eraserStroke.bounds) &&
+                            item.bounds.contains(eraserStroke.bounds.centerX(), eraserStroke.bounds.centerY())
+                        ) {
+                            toRemove.add(item)
+                        } else if (item is TextItem && RectF.intersects(item.bounds, eraserStroke.bounds) &&
                             item.bounds.contains(eraserStroke.bounds.centerX(), eraserStroke.bounds.centerY())
                         ) {
                             toRemove.add(item)
@@ -292,6 +297,7 @@ class InfiniteCanvasModel {
                     when (item) {
                         is Stroke -> item.copy(strokeOrder = nextOrder++)
                         is CanvasImage -> item.copy(order = nextOrder++)
+                        is TextItem -> item.copy(order = nextOrder++)
                         else -> item
                     }
                 }
