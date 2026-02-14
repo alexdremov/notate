@@ -116,14 +116,11 @@ class SelectionManager {
                 transformMatrix.reset()
             }
 
-            val rot = getItemRotation(item)
+            val itemAABB = getItemWorldAABB(item)
             if (_count == 0) {
-                selectionBounds.set(item.bounds)
-                if (rot != 0f) {
-                    transformMatrix.setRotate(rot, item.bounds.centerX(), item.bounds.centerY())
-                }
+                selectionBounds.set(itemAABB)
+                transformMatrix.reset()
             } else {
-                val itemAABB = getItemWorldAABB(item)
                 selectionBounds.union(itemAABB)
             }
 
