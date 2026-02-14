@@ -443,13 +443,21 @@ class CanvasControllerImpl(
         fontSize: Float,
         color: Int,
     ) {
+        if (text.isBlank()) return
+
         operationMutex.withLock {
             // Default width for new text box
             val defaultWidth = 500f
-            // Estimate height (single line approx)
-            val estimatedHeight = fontSize * 1.5f
+            // Measure actual height immediately
+            val measuredHeight =
+                com.alexdremov.notate.util.TextRenderer.measureHeight(
+                    context,
+                    text,
+                    defaultWidth,
+                    fontSize,
+                )
 
-            val bounds = RectF(x, y, x + defaultWidth, y + estimatedHeight)
+            val bounds = RectF(x, y, x + defaultWidth, y + measuredHeight)
 
             val textItem =
                 com.alexdremov.notate.model.TextItem(
@@ -480,6 +488,26 @@ class CanvasControllerImpl(
         oldItem: com.alexdremov.notate.model.TextItem,
         newText: String,
     ) {
+        if (newText.isBlank()) {
+            operationMutex.withLock {
+                val bounds = selectionManager.getItemWorldAABB(oldItem)
+                val ids = setOf(oldItem.order)
+                selectionManager.clearSelection()
+                updatePinnedRegions()
+
+                withContext(Dispatchers.Default) {
+                    model.deleteItemsByIds(bounds, ids, context.cacheDir)
+                }
+
+                withContext(Dispatchers.Main) {
+                    renderer.setHiddenItems(emptySet())
+                    renderer.invalidateTiles(bounds)
+                    onContentChangedListener?.invoke()
+                }
+            }
+            return
+        }
+
         operationMutex.withLock {
             // Measure new height
             val newHeight =

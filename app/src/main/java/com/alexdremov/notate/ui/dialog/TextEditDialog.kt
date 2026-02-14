@@ -69,7 +69,7 @@ class TextEditDialog(
                 this.background = null // Remove standard underline
                 gravity = Gravity.TOP or Gravity.START
                 minLines = 3
-                hint = "Type here..."
+                hint = context.getString(R.string.type_here_hint)
 
                 // Try to make cursor more visible if possible on standard Android
                 // On some devices this helps, on others it's ignored.

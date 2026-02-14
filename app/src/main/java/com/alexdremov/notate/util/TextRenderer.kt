@@ -18,27 +18,22 @@ import java.lang.ref.WeakReference
 import kotlin.math.ceil
 
 object TextRenderer {
-    private var markwonRef: WeakReference<Markwon>? = null
+    private var markwon: Markwon? = null
 
     private fun getMarkwon(context: Context): Markwon {
-        var markwon = markwonRef?.get()
-        if (markwon == null) {
-            // Initialize Markwon with plugins
-            // Note: Syntax Highlight requires a grammar locator, which we skip for simplicity in V1
-            // or we could add a basic one. For now, let's skip SyntaxHighlightPlugin to avoid extra setup complexity
-            // unless requested. Strikethrough, Tables, TaskList are straightforward.
-
-            markwon =
+        var instance = markwon
+        if (instance == null) {
+            val appContext = context.applicationContext
+            instance =
                 Markwon
-                    .builder(context)
+                    .builder(appContext)
                     .usePlugin(StrikethroughPlugin.create())
-                    .usePlugin(TablePlugin.create(context))
-                    .usePlugin(TaskListPlugin.create(context))
+                    .usePlugin(TablePlugin.create(appContext))
+                    .usePlugin(TaskListPlugin.create(appContext))
                     .build()
-
-            markwonRef = WeakReference(markwon)
+            markwon = instance
         }
-        return markwon
+        return instance
     }
 
     fun measureHeight(
@@ -77,15 +72,12 @@ object TextRenderer {
             var layout = item.renderCache
             val targetWidth = ceil(item.bounds.width()).toInt().coerceAtLeast(1)
 
-            if (layout == null || layout.text != item.text || layout.width != targetWidth) {
+            if (layout == null || layout.text.toString() != item.text || layout.width != targetWidth) {
                 // Recreate Layout
                 val spanned = markwon.toMarkdown(item.text)
                 val textPaint = TextPaint(Paint.ANTI_ALIAS_FLAG)
                 textPaint.textSize = item.fontSize
                 textPaint.color = item.color
-
-                // Adjust density? Usually textSize is in pixels here if we don't scale it.
-                // Assuming item.fontSize is in canvas units (pixels).
 
                 layout =
                     StaticLayout.Builder
