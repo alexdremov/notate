@@ -524,7 +524,11 @@ object PdfExporter {
 
             if (bitmap != null) {
                 Logger.d("PdfExporter", "Successfully decoded bitmap for ${item.uri} (${bitmap.width}x${bitmap.height})")
-                val image = LosslessFactory.createFromImage(document, bitmap)
+                val fixedBitmap = fixBitmapColors(bitmap)
+                val image = LosslessFactory.createFromImage(document, fixedBitmap)
+                if (fixedBitmap !== bitmap) {
+                    fixedBitmap.recycle()
+                }
 
                 val left = item.bounds.left - bounds.left
                 val bottom = pageHeight - (item.bounds.bottom - bounds.top)
@@ -681,7 +685,11 @@ object PdfExporter {
                     canvas.translate(-tileRect.left, -tileRect.top)
                     BackgroundDrawer.draw(canvas, style, tileRect, forceVector = false)
 
-                    val image = LosslessFactory.createFromImage(doc, bitmap)
+                    val fixedBitmap = fixBitmapColors(bitmap)
+                    val image = LosslessFactory.createFromImage(doc, fixedBitmap)
+                    if (fixedBitmap !== bitmap) {
+                        fixedBitmap.recycle()
+                    }
 
                     val pdfX = tileRect.left - bounds.left
                     val pdfY = pageHeight - (tileRect.bottom - bounds.top)
@@ -980,21 +988,11 @@ object PdfExporter {
                                 StrokeRenderer.drawItem(canvas, item, false, paint, context)
                             }
 
-                            // Manual R/B channel swap because PDFBox-Android's LosslessFactory
-                            // often swaps Red and Blue channels for ARGB_8888 bitmaps.
-                            val pixels = IntArray(w * h)
-                            bitmap.getPixels(pixels, 0, w, 0, 0, w, h)
-                            for (i in pixels.indices) {
-                                val p = pixels[i]
-                                val a = (p shr 24) and 0xff
-                                val r = (p shr 16) and 0xff
-                                val g = (p shr 8) and 0xff
-                                val b = p and 0xff
-                                pixels[i] = (a shl 24) or (b shl 16) or (g shl 8) or r
+                            val fixedBitmap = fixBitmapColors(bitmap)
+                            val image = LosslessFactory.createFromImage(doc, fixedBitmap)
+                            if (fixedBitmap !== bitmap) {
+                                fixedBitmap.recycle()
                             }
-                            bitmap.setPixels(pixels, 0, w, 0, 0, w, h)
-
-                            val image = LosslessFactory.createFromImage(doc, bitmap)
 
                             mutex.withLock {
                                 val pdfX = tileRect.left - bounds.left
@@ -1013,5 +1011,27 @@ object PdfExporter {
                     }
                 }
             }.forEach { it.await() }
+    }
+
+    /**
+     * Manual R/B channel swap because PDFBox-Android's LosslessFactory
+     * often swaps Red and Blue channels for ARGB_8888 bitmaps.
+     */
+    private fun fixBitmapColors(bitmap: Bitmap): Bitmap {
+        val mutableBitmap = if (bitmap.isMutable) bitmap else bitmap.copy(Bitmap.Config.ARGB_8888, true)
+        val w = mutableBitmap.width
+        val h = mutableBitmap.height
+        val pixels = IntArray(w * h)
+        mutableBitmap.getPixels(pixels, 0, w, 0, 0, w, h)
+        for (i in pixels.indices) {
+            val p = pixels[i]
+            val a = (p shr 24) and 0xff
+            val r = (p shr 16) and 0xff
+            val g = (p shr 8) and 0xff
+            val b = p and 0xff
+            pixels[i] = (a shl 24) or (b shl 16) or (g shl 8) or r
+        }
+        mutableBitmap.setPixels(pixels, 0, w, 0, 0, w, h)
+        return mutableBitmap
     }
 }

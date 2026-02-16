@@ -269,7 +269,8 @@ class PdfExporterSnapshotTest {
             )
 
         val dummyImage = Bitmap.createBitmap(100, 100, Bitmap.Config.ARGB_8888)
-        dummyImage.eraseColor(Color.GREEN)
+        val orange = Color.argb(255, 255, 128, 0)
+        dummyImage.eraseColor(orange)
         val stream = ByteArrayOutputStream()
         dummyImage.compress(Bitmap.CompressFormat.PNG, 100, stream)
         val imageBytes = stream.toByteArray()
