@@ -463,10 +463,12 @@ object PdfExporter {
         item: TextItem,
         context: android.content.Context,
     ) {
+        var textStarted = false
         try {
             val layout = TextRenderer.getStaticLayout(context, item)
 
             stream.beginText()
+            textStarted = true
             stream.setRenderingMode(RenderingMode.NEITHER)
 
             val font = PDType1Font.HELVETICA
@@ -476,18 +478,28 @@ object PdfExporter {
                 val lineText = layout.text.subSequence(layout.getLineStart(i), layout.getLineEnd(i)).toString()
                 if (lineText.isBlank()) continue
 
+                // PDType1Font only supports WinAnsiEncoding. Strip non-compatible chars to prevent crashes.
+                val safeText = lineText.filter { it.code in 32..126 || it.code in 160..255 }
+                if (safeText.isEmpty()) continue
+
                 val lineLeft = layout.getLineLeft(i)
                 // In a coordinate system where origin is at top of block and Y is up:
                 val lineBaseline = -layout.getLineBaseline(i).toFloat()
 
                 stream.newLineAtOffset(lineLeft, lineBaseline)
-                stream.showText(lineText)
+                stream.showText(safeText)
                 stream.newLineAtOffset(-lineLeft, -lineBaseline)
             }
-
-            stream.endText()
         } catch (e: Exception) {
             Logger.w("PdfExporter", "Failed to add searchable text layer: ${e.message}")
+        } finally {
+            if (textStarted) {
+                try {
+                    stream.endText()
+                } catch (e: Exception) {
+                    Logger.e("PdfExporter", "Error ending text block", e)
+                }
+            }
         }
     }
 
@@ -1014,8 +1026,14 @@ object PdfExporter {
     }
 
     private val isFixNeeded: Boolean by lazy {
-        val os = System.getProperty("os.name").lowercase()
-        !os.contains("mac")
+        // Only apply the R/B swap fix on Desktop (Robolectric) environments.
+        // PDFBox-Android's LosslessFactory on Desktop/CI often swaps channels,
+        // but actual Android devices handle the ARGB_8888 -> PDF conversion correctly.
+        val vendor = System.getProperty("java.vendor")?.lowercase() ?: ""
+        val vmName = System.getProperty("java.vm.name")?.lowercase() ?: ""
+        val isAndroid = vendor.contains("android") || vmName.contains("dalvik") || vmName.contains("art")
+
+        !isAndroid
     }
 
     /**
