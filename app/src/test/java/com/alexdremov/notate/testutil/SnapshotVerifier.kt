@@ -102,7 +102,7 @@ object SnapshotVerifier {
             saveBitmap(diffBitmap, diffFile)
 
             fail(
-                "Snapshot mismatch! $distinctPixels pixels differ significantly ($diffRatio%). \n" +
+                "Snapshot mismatch! $distinctPixels pixels differ significantly ($diffRatio). \n" +
                     "Check generated outputs at: \n" +
                     "  Actual:   ${actualFile.absolutePath}\n" +
                     "  Expected: ${expectedFile.absolutePath}\n" +

@@ -1,7 +1,7 @@
 <resources>
     <string name="app_name">Notate</string>
     <string name="font_size">Font Size</string>
-    <string name="px_unit"> px</string>
+    <string name="px_unit">px</string>
     <string name="text_settings">Text Settings</string>
     <string name="type_here_hint">Type here...</string>
     <string name="edit_toolbar">Edit Toolbar</string>
