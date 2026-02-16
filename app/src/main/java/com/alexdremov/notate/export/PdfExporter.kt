@@ -668,7 +668,7 @@ object PdfExporter {
 
                 var bitmap: Bitmap? = null
                 try {
-                    bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.RGB_565)
+                    bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
                     val canvas = Canvas(bitmap)
                     canvas.drawColor(Color.WHITE)
                     canvas.translate(-tileRect.left, -tileRect.top)
@@ -949,13 +949,15 @@ object PdfExporter {
 
                         var bitmap: Bitmap? = null
                         try {
-                            bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.RGB_565)
+                            bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
                             val canvas = Canvas(bitmap)
                             canvas.scale(bitmapScale, bitmapScale)
                             canvas.drawColor(Color.WHITE)
                             canvas.translate(-tileRect.left, -tileRect.top)
 
-                            BackgroundDrawer.draw(canvas, bgStyle, tileRect, forceVector = false)
+                            val patternArea = PatternLayoutHelper.calculatePatternArea(bounds, bgStyle)
+                            val (offsetX, offsetY) = PatternLayoutHelper.calculateOffsets(patternArea, bgStyle)
+                            BackgroundDrawer.draw(canvas, bgStyle, tileRect, 1.0f, offsetX, offsetY, forceVector = false)
 
                             val tileItems = model.queryItems(tileRect)
                             tileItems.sortWith(compareBy<CanvasItem> { it.zIndex }.thenBy { it.order })

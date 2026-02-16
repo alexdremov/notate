@@ -157,7 +157,7 @@ class PdfExporterSnapshotTest {
         val bytes = outputStream.toByteArray()
         val document = PDDocument.load(ByteArrayInputStream(bytes))
         val renderer = PDFRenderer(document)
-        val bitmap = renderer.renderImageWithDPI(0, 72f, com.tom_roush.pdfbox.rendering.ImageType.RGB)
+        val bitmap = renderer.renderImageWithDPI(0, 72f, com.tom_roush.pdfbox.rendering.ImageType.ARGB)
 
         SnapshotVerifier.verify(bitmap, name)
         document.close()
