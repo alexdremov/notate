@@ -179,12 +179,12 @@ object PdfExporter {
         try {
             val contentBounds = model.getContentBounds()
             val padding = 50f
-            val bounds =
-                if (contentBounds.isEmpty) {
-                    RectF(0f, 0f, CanvasConfig.PAGE_A4_WIDTH, CanvasConfig.PAGE_A4_HEIGHT)
-                } else {
-                    RectF(contentBounds)
-                }
+            val bounds = RectF()
+            if (contentBounds.isEmpty) {
+                bounds.set(0f, 0f, CanvasConfig.PAGE_A4_WIDTH, CanvasConfig.PAGE_A4_HEIGHT)
+            } else {
+                bounds.set(contentBounds)
+            }
             bounds.inset(-padding, -padding)
 
             val width = bounds.width()
@@ -199,9 +199,7 @@ object PdfExporter {
             // Manual mapping is performed in render functions to ensure correct orientation of complex items.
 
             callback?.onProgress(10, "Rendering Background...")
-            val patternArea = PatternLayoutHelper.calculatePatternArea(bounds, model.backgroundStyle)
-            val (offsetX, offsetY) = PatternLayoutHelper.calculateOffsets(patternArea, model.backgroundStyle, isInfinite = true)
-            renderBackgroundVectorToStream(contentStream, model.backgroundStyle, bounds, height, offsetX, offsetY)
+            renderBackgroundVectorToStream(contentStream, model.backgroundStyle, bounds, height, 0f, 0f)
 
             callback?.onProgress(20, "Rendering Items...")
 
@@ -709,12 +707,12 @@ object PdfExporter {
         try {
             val contentBounds = model.getContentBounds()
             val padding = 50f
-            val bounds =
-                if (contentBounds.isEmpty) {
-                    RectF(0f, 0f, CanvasConfig.PAGE_A4_WIDTH, CanvasConfig.PAGE_A4_HEIGHT)
-                } else {
-                    RectF(contentBounds)
-                }
+            val bounds = RectF()
+            if (contentBounds.isEmpty) {
+                bounds.set(0f, 0f, CanvasConfig.PAGE_A4_WIDTH, CanvasConfig.PAGE_A4_HEIGHT)
+            } else {
+                bounds.set(contentBounds)
+            }
             bounds.inset(-padding, -padding)
 
             val width = bounds.width()
@@ -808,12 +806,12 @@ object PdfExporter {
         context: android.content.Context,
     ) {
         val padding = 50f
-        val bounds =
-            if (contentBounds.isEmpty) {
-                RectF(0f, 0f, CanvasConfig.PAGE_A4_WIDTH, CanvasConfig.PAGE_A4_HEIGHT)
-            } else {
-                RectF(contentBounds)
-            }
+        val bounds = RectF()
+        if (contentBounds.isEmpty) {
+            bounds.set(0f, 0f, CanvasConfig.PAGE_A4_WIDTH, CanvasConfig.PAGE_A4_HEIGHT)
+        } else {
+            bounds.set(contentBounds)
+        }
         bounds.inset(-padding, -padding)
 
         val width = bounds.width().toInt()
@@ -964,9 +962,8 @@ object PdfExporter {
                             canvas.drawColor(Color.WHITE)
                             canvas.translate(-tileRect.left, -tileRect.top)
 
-                            val patternArea = PatternLayoutHelper.calculatePatternArea(bounds, bgStyle)
-                            val (offsetX, offsetY) = PatternLayoutHelper.calculateOffsets(patternArea, bgStyle)
-                            BackgroundDrawer.draw(canvas, bgStyle, tileRect, 1.0f, offsetX, offsetY, forceVector = false)
+                            // Use 0f offsets for infinite canvas to match UI
+                            BackgroundDrawer.draw(canvas, bgStyle, tileRect, 1.0f, 0f, 0f, forceVector = false)
 
                             val tileItems = model.queryItems(tileRect)
                             tileItems.sortWith(compareBy<CanvasItem> { it.zIndex }.thenBy { it.order })

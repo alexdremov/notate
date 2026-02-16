@@ -75,6 +75,9 @@ object SnapshotVerifier {
                         Math.abs(a1 - a2) <= colorTolerance
 
                 if (!isClose) {
+                    if (distinctPixels < 10) {
+                        println("Pixel $i mismatch: Expected ARGB(${a2},${r2},${g2},${b2}), Actual ARGB(${a1},${r1},${g1},${b1})")
+                    }
                     distinctPixels++
                 }
             }
