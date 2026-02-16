@@ -524,7 +524,7 @@ object PdfExporter {
 
             if (bitmap != null) {
                 Logger.d("PdfExporter", "Successfully decoded bitmap for ${item.uri} (${bitmap.width}x${bitmap.height})")
-                val fixedBitmap = fixBitmapColors(bitmap)
+                val fixedBitmap = if (isFixNeeded) fixBitmapColors(bitmap) else bitmap
                 val image = LosslessFactory.createFromImage(document, fixedBitmap)
                 if (fixedBitmap !== bitmap) {
                     fixedBitmap.recycle()
@@ -988,7 +988,7 @@ object PdfExporter {
                                 StrokeRenderer.drawItem(canvas, item, false, paint, context)
                             }
 
-                            val fixedBitmap = fixBitmapColors(bitmap)
+                            val fixedBitmap = if (isFixNeeded) fixBitmapColors(bitmap) else bitmap
                             val image = LosslessFactory.createFromImage(doc, fixedBitmap)
                             if (fixedBitmap !== bitmap) {
                                 fixedBitmap.recycle()
@@ -1013,9 +1013,16 @@ object PdfExporter {
             }.forEach { it.await() }
     }
 
+    private val isFixNeeded: Boolean by lazy {
+        val os = System.getProperty("os.name").lowercase()
+        !os.contains("mac")
+    }
+
     /**
      * Manual R/B channel swap because PDFBox-Android's LosslessFactory
      * often swaps Red and Blue channels for ARGB_8888 bitmaps.
+     * Note: This is platform dependent and seems to be needed on Linux/Android
+     * but not on macOS (Robolectric).
      */
     private fun fixBitmapColors(bitmap: Bitmap): Bitmap {
         val mutableBitmap = if (bitmap.isMutable) bitmap else bitmap.copy(Bitmap.Config.ARGB_8888, true)
