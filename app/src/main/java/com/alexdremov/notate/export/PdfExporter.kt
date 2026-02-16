@@ -200,7 +200,7 @@ object PdfExporter {
 
             callback?.onProgress(10, "Rendering Background...")
             val patternArea = PatternLayoutHelper.calculatePatternArea(bounds, model.backgroundStyle)
-            val (offsetX, offsetY) = PatternLayoutHelper.calculateOffsets(patternArea, model.backgroundStyle)
+            val (offsetX, offsetY) = PatternLayoutHelper.calculateOffsets(patternArea, model.backgroundStyle, isInfinite = true)
             renderBackgroundVectorToStream(contentStream, model.backgroundStyle, bounds, height, offsetX, offsetY)
 
             callback?.onProgress(20, "Rendering Items...")

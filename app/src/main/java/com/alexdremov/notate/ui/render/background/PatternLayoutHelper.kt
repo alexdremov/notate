@@ -28,11 +28,13 @@ object PatternLayoutHelper {
     fun calculateOffsets(
         patternArea: RectF,
         style: BackgroundStyle,
+        isInfinite: Boolean = false,
     ): Pair<Float, Float> {
         var offsetX = patternArea.left
         val offsetY = patternArea.top // Pattern always starts at top padding edge
 
-        if (style.isCentered) {
+        // Center only on fixed pages to maintain a stable grid on infinite canvases
+        if (style.isCentered && !isInfinite) {
             val spacing = getSpacing(style)
             if (spacing > 0) {
                 val availableWidth = patternArea.width()
