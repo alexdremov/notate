@@ -199,7 +199,9 @@ object PdfExporter {
             // Manual mapping is performed in render functions to ensure correct orientation of complex items.
 
             callback?.onProgress(10, "Rendering Background...")
-            renderBackgroundTiledToStream(document, contentStream, model.backgroundStyle, bounds, height)
+            val patternArea = PatternLayoutHelper.calculatePatternArea(bounds, model.backgroundStyle)
+            val (offsetX, offsetY) = PatternLayoutHelper.calculateOffsets(patternArea, model.backgroundStyle)
+            renderBackgroundVectorToStream(contentStream, model.backgroundStyle, bounds, height, offsetX, offsetY)
 
             callback?.onProgress(20, "Rendering Items...")
 
@@ -252,6 +254,136 @@ object PdfExporter {
             throw e
         } finally {
             document.close()
+        }
+    }
+
+    private fun renderBackgroundVectorToStream(
+        stream: PDPageContentStream,
+        style: BackgroundStyle,
+        bounds: RectF,
+        pageHeight: Float,
+        offsetX: Float,
+        offsetY: Float,
+    ) {
+        when (style) {
+            is BackgroundStyle.Dots -> renderDotsToStream(stream, style, bounds, pageHeight, offsetX, offsetY)
+            is BackgroundStyle.Lines -> renderLinesToStream(stream, style, bounds, pageHeight, offsetX, offsetY)
+            is BackgroundStyle.Grid -> renderGridToStream(stream, style, bounds, pageHeight, offsetX, offsetY)
+            else -> {}
+        }
+    }
+
+    private fun renderDotsToStream(
+        stream: PDPageContentStream,
+        style: BackgroundStyle.Dots,
+        bounds: RectF,
+        pageHeight: Float,
+        offsetX: Float,
+        offsetY: Float,
+    ) {
+        val spacing = style.spacing
+        if (spacing <= 0.1f) return
+
+        val color = style.color
+        stream.setNonStrokingColor(Color.red(color) / 255f, Color.green(color) / 255f, Color.blue(color) / 255f)
+
+        val startX = floor((bounds.left - offsetX) / spacing) * spacing + offsetX
+        val startY = floor((bounds.top - offsetY) / spacing) * spacing + offsetY
+
+        var x = startX
+        while (x < bounds.right + spacing) {
+            var y = startY
+            while (y < bounds.bottom + spacing) {
+                if (x >= bounds.left - 0.1f && x <= bounds.right + 0.1f &&
+                    y >= bounds.top - 0.1f && y <= bounds.bottom + 0.1f
+                ) {
+                    val pdfX = x - bounds.left
+                    val pdfY = pageHeight - (y - bounds.top)
+
+                    val r = style.radius
+                    // Use 4 bezier curves to approximate a circle
+                    val k = 0.552284749831f * r
+                    stream.moveTo(pdfX + r, pdfY)
+                    stream.curveTo(pdfX + r, pdfY + k, pdfX + k, pdfY + r, pdfX, pdfY + r)
+                    stream.curveTo(pdfX - k, pdfY + r, pdfX - r, pdfY + k, pdfX - r, pdfY)
+                    stream.curveTo(pdfX - r, pdfY - k, pdfX - k, pdfY - r, pdfX, pdfY - r)
+                    stream.curveTo(pdfX + k, pdfY - r, pdfX + r, pdfY - k, pdfX + r, pdfY)
+                    stream.fill()
+                }
+                y += spacing
+            }
+            x += spacing
+        }
+    }
+
+    private fun renderLinesToStream(
+        stream: PDPageContentStream,
+        style: BackgroundStyle.Lines,
+        bounds: RectF,
+        pageHeight: Float,
+        offsetX: Float,
+        offsetY: Float,
+    ) {
+        val spacing = style.spacing
+        if (spacing <= 0.1f) return
+
+        val color = style.color
+        stream.setStrokingColor(Color.red(color) / 255f, Color.green(color) / 255f, Color.blue(color) / 255f)
+        stream.setLineWidth(style.thickness)
+
+        val startY = floor((bounds.top - offsetY) / spacing) * spacing + offsetY
+
+        var y = startY
+        while (y <= bounds.bottom + 0.1f) {
+            if (y >= bounds.top - 0.1f) {
+                val pdfY = pageHeight - (y - bounds.top)
+                stream.moveTo(0f, pdfY)
+                stream.lineTo(bounds.width(), pdfY)
+                stream.stroke()
+            }
+            y += spacing
+        }
+    }
+
+    private fun renderGridToStream(
+        stream: PDPageContentStream,
+        style: BackgroundStyle.Grid,
+        bounds: RectF,
+        pageHeight: Float,
+        offsetX: Float,
+        offsetY: Float,
+    ) {
+        val spacing = style.spacing
+        if (spacing <= 0.1f) return
+
+        val color = style.color
+        stream.setStrokingColor(Color.red(color) / 255f, Color.green(color) / 255f, Color.blue(color) / 255f)
+        stream.setLineWidth(style.thickness)
+
+        // Vertical lines
+        val startX = floor((bounds.left - offsetX) / spacing) * spacing + offsetX
+        var x = startX
+        while (x <= bounds.right + 0.1f) {
+            if (x >= bounds.left - 0.1f) {
+                val pdfX = x - bounds.left
+                stream.moveTo(pdfX, 0f)
+                stream.lineTo(pdfX, pageHeight)
+                stream.stroke()
+            }
+            x += spacing
+        }
+
+        // Horizontal lines
+        val startY = floor((bounds.top - offsetY) / spacing) * spacing + offsetY
+        var y = startY
+        while (y <= bounds.bottom + 0.1f) {
+            if (y >= bounds.top - 0.1f) {
+                val pdfY = pageHeight - (y - bounds.top)
+                stream.moveTo(0f, pdfY)
+                stream.lineTo(bounds.width(), pdfY)
+                stream.stroke()
+            }
+            y += spacing
         }
     }
 
