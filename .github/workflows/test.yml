@@ -30,6 +30,13 @@ jobs:
     - name: Run Tests with Coverage
       run: ./gradlew jacocoTestReport --info
 
+    - name: Upload Snapshot Artifacts
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: snapshot-mismatches
+        path: app/build/outputs/snapshots/
+
     - name: Add Coverage PR Comment
       uses: Madrapps/jacoco-report@v1.7.1
       if: github.event_name == 'pull_request'

@@ -2,6 +2,7 @@ package com.alexdremov.notate.testutil
 
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Color
 import org.junit.Assert.fail
 import java.io.File
 import java.io.FileOutputStream
@@ -20,21 +21,25 @@ object SnapshotVerifier {
         val fileName = "$snapshotName.png"
         val referenceFile = File(REFERENCE_DIR, fileName)
         val outputFile = File(OUTPUT_DIR, fileName)
+        val actualFile = File(OUTPUT_DIR, "${snapshotName}_actual.png")
+        val expectedFile = File(OUTPUT_DIR, "${snapshotName}_expected.png")
+        val diffFile = File(OUTPUT_DIR, "${snapshotName}_diff.png")
 
         outputFile.parentFile?.mkdirs()
 
         // Always save the current run result for inspection
-        saveBitmap(bitmap, outputFile)
+        saveBitmap(bitmap, actualFile)
 
         if (!referenceFile.exists()) {
             fail(
                 "Snapshot reference not found: ${referenceFile.absolutePath}. \n" +
-                    "A new snapshot has been generated at: ${outputFile.absolutePath}. \n" +
+                    "A new snapshot has been generated at: ${actualFile.absolutePath}. \n" +
                     "Please verify it visually and copy it to the reference directory if correct.",
             )
         }
 
         val referenceBitmap = BitmapFactory.decodeFile(referenceFile.absolutePath)
+        saveBitmap(referenceBitmap, expectedFile)
 
         if (bitmap.width != referenceBitmap.width || bitmap.height != referenceBitmap.height) {
             fail(
@@ -46,6 +51,7 @@ object SnapshotVerifier {
         val totalPixels = bitmap.width * bitmap.height
         val pixels1 = IntArray(totalPixels)
         val pixels2 = IntArray(totalPixels)
+        val diffPixels = IntArray(totalPixels)
 
         bitmap.getPixels(pixels1, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
         referenceBitmap.getPixels(pixels2, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
@@ -76,18 +82,31 @@ object SnapshotVerifier {
 
                 if (!isClose) {
                     if (distinctPixels < 10) {
-                        println("Pixel $i mismatch: Expected ARGB(${a2},${r2},${g2},${b2}), Actual ARGB(${a1},${r1},${g1},${b1})")
+                        println("Pixel $i mismatch: Expected ARGB($a2,$r2,$g2,$b2), Actual ARGB($a1,$r1,$g1,$b1)")
                     }
                     distinctPixels++
+                    diffPixels[i] = Color.RED
+                } else {
+                    // Pixels are slightly different but within tolerance
+                    diffPixels[i] = c1
                 }
+            } else {
+                diffPixels[i] = c1
             }
         }
 
         val diffRatio = distinctPixels.toFloat() / totalPixels
         if (diffRatio > TOLERANCE) {
+            val diffBitmap = Bitmap.createBitmap(bitmap.width, bitmap.height, Bitmap.Config.ARGB_8888)
+            diffBitmap.setPixels(diffPixels, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
+            saveBitmap(diffBitmap, diffFile)
+
             fail(
                 "Snapshot mismatch! $distinctPixels pixels differ significantly ($diffRatio%). \n" +
-                    "Check generated output at: ${outputFile.absolutePath}",
+                    "Check generated outputs at: \n" +
+                    "  Actual:   ${actualFile.absolutePath}\n" +
+                    "  Expected: ${expectedFile.absolutePath}\n" +
+                    "  Diff:     ${diffFile.absolutePath}",
             )
         }
     }
