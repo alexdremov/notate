@@ -56,9 +56,7 @@ data class TextItem(
 
         other as TextItem
 
-        if (order != 0L && order == other.order) return true
         if (order != other.order) return false
-
         if (text != other.text) return false
         if (fontSize != other.fontSize) return false
         if (color != other.color) return false
@@ -73,8 +71,8 @@ data class TextItem(
     }
 
     override fun hashCode(): Int {
-        if (order != 0L) return order.hashCode()
-        var result = text.hashCode()
+        var result = order.hashCode()
+        result = 31 * result + text.hashCode()
         result = 31 * result + fontSize.hashCode()
         result = 31 * result + color
         result = 31 * result + bounds.hashCode()

@@ -6,15 +6,12 @@ import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
-import android.text.Editable
-import android.text.TextWatcher
 import android.view.Gravity
 import android.view.ViewGroup
 import android.view.Window
 import android.view.WindowManager
 import android.widget.EditText
 import android.widget.FrameLayout
-import androidx.core.widget.addTextChangedListener
 import com.alexdremov.notate.R
 import com.alexdremov.notate.ui.dpToPx
 import com.onyx.android.sdk.api.device.EpdDeviceManager

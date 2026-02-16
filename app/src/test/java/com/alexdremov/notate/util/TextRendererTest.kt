@@ -41,24 +41,26 @@ class TextRendererTest {
                 bounds = RectF(0f, 0f, 100f, 50f),
                 fontSize = 16f,
                 color = Color.BLACK,
+                order = 1L, // Assign order for caching
             )
 
         val canvas = Canvas()
 
         // First draw - should create cache
         TextRenderer.draw(canvas, item, context)
-        val cache1 = item.renderCache
-        assertThat(cache1).isNotNull()
+        val entry1 = TextRenderer.layoutCache.get(item.order)
+        assertThat(entry1).isNotNull()
+        val layout1 = entry1.layout
 
         // Second draw with same properties - should reuse cache
         TextRenderer.draw(canvas, item, context)
-        assertThat(item.renderCache).isSameInstanceAs(cache1)
+        val entry2 = TextRenderer.layoutCache.get(item.order)
+        assertThat(entry2.layout).isSameInstanceAs(layout1)
 
         // Draw with different text - should invalidate cache
         val updatedItem = item.copy(text = "New Text")
         TextRenderer.draw(canvas, updatedItem, context)
-        // Since TextRenderer matches layout.text.toString() vs item.text,
-        // we need to make sure draw actually updates the cache if it's different.
-        assertThat(updatedItem.renderCache).isNotSameInstanceAs(cache1)
+        val entry3 = TextRenderer.layoutCache.get(updatedItem.order)
+        assertThat(entry3.layout).isNotSameInstanceAs(layout1)
     }
 }

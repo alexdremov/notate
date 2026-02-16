@@ -372,7 +372,7 @@ class SelectionInteractor(
         val threshold = 1f / currentScale
 
         if (kotlin.math.abs(distLast) > threshold && (distLast * distCurr) > 0) {
-            val scaleFactor = distCurr / distLast
+            val scaleFactor = (distCurr / distLast).coerceAtLeast(0.05f)
 
             // Construct Matrix to scale along Local Axis in World Space
             // 1. Get current rotation
@@ -480,7 +480,7 @@ class SelectionInteractor(
         val currDist = hypot(x - screenPivot[0], y - screenPivot[1])
 
         if (prevDist > 1f) {
-            val scale = currDist / prevDist
+            val scale = (currDist / prevDist).coerceAtLeast(0.05f)
             val m = Matrix()
             m.postScale(scale, scale, px, py)
             scope.launch { controller.transformSelection(m) }

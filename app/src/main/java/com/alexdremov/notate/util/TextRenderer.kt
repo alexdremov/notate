@@ -3,22 +3,26 @@ package com.alexdremov.notate.util
 import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Paint
-import android.text.Layout
 import android.text.StaticLayout
 import android.text.TextPaint
+import android.util.LruCache
 import com.alexdremov.notate.model.TextItem
 import io.noties.markwon.Markwon
 import io.noties.markwon.ext.strikethrough.StrikethroughPlugin
 import io.noties.markwon.ext.tables.TablePlugin
 import io.noties.markwon.ext.tasklist.TaskListPlugin
-import io.noties.markwon.syntax.Prism4jThemeDarkula
-import io.noties.markwon.syntax.SyntaxHighlightPlugin
-import io.noties.prism4j.Prism4j
-import java.lang.ref.WeakReference
 import kotlin.math.ceil
 
 object TextRenderer {
     private var markwon: Markwon? = null
+
+    // Thread-safe external cache for StaticLayouts
+    internal data class CacheEntry(
+        val item: TextItem,
+        val layout: StaticLayout,
+    )
+
+    internal val layoutCache = LruCache<Long, CacheEntry>(200)
 
     private fun getMarkwon(context: Context): Markwon {
         var instance = markwon
@@ -57,6 +61,35 @@ object TextRenderer {
         return layout.height.toFloat()
     }
 
+    fun getStaticLayout(
+        context: Context,
+        item: TextItem,
+    ): StaticLayout {
+        val markwon = getMarkwon(context)
+        val entry = if (item.order != 0L) layoutCache.get(item.order) else null
+        if (entry != null && entry.item == item) {
+            return entry.layout
+        }
+        val targetWidth = ceil(item.bounds.width()).toInt().coerceAtLeast(1)
+        val spanned = markwon.toMarkdown(item.text)
+        val textPaint = TextPaint(Paint.ANTI_ALIAS_FLAG)
+        textPaint.textSize = item.fontSize
+        textPaint.color = item.color
+
+        val newLayout =
+            StaticLayout.Builder
+                .obtain(spanned, 0, spanned.length, textPaint, targetWidth)
+                .setAlignment(item.alignment)
+                .setLineSpacing(0f, 1.0f)
+                .setIncludePad(true)
+                .build()
+
+        if (item.order != 0L) {
+            layoutCache.put(item.order, CacheEntry(item.copy(), newLayout))
+        }
+        return newLayout
+    }
+
     fun draw(
         canvas: Canvas,
         item: TextItem,
@@ -66,29 +99,7 @@ object TextRenderer {
         if (context == null) return
 
         com.alexdremov.notate.util.PerformanceProfiler.trace("TextRenderer.draw") {
-            val markwon = getMarkwon(context)
-
-            // Cache Logic
-            var layout = item.renderCache
-            val targetWidth = ceil(item.bounds.width()).toInt().coerceAtLeast(1)
-
-            if (layout == null || layout.text.toString() != item.text || layout.width != targetWidth) {
-                // Recreate Layout
-                val spanned = markwon.toMarkdown(item.text)
-                val textPaint = TextPaint(Paint.ANTI_ALIAS_FLAG)
-                textPaint.textSize = item.fontSize
-                textPaint.color = item.color
-
-                layout =
-                    StaticLayout.Builder
-                        .obtain(spanned, 0, spanned.length, textPaint, targetWidth)
-                        .setAlignment(item.alignment)
-                        .setLineSpacing(0f, 1.0f)
-                        .setIncludePad(true)
-                        .build()
-
-                item.renderCache = layout
-            }
+            val layout = getStaticLayout(context, item)
 
             // Draw
             canvas.save()
