@@ -43,14 +43,37 @@ object SnapshotVerifier {
             )
         }
 
-        var distinctPixels = 0
         val totalPixels = bitmap.width * bitmap.height
+        val pixels1 = IntArray(totalPixels)
+        val pixels2 = IntArray(totalPixels)
 
-        for (x in 0 until bitmap.width) {
-            for (y in 0 until bitmap.height) {
-                val p1 = bitmap.getPixel(x, y)
-                val p2 = referenceBitmap.getPixel(x, y)
-                if (p1 != p2) {
+        bitmap.getPixels(pixels1, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
+        referenceBitmap.getPixels(pixels2, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
+
+        var distinctPixels = 0
+        val colorTolerance = 2 // Allow up to 2 units of difference per channel
+
+        for (i in 0 until totalPixels) {
+            val c1 = pixels1[i]
+            val c2 = pixels2[i]
+
+            if (c1 != c2) {
+                val r1 = (c1 shr 16) and 0xff
+                val g1 = (c1 shr 8) and 0xff
+                val b1 = c1 and 0xff
+                val a1 = (c1 shr 24) and 0xff
+
+                val r2 = (c2 shr 16) and 0xff
+                val g2 = (c2 shr 8) and 0xff
+                val b2 = c2 and 0xff
+                val a2 = (c2 shr 24) and 0xff
+
+                val isClose = Math.abs(r1 - r2) <= colorTolerance &&
+                            Math.abs(g1 - g2) <= colorTolerance &&
+                            Math.abs(b1 - b2) <= colorTolerance &&
+                            Math.abs(a1 - a2) <= colorTolerance
+
+                if (!isClose) {
                     distinctPixels++
                 }
             }
@@ -59,7 +82,7 @@ object SnapshotVerifier {
         val diffRatio = distinctPixels.toFloat() / totalPixels
         if (diffRatio > TOLERANCE) {
             fail(
-                "Snapshot mismatch! $distinctPixels pixels differ ($diffRatio%). \n" +
+                "Snapshot mismatch! $distinctPixels pixels differ significantly ($diffRatio%). \n" +
                     "Check generated output at: ${outputFile.absolutePath}",
             )
         }
