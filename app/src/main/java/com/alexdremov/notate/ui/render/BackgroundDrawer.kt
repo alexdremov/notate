@@ -8,11 +8,15 @@ import com.alexdremov.notate.ui.render.background.BackgroundPatternCache
 import kotlin.math.floor
 
 object BackgroundDrawer {
-    private val paint =
-        Paint().apply {
-            style = Paint.Style.STROKE
-            isAntiAlias = true
+    private val paintProvider =
+        ThreadLocal.withInitial {
+            Paint().apply {
+                style = Paint.Style.STROKE
+                isAntiAlias = true
+            }
         }
+
+    private val paint get() = paintProvider.get()!!
 
     // Threshold: Use Batched Vector rendering for up to this many primitives.
     // Batched rendering (drawLines/drawPoints) is extremely fast on Android.

@@ -68,10 +68,11 @@ object SnapshotVerifier {
                 val b2 = c2 and 0xff
                 val a2 = (c2 shr 24) and 0xff
 
-                val isClose = Math.abs(r1 - r2) <= colorTolerance &&
-                            Math.abs(g1 - g2) <= colorTolerance &&
-                            Math.abs(b1 - b2) <= colorTolerance &&
-                            Math.abs(a1 - a2) <= colorTolerance
+                val isClose =
+                    Math.abs(r1 - r2) <= colorTolerance &&
+                        Math.abs(g1 - g2) <= colorTolerance &&
+                        Math.abs(b1 - b2) <= colorTolerance &&
+                        Math.abs(a1 - a2) <= colorTolerance
 
                 if (!isClose) {
                     distinctPixels++

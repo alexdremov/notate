@@ -266,9 +266,18 @@ object PdfExporter {
         offsetY: Float,
     ) {
         when (style) {
-            is BackgroundStyle.Dots -> renderDotsToStream(stream, style, bounds, pageHeight, offsetX, offsetY)
-            is BackgroundStyle.Lines -> renderLinesToStream(stream, style, bounds, pageHeight, offsetX, offsetY)
-            is BackgroundStyle.Grid -> renderGridToStream(stream, style, bounds, pageHeight, offsetX, offsetY)
+            is BackgroundStyle.Dots -> {
+                renderDotsToStream(stream, style, bounds, pageHeight, offsetX, offsetY)
+            }
+
+            is BackgroundStyle.Lines -> {
+                renderLinesToStream(stream, style, bounds, pageHeight, offsetX, offsetY)
+            }
+
+            is BackgroundStyle.Grid -> {
+                renderGridToStream(stream, style, bounds, pageHeight, offsetX, offsetY)
+            }
+
             else -> {}
         }
     }
