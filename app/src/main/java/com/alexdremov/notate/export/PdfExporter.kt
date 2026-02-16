@@ -980,6 +980,20 @@ object PdfExporter {
                                 StrokeRenderer.drawItem(canvas, item, false, paint, context)
                             }
 
+                            // Manual R/B channel swap because PDFBox-Android's LosslessFactory
+                            // often swaps Red and Blue channels for ARGB_8888 bitmaps.
+                            val pixels = IntArray(w * h)
+                            bitmap.getPixels(pixels, 0, w, 0, 0, w, h)
+                            for (i in pixels.indices) {
+                                val p = pixels[i]
+                                val a = (p shr 24) and 0xff
+                                val r = (p shr 16) and 0xff
+                                val g = (p shr 8) and 0xff
+                                val b = p and 0xff
+                                pixels[i] = (a shl 24) or (b shl 16) or (g shl 8) or r
+                            }
+                            bitmap.setPixels(pixels, 0, w, 0, 0, w, h)
+
                             val image = LosslessFactory.createFromImage(doc, bitmap)
 
                             mutex.withLock {
