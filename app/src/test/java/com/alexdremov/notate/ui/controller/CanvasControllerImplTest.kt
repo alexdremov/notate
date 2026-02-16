@@ -8,6 +8,7 @@ import com.alexdremov.notate.model.EraserType
 import com.alexdremov.notate.model.InfiniteCanvasModel
 import com.alexdremov.notate.model.Stroke
 import com.alexdremov.notate.model.StrokeType
+import com.alexdremov.notate.model.TextItem
 import com.alexdremov.notate.ui.render.CanvasRenderer
 import com.alexdremov.notate.util.ClipboardManager
 import io.mockk.Runs
@@ -96,6 +97,21 @@ class CanvasControllerImplTest {
             coVerify { model.deleteItemsByIds(any(), setOf(1L), any()) }
             coVerify { renderer.invalidateTiles(any()) }
             coVerify { renderer.setHiddenItems(emptySet()) }
+            verify { renderer.invalidate() }
+        }
+
+    @Test
+    fun `updateText with blank text deletes item and invalidates renderer`() =
+        runTest {
+            val textItem = TextItem("Test", 12f, 0, RectF(0f, 0f, 100f, 50f), order = 1L)
+
+            controller.updateText(textItem, "")
+            testDispatcher.scheduler.advanceUntilIdle()
+
+            coVerify { model.deleteItemsByIds(any(), setOf(1L), any()) }
+            coVerify { renderer.invalidateTiles(any()) }
+            coVerify { renderer.setHiddenItems(emptySet()) }
+            verify { renderer.invalidate() }
         }
 
     @Test

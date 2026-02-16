@@ -14,6 +14,7 @@ import io.noties.markwon.ext.tasklist.TaskListPlugin
 import kotlin.math.ceil
 
 object TextRenderer {
+    @Volatile
     private var markwon: Markwon? = null
 
     // Thread-safe external cache for StaticLayouts
@@ -24,21 +25,19 @@ object TextRenderer {
 
     internal val layoutCache = LruCache<Long, CacheEntry>(200)
 
-    private fun getMarkwon(context: Context): Markwon {
-        var instance = markwon
-        if (instance == null) {
-            val appContext = context.applicationContext
-            instance =
+    private fun getMarkwon(context: Context): Markwon =
+        markwon ?: synchronized(this) {
+            markwon ?: run {
+                val appContext = context.applicationContext
                 Markwon
                     .builder(appContext)
                     .usePlugin(StrikethroughPlugin.create())
                     .usePlugin(TablePlugin.create(appContext))
                     .usePlugin(TaskListPlugin.create(appContext))
                     .build()
-            markwon = instance
+                    .also { markwon = it }
+            }
         }
-        return instance
-    }
 
     fun measureHeight(
         context: Context,

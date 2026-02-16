@@ -11,10 +11,10 @@ import com.alexdremov.notate.model.ToolType
 import com.alexdremov.notate.model.ToolbarItem
 import com.alexdremov.notate.util.Logger
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 

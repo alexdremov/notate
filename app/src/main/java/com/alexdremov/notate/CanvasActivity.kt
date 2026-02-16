@@ -172,7 +172,7 @@ class CanvasActivity : AppCompatActivity() {
                     ProcessLifecycleOwner.get().lifecycleScope.launch {
                         viewModel.closeSession(path, finalMetadata)
                     }
-                    
+
                     // Finish after data capture
                     finish()
                 }

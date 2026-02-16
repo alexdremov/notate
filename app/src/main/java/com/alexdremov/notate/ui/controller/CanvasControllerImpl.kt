@@ -302,6 +302,7 @@ class CanvasControllerImpl(
                 withContext(Dispatchers.Main) {
                     renderer.setHiddenItems(emptySet())
                     renderer.invalidateTiles(bounds)
+                    renderer.invalidate()
                     onContentChangedListener?.invoke()
                 }
             }
@@ -502,6 +503,7 @@ class CanvasControllerImpl(
                 withContext(Dispatchers.Main) {
                     renderer.setHiddenItems(emptySet())
                     renderer.invalidateTiles(bounds)
+                    renderer.invalidate()
                     onContentChangedListener?.invoke()
                 }
             }
