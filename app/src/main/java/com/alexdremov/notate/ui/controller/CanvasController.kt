@@ -91,6 +91,27 @@ interface CanvasController {
         height: Float,
     )
 
+    suspend fun addText(
+        text: String,
+        x: Float,
+        y: Float,
+        fontSize: Float,
+        color: Int,
+    )
+
+    suspend fun updateText(
+        oldItem: com.alexdremov.notate.model.TextItem,
+        newText: String,
+    )
+
+    /**
+     * Updates the style (font size, color) of all selected text items.
+     */
+    suspend fun updateSelectedTextStyle(
+        fontSize: Float? = null,
+        color: Int? = null,
+    )
+
     suspend fun startMoveSelection()
 
     suspend fun moveSelection(

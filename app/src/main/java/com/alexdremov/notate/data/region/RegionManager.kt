@@ -501,11 +501,19 @@ class RegionManager(
                 if (toRemove.isNotEmpty()) {
                     resizingId = id
                     regionCache.remove(id)
-                    resizingId = null
-
                     region.items.removeAll(toRemove)
-                    toRemove.forEach { region.quadtree?.remove(it) }
-
+                    toRemove.forEach { item ->
+                        var removedCount = 0
+                        while (region.quadtree?.remove(item) == true) {
+                            removedCount++
+                        }
+                        if (removedCount > 1) {
+                            Logger.w(
+                                "RegionManager",
+                                "Removed item ${item.order} from Quadtree $removedCount times",
+                            )
+                        }
+                    }
                     region.contentBounds.setEmpty()
                     region.items.forEach {
                         if (region.contentBounds.isEmpty) {

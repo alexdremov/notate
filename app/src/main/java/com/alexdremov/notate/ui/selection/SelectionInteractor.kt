@@ -23,7 +23,19 @@ class SelectionInteractor(
     private val matrix: Matrix, // View Matrix (World -> Screen)
     private val inverseMatrix: Matrix, // Screen -> World
 ) {
-    enum class HandleType { NONE, BODY, TOP_LEFT, TOP_RIGHT, BOTTOM_RIGHT, BOTTOM_LEFT, ROTATE }
+    enum class HandleType {
+        NONE,
+        BODY,
+        TOP_LEFT,
+        TOP_RIGHT,
+        BOTTOM_RIGHT,
+        BOTTOM_LEFT,
+        ROTATE,
+        MID_TOP,
+        MID_BOTTOM,
+        MID_LEFT,
+        MID_RIGHT,
+    }
 
     // --- State ---
     private var activeHandle = HandleType.NONE
@@ -251,10 +263,146 @@ class SelectionInteractor(
                 handleScale(x, y)
             }
 
+            HandleType.MID_TOP, HandleType.MID_BOTTOM, HandleType.MID_LEFT, HandleType.MID_RIGHT -> {
+                dragDistanceAccumulator += hypot(x - lastTouchX, y - lastTouchY)
+                handleNonUniformScale(x, y)
+            }
+
             else -> {}
         }
         lastTouchX = targetX
         lastTouchY = targetY
+    }
+
+    private fun handleNonUniformScale(
+        x: Float,
+        y: Float,
+    ) {
+        val sm = controller.getSelectionManager()
+        // World Space Corners
+        val worldCorners = sm.getTransformedCorners()
+
+        // Determine Pivot Edge (Opposite to active handle)
+        // Indices: 0,1=TL, 2,3=TR, 4,5=BR, 6,7=BL
+
+        // Pivot Point P (Center of opposite edge) in World Space
+        var px = 0f
+        var py = 0f
+        var scaleAxisX = 0f
+        var scaleAxisY = 0f
+
+        when (activeHandle) {
+            HandleType.MID_TOP -> {
+                // Pulling Top. Pivot is Bottom Edge (BR-BL: 4,5 - 6,7)
+                px = (worldCorners[4] + worldCorners[6]) / 2f
+                py = (worldCorners[5] + worldCorners[7]) / 2f
+                // Handle Center (Top Edge): (TL+TR)/2
+                val hx = (worldCorners[0] + worldCorners[2]) / 2f
+                val hy = (worldCorners[1] + worldCorners[3]) / 2f
+                scaleAxisX = hx - px
+                scaleAxisY = hy - py
+            }
+
+            HandleType.MID_BOTTOM -> {
+                // Pulling Bottom. Pivot is Top Edge (TL-TR: 0,1 - 2,3)
+                px = (worldCorners[0] + worldCorners[2]) / 2f
+                py = (worldCorners[1] + worldCorners[3]) / 2f
+                // Handle Center (Bottom Edge)
+                val hx = (worldCorners[4] + worldCorners[6]) / 2f
+                val hy = (worldCorners[5] + worldCorners[7]) / 2f
+                scaleAxisX = hx - px
+                scaleAxisY = hy - py
+            }
+
+            HandleType.MID_LEFT -> {
+                // Pulling Left. Pivot is Right Edge (TR-BR: 2,3 - 4,5)
+                px = (worldCorners[2] + worldCorners[4]) / 2f
+                py = (worldCorners[3] + worldCorners[5]) / 2f
+                // Handle Center (Left Edge)
+                val hx = (worldCorners[6] + worldCorners[0]) / 2f
+                val hy = (worldCorners[7] + worldCorners[1]) / 2f
+                scaleAxisX = hx - px
+                scaleAxisY = hy - py
+            }
+
+            HandleType.MID_RIGHT -> {
+                // Pulling Right. Pivot is Left Edge (BL-TL: 6,7 - 0,1)
+                px = (worldCorners[6] + worldCorners[0]) / 2f
+                py = (worldCorners[7] + worldCorners[1]) / 2f
+                // Handle Center (Right Edge)
+                val hx = (worldCorners[2] + worldCorners[4]) / 2f
+                val hy = (worldCorners[3] + worldCorners[5]) / 2f
+                scaleAxisX = hx - px
+                scaleAxisY = hy - py
+            }
+
+            else -> {
+                return
+            }
+        }
+
+        // Normalize Axis Vector
+        val axisLen = hypot(scaleAxisX, scaleAxisY)
+        if (axisLen < 0.1f) return
+        val ux = scaleAxisX / axisLen
+        val uy = scaleAxisY / axisLen
+
+        // Convert Screen Touches to World Space
+        val screenLast = floatArrayOf(lastTouchX, lastTouchY)
+        val worldLast = FloatArray(2)
+        inverseMatrix.mapPoints(worldLast, screenLast)
+
+        val screenCurr = floatArrayOf(x, y)
+        val worldCurr = FloatArray(2)
+        inverseMatrix.mapPoints(worldCurr, screenCurr)
+
+        // Project World Touches onto Axis relative to Pivot
+        val vLastX = worldLast[0] - px
+        val vLastY = worldLast[1] - py
+        val distLast = vLastX * ux + vLastY * uy
+
+        val vCurrX = worldCurr[0] - px
+        val vCurrY = worldCurr[1] - py
+        val distCurr = vCurrX * ux + vCurrY * uy
+
+        // Guard against division by zero or flipping (if crossing the pivot)
+        val matrixValues = FloatArray(9)
+        matrix.getValues(matrixValues)
+        val currentScale = hypot(matrixValues[Matrix.MSCALE_X], matrixValues[Matrix.MSKEW_Y])
+        val threshold = 1f / currentScale
+
+        if (kotlin.math.abs(distLast) > threshold && (distLast * distCurr) > 0) {
+            val scaleFactor = (distCurr / distLast).coerceAtLeast(0.05f)
+
+            // Construct Matrix to scale along Local Axis in World Space
+            // 1. Get current rotation
+            val values = FloatArray(9)
+            sm.getTransform().getValues(values)
+            val rotRad =
+                kotlin.math.atan2(
+                    values[android.graphics.Matrix.MSKEW_Y].toDouble(),
+                    values[android.graphics.Matrix.MSCALE_X].toDouble(),
+                )
+            val rotationDeg = Math.toDegrees(rotRad).toFloat()
+
+            // 2. Apply Transform: Rotate -> Scale -> Rotate Back
+            val m = Matrix()
+            m.setRotate(-rotationDeg, px, py)
+
+            // Determine which local axis to scale
+            // Assuming 0 rotation means:
+            // Top/Bottom aligns with Y axis
+            // Left/Right aligns with X axis
+            if (activeHandle == HandleType.MID_TOP || activeHandle == HandleType.MID_BOTTOM) {
+                m.postScale(1f, scaleFactor, px, py)
+            } else {
+                m.postScale(scaleFactor, 1f, px, py)
+            }
+
+            m.postRotate(rotationDeg, px, py)
+
+            scope.launch { controller.transformSelection(m) }
+        }
     }
 
     private fun handleRotate(
@@ -332,7 +480,7 @@ class SelectionInteractor(
         val currDist = hypot(x - screenPivot[0], y - screenPivot[1])
 
         if (prevDist > 1f) {
-            val scale = currDist / prevDist
+            val scale = (currDist / prevDist).coerceAtLeast(0.05f)
             val m = Matrix()
             m.postScale(scale, scale, px, py)
             scope.launch { controller.transformSelection(m) }
@@ -394,18 +542,34 @@ class SelectionInteractor(
         if (dist(2) < HANDLE_HIT_RADIUS) return HandleType.BOTTOM_RIGHT
         if (dist(3) < HANDLE_HIT_RADIUS) return HandleType.BOTTOM_LEFT
 
-        val mx = (screenCorners[0] + screenCorners[2]) / 2f
-        val my = (screenCorners[1] + screenCorners[3]) / 2f
+        // Rotate Handle (High Priority, Further Out)
+        val tmx = (screenCorners[0] + screenCorners[2]) / 2f
+        val tmy = (screenCorners[1] + screenCorners[3]) / 2f
         val dx = screenCorners[2] - screenCorners[0]
         val dy = screenCorners[3] - screenCorners[1]
         val len = hypot(dx, dy)
         if (len > 0.1f) {
             val ux = dy / len
             val uy = -dx / len
-            val rhx = mx + ux * 50f
-            val rhy = my + uy * 50f
+            val rhx = tmx + ux * 80f
+            val rhy = tmy + uy * 80f
             if (hypot(x - rhx, y - rhy) < HANDLE_HIT_RADIUS) return HandleType.ROTATE
         }
+
+        // Mid-Handle Detection
+        fun distToMid(
+            idx1: Int,
+            idx2: Int,
+        ): Float {
+            val mx = (screenCorners[idx1 * 2] + screenCorners[idx2 * 2]) / 2f
+            val my = (screenCorners[idx1 * 2 + 1] + screenCorners[idx2 * 2 + 1]) / 2f
+            return hypot(x - mx, y - my)
+        }
+
+        if (distToMid(0, 1) < HANDLE_HIT_RADIUS) return HandleType.MID_TOP
+        if (distToMid(1, 2) < HANDLE_HIT_RADIUS) return HandleType.MID_RIGHT
+        if (distToMid(2, 3) < HANDLE_HIT_RADIUS) return HandleType.MID_BOTTOM
+        if (distToMid(3, 0) < HANDLE_HIT_RADIUS) return HandleType.MID_LEFT
 
         val bounds = sm.getTransformedBounds()
         val worldPt = floatArrayOf(x, y)

@@ -2,7 +2,9 @@ package com.alexdremov.notate.ui.controller
 
 import android.graphics.Matrix
 import android.graphics.RectF
+import com.alexdremov.notate.model.CanvasImage
 import com.alexdremov.notate.model.CanvasItem
+import com.alexdremov.notate.model.TextItem
 
 /**
  * Manages the state of the active selection.
@@ -107,10 +109,19 @@ class SelectionManager {
 
     fun select(item: CanvasItem) {
         synchronized(lock) {
+            // Flatten if mixed selection logic requires it (adding to a single rotated selection)
+            if (_count > 0 && !transformMatrix.isIdentity) {
+                val currentAABB = getTransformedBounds()
+                selectionBounds.set(currentAABB)
+                transformMatrix.reset()
+            }
+
+            val itemAABB = getItemWorldAABB(item)
             if (_count == 0) {
-                selectionBounds.set(item.bounds)
+                selectionBounds.set(itemAABB)
+                transformMatrix.reset()
             } else {
-                selectionBounds.union(item.bounds)
+                selectionBounds.union(itemAABB)
             }
 
             // Check for duplicate ID to enforce set semantics
@@ -130,12 +141,24 @@ class SelectionManager {
 
     fun selectAll(items: List<CanvasItem>) {
         synchronized(lock) {
+            if (items.size == 1 && _count == 0) {
+                select(items[0])
+                return
+            }
+
+            if (_count > 0 && !transformMatrix.isIdentity) {
+                val currentAABB = getTransformedBounds()
+                selectionBounds.set(currentAABB)
+                transformMatrix.reset()
+            }
+
             ensureCapacity(_count + items.size)
             items.forEach { item ->
+                val itemAABB = getItemWorldAABB(item)
                 if (_count == 0) {
-                    selectionBounds.set(item.bounds)
+                    selectionBounds.set(itemAABB)
                 } else {
-                    selectionBounds.union(item.bounds)
+                    selectionBounds.union(itemAABB)
                 }
 
                 if (!_idSet.contains(item.order)) {
@@ -168,8 +191,10 @@ class SelectionManager {
 
                 if (_count == 0) {
                     selectionBounds.setEmpty()
+                    transformMatrix.reset() // Reset transform on empty
                 }
-                // Note: We don't shrink selectionBounds on deselect (expensive)
+                // Note: We don't shrink selectionBounds on deselect (expensive), but we could check if we should reset rotation.
+                // For now, simpler to leave it as is until clearSelection or new selection.
             }
         }
     }
@@ -241,5 +266,23 @@ class SelectionManager {
         synchronized(lock) {
             transformMatrix.postConcat(matrix)
         }
+    }
+
+    fun getItemRotation(item: CanvasItem): Float =
+        when (item) {
+            is TextItem -> item.rotation
+            is CanvasImage -> item.rotation
+            else -> 0f
+        }
+
+    fun getItemWorldAABB(item: CanvasItem): RectF {
+        val rot = getItemRotation(item)
+        if (rot == 0f) return item.bounds
+
+        val m = Matrix()
+        m.setRotate(rot, item.bounds.centerX(), item.bounds.centerY())
+        val r = RectF(item.bounds)
+        m.mapRect(r)
+        return r
     }
 }

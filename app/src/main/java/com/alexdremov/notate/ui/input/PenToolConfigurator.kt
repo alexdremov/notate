@@ -62,6 +62,12 @@ object PenToolConfigurator {
                     }
                 }
 
+                ToolType.TEXT -> {
+                    // Text Tool -> No raw drawing, software cursor or tap detection only
+                    setRawDrawingRenderEnabled(false)
+                    Device.currentDevice().setEraserRawDrawingEnabled(false)
+                }
+
                 ToolType.PEN -> {
                     setStrokeColor(ColorUtils.adjustColorForHardware(currentTool.displayColor))
                     setStrokeStyle(currentTool.strokeType.touchHelperStyle)

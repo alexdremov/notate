@@ -190,6 +190,14 @@ dependencies {
     implementation("com.google.api-client:google-api-client-android:2.8.1")
     implementation("com.google.apis:google-api-services-drive:v3-rev20251210-2.0.0")
 
+    // Markwon (Markdown Rendering & Editing)
+    implementation("io.noties.markwon:core:4.6.2")
+    implementation("io.noties.markwon:editor:4.6.2")
+    implementation("io.noties.markwon:ext-strikethrough:4.6.2")
+    implementation("io.noties.markwon:ext-tables:4.6.2")
+    implementation("io.noties.markwon:ext-tasklist:4.6.2")
+    implementation("io.noties.markwon:syntax-highlight:4.6.2")
+
     // Vulnerability force fixes
     constraints {
         // See: https://github.com/alexdremov/notate/security/dependabot/2
@@ -214,6 +222,12 @@ dependencies {
             version {
                 strictly("[3.25.5,)")
             }
+        }
+    }
+
+    modules {
+        module("org.jetbrains:annotations-java5") {
+            replacedBy("org.jetbrains:annotations", "annotations-java5 is a subset of annotations and causes duplicate classes")
         }
     }
 }

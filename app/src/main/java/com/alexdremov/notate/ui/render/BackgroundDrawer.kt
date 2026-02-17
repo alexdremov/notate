@@ -8,11 +8,15 @@ import com.alexdremov.notate.ui.render.background.BackgroundPatternCache
 import kotlin.math.floor
 
 object BackgroundDrawer {
-    private val paint =
-        Paint().apply {
-            style = Paint.Style.STROKE
-            isAntiAlias = true
+    private val paintProvider =
+        ThreadLocal.withInitial {
+            Paint().apply {
+                style = Paint.Style.STROKE
+                isAntiAlias = true
+            }
         }
+
+    private val paint get() = paintProvider.get()!!
 
     // Threshold: Use Batched Vector rendering for up to this many primitives.
     // Batched rendering (drawLines/drawPoints) is extremely fast on Android.
@@ -228,9 +232,10 @@ object BackgroundDrawer {
         while (y < rect.bottom + spacing) {
             if (y >= rect.top - spacing) {
                 if (count + 3 < pts.size) {
-                    pts[count++] = rect.left
+                    // Draw lines much wider than the current rect to avoid tile edge artifacts
+                    pts[count++] = rect.left - 100f
                     pts[count++] = y
-                    pts[count++] = rect.right
+                    pts[count++] = rect.right + 100f
                     pts[count++] = y
                 }
             }
@@ -285,9 +290,9 @@ object BackgroundDrawer {
             if (x >= rect.left - spacing) {
                 if (count + 3 < pts.size) {
                     pts[count++] = x
-                    pts[count++] = rect.top
+                    pts[count++] = rect.top - 100f
                     pts[count++] = x
-                    pts[count++] = rect.bottom
+                    pts[count++] = rect.bottom + 100f
                 }
             }
             x += spacing
@@ -298,9 +303,9 @@ object BackgroundDrawer {
         while (y < rect.bottom + spacing) {
             if (y >= rect.top - spacing) {
                 if (count + 3 < pts.size) {
-                    pts[count++] = rect.left
+                    pts[count++] = rect.left - 100f
                     pts[count++] = y
-                    pts[count++] = rect.right
+                    pts[count++] = rect.right + 100f
                     pts[count++] = y
                 }
             }

@@ -6,6 +6,7 @@ import com.alexdremov.notate.data.CanvasSerializer
 import com.alexdremov.notate.data.RegionBoundsProto
 import com.alexdremov.notate.data.RegionProto
 import com.alexdremov.notate.data.StrokeData
+import com.alexdremov.notate.data.TextItemData
 import com.alexdremov.notate.model.Stroke
 import com.alexdremov.notate.util.Logger
 import kotlinx.serialization.ExperimentalSerializationApi
@@ -101,6 +102,7 @@ class RegionStorage(
     fun saveRegion(data: RegionData): Boolean {
         val strokeData = ArrayList<StrokeData>()
         val imageData = ArrayList<CanvasImageData>()
+        val textData = ArrayList<TextItemData>()
 
         for (item in data.items) {
             when (item) {
@@ -116,10 +118,14 @@ class RegionStorage(
                     val relativeItem = item.copy(uri = uri)
                     imageData.add(CanvasSerializer.toCanvasImageData(relativeItem))
                 }
+
+                is com.alexdremov.notate.model.TextItem -> {
+                    textData.add(CanvasSerializer.toTextItemData(item))
+                }
             }
         }
 
-        val proto = RegionProto(data.id.x, data.id.y, strokeData, imageData)
+        val proto = RegionProto(data.id.x, data.id.y, strokeData, imageData, textData)
         val file = getRegionFile(data.id)
 
         return try {
@@ -184,7 +190,13 @@ class RegionStorage(
                 data.items.add(image)
             }
 
-            Logger.d(TAG, "Loaded region $id (${data.items.size} items)")
+            // Convert Text
+            proto.texts.forEach { tData ->
+                val textItem = CanvasSerializer.fromTextItemData(tData)
+                data.items.add(textItem)
+            }
+
+            Logger.d("RegionStorage", "Loaded region $id (${data.items.size} items)")
             data
         } catch (e: Exception) {
             Logger.e(TAG, "Failed to load region $id (File: ${file.absolutePath}, Size: ${file.length()})", e)

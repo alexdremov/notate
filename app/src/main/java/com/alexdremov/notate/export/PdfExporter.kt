@@ -1,32 +1,41 @@
 package com.alexdremov.notate.export
 
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.RectF
 import android.graphics.pdf.PdfDocument
+import android.net.Uri
 import com.alexdremov.notate.config.CanvasConfig
 import com.alexdremov.notate.data.CanvasType
 import com.alexdremov.notate.model.BackgroundStyle
+import com.alexdremov.notate.model.CanvasImage
 import com.alexdremov.notate.model.CanvasItem
 import com.alexdremov.notate.model.InfiniteCanvasModel
 import com.alexdremov.notate.model.Stroke
+import com.alexdremov.notate.model.TextItem
 import com.alexdremov.notate.ui.render.BackgroundDrawer
 import com.alexdremov.notate.ui.render.background.PatternLayoutHelper
 import com.alexdremov.notate.util.CharcoalPenRenderer
 import com.alexdremov.notate.util.FountainPenRenderer
 import com.alexdremov.notate.util.Logger
 import com.alexdremov.notate.util.StrokeRenderer
+import com.alexdremov.notate.util.TextRenderer
 import com.onyx.android.sdk.api.device.epd.EpdController
 import com.tom_roush.pdfbox.android.PDFBoxResourceLoader
 import com.tom_roush.pdfbox.io.MemoryUsageSetting
+import com.tom_roush.pdfbox.multipdf.LayerUtility
 import com.tom_roush.pdfbox.pdmodel.PDDocument
 import com.tom_roush.pdfbox.pdmodel.PDPage
 import com.tom_roush.pdfbox.pdmodel.PDPageContentStream
 import com.tom_roush.pdfbox.pdmodel.common.PDRectangle
-import com.tom_roush.pdfbox.pdmodel.graphics.image.JPEGFactory
+import com.tom_roush.pdfbox.pdmodel.font.PDType1Font
 import com.tom_roush.pdfbox.pdmodel.graphics.image.LosslessFactory
+import com.tom_roush.pdfbox.pdmodel.graphics.state.PDExtendedGraphicsState
+import com.tom_roush.pdfbox.pdmodel.graphics.state.RenderingMode
+import com.tom_roush.pdfbox.util.Matrix
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.currentCoroutineContext
@@ -36,8 +45,6 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import java.io.OutputStream
-import java.util.ArrayList
-import java.util.HashMap
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.math.ceil
 import kotlin.math.floor
@@ -172,12 +179,12 @@ object PdfExporter {
         try {
             val contentBounds = model.getContentBounds()
             val padding = 50f
-            val bounds =
-                if (contentBounds.isEmpty) {
-                    RectF(0f, 0f, CanvasConfig.PAGE_A4_WIDTH, CanvasConfig.PAGE_A4_HEIGHT)
-                } else {
-                    RectF(contentBounds)
-                }
+            val bounds = RectF()
+            if (contentBounds.isEmpty) {
+                bounds.set(0f, 0f, CanvasConfig.PAGE_A4_WIDTH, CanvasConfig.PAGE_A4_HEIGHT)
+            } else {
+                bounds.set(contentBounds)
+            }
             bounds.inset(-padding, -padding)
 
             val width = bounds.width()
@@ -188,129 +195,55 @@ object PdfExporter {
 
             val contentStream = PDPageContentStream(document, page, PDPageContentStream.AppendMode.OVERWRITE, false, false)
 
-            // Coordinate System: PDF is Bottom-Left. Android is Top-Left.
-            contentStream.saveGraphicsState()
-            // 1. Flip Y: (1 0 0 -1 0 height)
-            contentStream.transform(
-                com.tom_roush.pdfbox.util
-                    .Matrix(1f, 0f, 0f, -1f, 0f, height),
-            )
-            // 2. Translate to align content bounds: (-bounds.left, -bounds.top)
-            contentStream.transform(
-                com.tom_roush.pdfbox.util
-                    .Matrix(1f, 0f, 0f, 1f, -bounds.left, -bounds.top),
-            )
-
-            // Draw White Background
-            contentStream.setNonStrokingColor(1f, 1f, 1f)
-            contentStream.addRect(bounds.left, bounds.top, bounds.width(), bounds.height())
-            contentStream.fill()
+            // Coordinate System: We use standard PDF coordinates (+Y is up).
+            // Manual mapping is performed in render functions to ensure correct orientation of complex items.
 
             callback?.onProgress(10, "Rendering Background...")
+            renderBackgroundVectorToStream(contentStream, model.backgroundStyle, bounds, height, 0f, 0f)
 
-            // Render Background as Vectors
-            renderBackgroundVectorToStream(contentStream, model.backgroundStyle, bounds)
-
-            callback?.onProgress(20, "Rendering Strokes...")
+            callback?.onProgress(20, "Rendering Items...")
 
             val regionManager = model.getRegionManager()
             if (regionManager != null) {
                 val regions = regionManager.getRegionsInRect(bounds)
                 val totalRegions = regions.size
                 var processedRegions = 0
+                val processedItems = HashSet<Long>()
 
-                val alphaCache = HashMap<Int, com.tom_roush.pdfbox.pdmodel.graphics.state.PDExtendedGraphicsState>()
+                // Cache for Transparency States
+                val alphaCache = HashMap<Int, PDExtendedGraphicsState>()
 
                 for (region in regions) {
                     val items = ArrayList<CanvasItem>()
-                    region.quadtree?.retrieve(items, bounds)
+                    if (region.quadtree != null) {
+                        region.quadtree?.retrieve(items, bounds)
+                    } else {
+                        // Fallback if quadtree is not initialized for some reason
+                        items.addAll(region.items.filter { RectF.intersects(it.bounds, bounds) })
+                    }
                     items.sortWith(compareBy<CanvasItem> { it.zIndex }.thenBy { it.order })
 
                     for (item in items) {
-                        if (item is Stroke) {
-                            renderStrokeToPdf(contentStream, item, alphaCache)
-                        } else if (item is com.alexdremov.notate.model.CanvasImage) {
-                            try {
-                                val uriStr = item.uri
-                                val bitmap =
-                                    if (uriStr.startsWith("content://")) {
-                                        context.contentResolver.openInputStream(android.net.Uri.parse(uriStr))?.use {
-                                            android.graphics.BitmapFactory.decodeStream(it)
-                                        }
-                                    } else {
-                                        val path = if (uriStr.startsWith("file://")) uriStr.substring(7) else uriStr
-                                        android.graphics.BitmapFactory.decodeFile(path)
-                                    }
-                                if (bitmap != null) {
-                                    try {
-                                        val pdImage =
-                                            if (bitmap.hasAlpha()) {
-                                                LosslessFactory.createFromImage(document, bitmap)
-                                            } else {
-                                                JPEGFactory.createFromImage(document, bitmap, 0.9f)
-                                            }
-                                        contentStream.saveGraphicsState()
-                                        if (item.rotation != 0f) {
-                                            contentStream.transform(
-                                                com.tom_roush.pdfbox.util.Matrix.getTranslateInstance(
-                                                    item.bounds.centerX(),
-                                                    item.bounds.centerY(),
-                                                ),
-                                            )
-                                            contentStream.transform(
-                                                com.tom_roush.pdfbox.util.Matrix.getRotateInstance(
-                                                    Math.toRadians(item.rotation.toDouble()),
-                                                    0f,
-                                                    0f,
-                                                ),
-                                            )
-                                            contentStream.transform(
-                                                com.tom_roush.pdfbox.util.Matrix
-                                                    .getScaleInstance(1f, -1f),
-                                            )
-                                            contentStream.transform(
-                                                com.tom_roush.pdfbox.util.Matrix.getTranslateInstance(
-                                                    -item.bounds.width() / 2,
-                                                    -item.bounds.height() / 2,
-                                                ),
-                                            )
-                                        } else {
-                                            contentStream.transform(
-                                                com.tom_roush.pdfbox.util.Matrix
-                                                    .getTranslateInstance(item.bounds.left, item.bounds.top),
-                                            )
-                                            contentStream.transform(
-                                                com.tom_roush.pdfbox.util.Matrix
-                                                    .getScaleInstance(1f, -1f),
-                                            )
-                                            contentStream.transform(
-                                                com.tom_roush.pdfbox.util.Matrix
-                                                    .getTranslateInstance(0f, -item.bounds.height()),
-                                            )
-                                        }
-                                        contentStream.drawImage(pdImage, 0f, 0f, item.bounds.width(), item.bounds.height())
-                                        contentStream.restoreGraphicsState()
-                                    } finally {
-                                        bitmap.recycle()
-                                    }
-                                }
-                            } catch (e: Exception) {
-                                Logger.e("PdfExporter", "Failed to render image in vector export", e)
-                            }
+                        if (!processedItems.add(item.order)) continue
+
+                        when (item) {
+                            is Stroke -> renderStrokeToPdf(contentStream, item, alphaCache, bounds, height)
+                            is TextItem -> renderTextToPdf(document, contentStream, item, context, bounds, height)
+                            is CanvasImage -> renderImageToPdf(document, contentStream, item, context, bounds, height)
                         }
                     }
+
                     processedRegions++
-                    if (processedRegions % 5 == 0) {
-                        callback?.onProgress(
-                            20 + ((processedRegions.toFloat() / totalRegions) * 70).toInt(),
-                            "Exporting Region $processedRegions/$totalRegions",
-                        )
+                    if (processedRegions % 5 == 0 || processedRegions == totalRegions) {
+                        val progress = 20 + ((processedRegions.toFloat() / totalRegions) * 70).toInt()
+                        callback?.onProgress(progress, "Exporting Region $processedRegions/$totalRegions")
                         currentCoroutineContext().ensureActive()
                     }
                 }
             }
-            contentStream.restoreGraphicsState()
+
             contentStream.close()
+
             callback?.onProgress(90, "Writing to file...")
             document.save(outputStream)
             callback?.onProgress(100, "Done")
@@ -322,166 +255,395 @@ object PdfExporter {
         }
     }
 
-    private suspend fun renderBackgroundVectorToStream(
+    private fun renderBackgroundVectorToStream(
         stream: PDPageContentStream,
         style: BackgroundStyle,
-        rect: RectF,
-        offsetX: Float = 0f,
-        offsetY: Float = 0f,
+        bounds: RectF,
+        pageHeight: Float,
+        offsetX: Float,
+        offsetY: Float,
     ) {
-        val spacing =
-            when (style) {
-                is BackgroundStyle.Dots -> style.spacing
-                is BackgroundStyle.Lines -> style.spacing
-                is BackgroundStyle.Grid -> style.spacing
-                else -> 0f
-            }
-        if (spacing <= 5f) return
-        val color =
-            when (style) {
-                is BackgroundStyle.Dots -> style.color
-                is BackgroundStyle.Lines -> style.color
-                is BackgroundStyle.Grid -> style.color
-                else -> Color.TRANSPARENT
-            }
-        val r = (Color.red(color) / 255f).coerceIn(0f, 1f)
-        val g = (Color.green(color) / 255f).coerceIn(0f, 1f)
-        val b = (Color.blue(color) / 255f).coerceIn(0f, 1f)
-        stream.setStrokingColor(r, g, b)
-        stream.setNonStrokingColor(r, g, b)
         when (style) {
             is BackgroundStyle.Dots -> {
-                val radius = style.radius
-                // Bezier control point distance for circle approximation: 4*(√2-1)/3 ≈ 0.552
-                val k = 0.551915024494f
-                val cd = radius * k
-                val startX = floor((rect.left - offsetX) / spacing) * spacing + offsetX
-                val startY = floor((rect.top - offsetY) / spacing) * spacing + offsetY
-                var x = startX
-                var dotCount = 0
-                try {
-                    while (x < rect.right + spacing) {
-                        var y = startY
-                        while (y < rect.bottom + spacing) {
-                            if (x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom) {
-                                stream.moveTo(x + radius, y)
-                                stream.curveTo(x + radius, y + cd, x + cd, y + radius, x, y + radius)
-                                stream.curveTo(x - cd, y + radius, x - radius, y + cd, x - radius, y)
-                                stream.curveTo(x - radius, y - cd, x - cd, y - radius, x, y - radius)
-                                stream.curveTo(x + cd, y - radius, x + radius, y - cd, x + radius, y)
-                                dotCount++
-                                if (dotCount >= 500) {
-                                    stream.fill()
-                                    dotCount = 0
-                                }
-                            }
-                            y += spacing
-                        }
-                        x += spacing
-                    }
-                    if (dotCount > 0) stream.fill()
-                } catch (e: Exception) {
-                    if (dotCount > 0) {
-                        try {
-                            stream.fill()
-                        } catch (fillException: Exception) {
-                            // Swallow to avoid masking the original exception
-                        }
-                    }
-                    throw e
-                }
+                renderDotsToStream(stream, style, bounds, pageHeight, offsetX, offsetY)
             }
 
             is BackgroundStyle.Lines -> {
-                stream.setLineWidth(style.thickness)
-                val startY = floor((rect.top - offsetY) / spacing) * spacing + offsetY
-                var y = startY
-                while (y < rect.bottom + spacing) {
-                    if (y >= rect.top && y <= rect.bottom) {
-                        stream.moveTo(rect.left, y)
-                        stream.lineTo(rect.right, y)
-                        stream.stroke()
-                    }
-                    y += spacing
-                }
+                renderLinesToStream(stream, style, bounds, pageHeight, offsetX, offsetY)
             }
 
             is BackgroundStyle.Grid -> {
-                stream.setLineWidth(style.thickness)
-                val startX = floor((rect.left - offsetX) / spacing) * spacing + offsetX
-                var x = startX
-                while (x < rect.right + spacing) {
-                    if (x >= rect.left && x <= rect.right) {
-                        stream.moveTo(x, rect.top)
-                        stream.lineTo(x, rect.bottom)
-                        stream.stroke()
-                    }
-                    x += spacing
-                }
-                val startY = floor((rect.top - offsetY) / spacing) * spacing + offsetY
-                var y = startY
-                while (y < rect.bottom + spacing) {
-                    if (y >= rect.top && y <= rect.bottom) {
-                        stream.moveTo(rect.left, y)
-                        stream.lineTo(rect.right, y)
-                        stream.stroke()
-                    }
-                    y += spacing
-                }
+                renderGridToStream(stream, style, bounds, pageHeight, offsetX, offsetY)
             }
 
             else -> {}
         }
     }
 
+    private fun renderDotsToStream(
+        stream: PDPageContentStream,
+        style: BackgroundStyle.Dots,
+        bounds: RectF,
+        pageHeight: Float,
+        offsetX: Float,
+        offsetY: Float,
+    ) {
+        val spacing = style.spacing
+        if (spacing <= 0.1f) return
+
+        val color = style.color
+        stream.setNonStrokingColor(Color.red(color) / 255f, Color.green(color) / 255f, Color.blue(color) / 255f)
+
+        val startX = floor((bounds.left - offsetX) / spacing) * spacing + offsetX
+        val startY = floor((bounds.top - offsetY) / spacing) * spacing + offsetY
+
+        var x = startX
+        while (x < bounds.right + spacing) {
+            var y = startY
+            while (y < bounds.bottom + spacing) {
+                if (x >= bounds.left - 0.1f && x <= bounds.right + 0.1f &&
+                    y >= bounds.top - 0.1f && y <= bounds.bottom + 0.1f
+                ) {
+                    val pdfX = x - bounds.left
+                    val pdfY = pageHeight - (y - bounds.top)
+
+                    val r = style.radius
+                    // Use 4 bezier curves to approximate a circle
+                    val k = 0.552284749831f * r
+                    stream.moveTo(pdfX + r, pdfY)
+                    stream.curveTo(pdfX + r, pdfY + k, pdfX + k, pdfY + r, pdfX, pdfY + r)
+                    stream.curveTo(pdfX - k, pdfY + r, pdfX - r, pdfY + k, pdfX - r, pdfY)
+                    stream.curveTo(pdfX - r, pdfY - k, pdfX - k, pdfY - r, pdfX, pdfY - r)
+                    stream.curveTo(pdfX + k, pdfY - r, pdfX + r, pdfY - k, pdfX + r, pdfY)
+                    stream.fill()
+                }
+                y += spacing
+            }
+            x += spacing
+        }
+    }
+
+    private fun renderLinesToStream(
+        stream: PDPageContentStream,
+        style: BackgroundStyle.Lines,
+        bounds: RectF,
+        pageHeight: Float,
+        offsetX: Float,
+        offsetY: Float,
+    ) {
+        val spacing = style.spacing
+        if (spacing <= 0.1f) return
+
+        val color = style.color
+        stream.setStrokingColor(Color.red(color) / 255f, Color.green(color) / 255f, Color.blue(color) / 255f)
+        stream.setLineWidth(style.thickness)
+
+        val startY = floor((bounds.top - offsetY) / spacing) * spacing + offsetY
+
+        var y = startY
+        while (y <= bounds.bottom + 0.1f) {
+            if (y >= bounds.top - 0.1f) {
+                val pdfY = pageHeight - (y - bounds.top)
+                stream.moveTo(0f, pdfY)
+                stream.lineTo(bounds.width(), pdfY)
+                stream.stroke()
+            }
+            y += spacing
+        }
+    }
+
+    private fun renderGridToStream(
+        stream: PDPageContentStream,
+        style: BackgroundStyle.Grid,
+        bounds: RectF,
+        pageHeight: Float,
+        offsetX: Float,
+        offsetY: Float,
+    ) {
+        val spacing = style.spacing
+        if (spacing <= 0.1f) return
+
+        val color = style.color
+        stream.setStrokingColor(Color.red(color) / 255f, Color.green(color) / 255f, Color.blue(color) / 255f)
+        stream.setLineWidth(style.thickness)
+
+        // Vertical lines
+        val startX = floor((bounds.left - offsetX) / spacing) * spacing + offsetX
+        var x = startX
+        while (x <= bounds.right + 0.1f) {
+            if (x >= bounds.left - 0.1f) {
+                val pdfX = x - bounds.left
+                stream.moveTo(pdfX, 0f)
+                stream.lineTo(pdfX, pageHeight)
+                stream.stroke()
+            }
+            x += spacing
+        }
+
+        // Horizontal lines
+        val startY = floor((bounds.top - offsetY) / spacing) * spacing + offsetY
+        var y = startY
+        while (y <= bounds.bottom + 0.1f) {
+            if (y >= bounds.top - 0.1f) {
+                val pdfY = pageHeight - (y - bounds.top)
+                stream.moveTo(0f, pdfY)
+                stream.lineTo(bounds.width(), pdfY)
+                stream.stroke()
+            }
+            y += spacing
+        }
+    }
+
+    private fun renderTextToPdf(
+        document: PDDocument,
+        stream: PDPageContentStream,
+        item: TextItem,
+        context: android.content.Context,
+        bounds: RectF,
+        pageHeight: Float,
+    ) {
+        val w = ceil(item.bounds.width()).toInt().coerceAtLeast(1)
+        val h = ceil(item.bounds.height()).toInt().coerceAtLeast(1)
+
+        val pdfDoc = PdfDocument()
+        try {
+            val pageInfo = PdfDocument.PageInfo.Builder(w, h, 1).create()
+            val page = pdfDoc.startPage(pageInfo)
+
+            val renderItem =
+                item.copy(
+                    bounds = RectF(0f, 0f, w.toFloat(), h.toFloat()),
+                    rotation = 0f,
+                )
+
+            TextRenderer.draw(page.canvas, renderItem, context)
+            pdfDoc.finishPage(page)
+
+            val os = java.io.ByteArrayOutputStream()
+            pdfDoc.writeTo(os)
+
+            var tempDoc: PDDocument? = null
+            try {
+                tempDoc = PDDocument.load(os.toByteArray())
+                val layerUtility = LayerUtility(document)
+                val form = layerUtility.importPageAsForm(tempDoc, tempDoc.getPage(0))
+
+                val left = item.bounds.left - bounds.left
+                val bottom = pageHeight - (item.bounds.bottom - bounds.top)
+
+                stream.saveGraphicsState()
+
+                // Move to center of the item
+                stream.transform(Matrix.getTranslateInstance(left + item.bounds.width() / 2f, bottom + item.bounds.height() / 2f))
+                // Rotate (PDF CCW vs Android CW)
+                stream.transform(Matrix.getRotateInstance(-Math.toRadians(item.rotation.toDouble()), 0f, 0f))
+                // Move back to origin (bottom-left of block)
+                stream.transform(Matrix.getTranslateInstance(-item.bounds.width() / 2f, -item.bounds.height() / 2f))
+
+                // Render visual layer: No manual flip needed as form from PdfDocument is already oriented correctly
+                stream.drawForm(form)
+
+                // Render searchable layer: origin at top-left of block for baseline calculations
+                stream.transform(Matrix.getTranslateInstance(0f, item.bounds.height()))
+                addSearchableText(stream, item, context)
+
+                stream.restoreGraphicsState()
+            } catch (e: Exception) {
+                Logger.e("PdfExporter", "Failed to render text block to PDF", e)
+            } finally {
+                tempDoc?.close()
+            }
+        } finally {
+            pdfDoc.close()
+        }
+    }
+
+    private fun addSearchableText(
+        stream: PDPageContentStream,
+        item: TextItem,
+        context: android.content.Context,
+    ) {
+        var textStarted = false
+        try {
+            val layout = TextRenderer.getStaticLayout(context, item)
+
+            stream.beginText()
+            textStarted = true
+            stream.setRenderingMode(RenderingMode.NEITHER)
+
+            val font = PDType1Font.HELVETICA
+            stream.setFont(font, item.fontSize)
+
+            for (i in 0 until layout.lineCount) {
+                val lineText = layout.text.subSequence(layout.getLineStart(i), layout.getLineEnd(i)).toString()
+                if (lineText.isBlank()) continue
+
+                // PDType1Font only supports WinAnsiEncoding. Strip non-compatible chars to prevent crashes.
+                val safeText = lineText.filter { it.code in 32..126 || it.code in 160..255 }
+                if (safeText.isEmpty()) continue
+
+                val lineLeft = layout.getLineLeft(i)
+                // In a coordinate system where origin is at top of block and Y is up:
+                val lineBaseline = -layout.getLineBaseline(i).toFloat()
+
+                stream.newLineAtOffset(lineLeft, lineBaseline)
+                stream.showText(safeText)
+                stream.newLineAtOffset(-lineLeft, -lineBaseline)
+            }
+        } catch (e: Exception) {
+            Logger.w("PdfExporter", "Failed to add searchable text layer: ${e.message}")
+        } finally {
+            if (textStarted) {
+                try {
+                    stream.endText()
+                } catch (e: Exception) {
+                    Logger.e("PdfExporter", "Error ending text block", e)
+                }
+            }
+        }
+    }
+
+    private fun renderImageToPdf(
+        document: PDDocument,
+        stream: PDPageContentStream,
+        item: CanvasImage,
+        context: android.content.Context,
+        bounds: RectF,
+        pageHeight: Float,
+    ) {
+        Logger.d("PdfExporter", "Rendering image: ${item.uri} at ${item.bounds}")
+        try {
+            val uriStr = item.uri
+            val uri = Uri.parse(uriStr)
+
+            val bitmap =
+                try {
+                    if (uri.scheme == "content") {
+                        context.contentResolver.openInputStream(uri)?.use { stream ->
+                            BitmapFactory.decodeStream(stream)
+                        }
+                    } else {
+                        val file = java.io.File(uriStr)
+                        if (file.exists()) {
+                            BitmapFactory.decodeFile(file.absolutePath)
+                        } else {
+                            BitmapFactory.decodeFile(uri.path)
+                        }
+                    }
+                } catch (e: Exception) {
+                    null
+                }
+
+            if (bitmap != null) {
+                Logger.d("PdfExporter", "Successfully decoded bitmap for ${item.uri} (${bitmap.width}x${bitmap.height})")
+                val fixedBitmap = if (isFixNeeded) fixBitmapColors(bitmap) else bitmap
+                val image = LosslessFactory.createFromImage(document, fixedBitmap)
+                if (fixedBitmap !== bitmap) {
+                    fixedBitmap.recycle()
+                }
+
+                val left = item.bounds.left - bounds.left
+                val bottom = pageHeight - (item.bounds.bottom - bounds.top)
+
+                stream.saveGraphicsState()
+
+                stream.transform(Matrix.getTranslateInstance(left + item.bounds.width() / 2f, bottom + item.bounds.height() / 2f))
+                stream.transform(Matrix.getRotateInstance(-Math.toRadians(item.rotation.toDouble()), 0f, 0f))
+                stream.transform(Matrix.getTranslateInstance(-item.bounds.width() / 2f, -item.bounds.height() / 2f))
+
+                if (item.opacity < 1.0f) {
+                    val gstate = PDExtendedGraphicsState()
+                    gstate.nonStrokingAlphaConstant = item.opacity
+                    stream.setGraphicsStateParameters(gstate)
+                }
+
+                stream.drawImage(image, 0f, 0f, item.bounds.width(), item.bounds.height())
+                stream.restoreGraphicsState()
+
+                bitmap.recycle()
+            }
+        } catch (e: Exception) {
+            Logger.e("PdfExporter", "Failed to render image to PDF: ${item.uri}", e)
+        }
+    }
+
     private fun getSafeMaxPressure(stroke: Stroke): Float {
         val maxObserved = stroke.points.maxOfOrNull { it.pressure } ?: 0f
-        return if (maxObserved > 0f && maxObserved <= 1.0f) {
-            1.0f
-        } else {
-            EpdController.getMaxTouchPressure().let { if (it <= 0f) 4096f else it }
+
+        return when {
+            maxObserved > 0f && maxObserved <= 1.0f -> {
+                1.0f
+            }
+
+            else -> {
+                val hwMax = EpdController.getMaxTouchPressure()
+                if (hwMax <= 0f) 4096f else hwMax
+            }
         }
     }
 
     private fun renderStrokeToPdf(
         stream: PDPageContentStream,
         stroke: Stroke,
-        alphaCache: HashMap<Int, com.tom_roush.pdfbox.pdmodel.graphics.state.PDExtendedGraphicsState>,
+        alphaCache: HashMap<Int, PDExtendedGraphicsState>,
+        bounds: RectF,
+        pageHeight: Float,
     ) {
         val isFilled =
             when (stroke.style) {
-                com.alexdremov.notate.model.StrokeType.FOUNTAIN, com.alexdremov.notate.model.StrokeType.CHARCOAL -> true
+                com.alexdremov.notate.model.StrokeType.FOUNTAIN -> true
+                com.alexdremov.notate.model.StrokeType.CHARCOAL -> true
+                com.alexdremov.notate.model.StrokeType.BRUSH -> false
                 else -> false
             }
+
         val path =
             if (isFilled) {
-                val mp = getSafeMaxPressure(stroke)
+                val maxPressure = getSafeMaxPressure(stroke)
                 when (stroke.style) {
-                    com.alexdremov.notate.model.StrokeType.FOUNTAIN -> FountainPenRenderer.getPath(stroke, mp)
-                    com.alexdremov.notate.model.StrokeType.CHARCOAL -> CharcoalPenRenderer.getPath(stroke, mp) ?: stroke.path
-                    else -> stroke.path
+                    com.alexdremov.notate.model.StrokeType.FOUNTAIN -> {
+                        FountainPenRenderer.getPath(stroke, maxPressure)
+                    }
+
+                    com.alexdremov.notate.model.StrokeType.CHARCOAL -> {
+                        CharcoalPenRenderer.getPath(stroke, maxPressure) ?: stroke.path
+                    }
+
+                    else -> {
+                        stroke.path
+                    }
                 }
             } else {
                 stroke.path
             }
+
         if (path.isEmpty) return
-        val coords = path.approximate(0.5f)
+
+        val error = 0.5f
+        val coords = path.approximate(error)
+
         val color = stroke.color
-        val r = (Color.red(color) / 255f).coerceIn(0f, 1f)
-        val g = (Color.green(color) / 255f).coerceIn(0f, 1f)
-        val b = (Color.blue(color) / 255f).coerceIn(0f, 1f)
+        val r = Color.red(color) / 255f
+        val g = Color.green(color) / 255f
+        val b = Color.blue(color) / 255f
         val a = (Color.alpha(color) * stroke.style.alphaMultiplier).toInt().coerceIn(0, 255)
+
+        stream.saveGraphicsState()
+
         if (a < 255) {
-            val gs =
-                alphaCache.getOrPut(a) {
-                    com.tom_roush.pdfbox.pdmodel.graphics.state.PDExtendedGraphicsState().apply {
-                        nonStrokingAlphaConstant = a / 255f
-                        strokingAlphaConstant = a / 255f
-                    }
-                }
-            stream.setGraphicsStateParameters(gs)
+            val alphaKey = a
+            var extGState = alphaCache[alphaKey]
+            if (extGState == null) {
+                extGState = PDExtendedGraphicsState()
+                extGState.nonStrokingAlphaConstant = a / 255f
+                extGState.strokingAlphaConstant = a / 255f
+                alphaCache[alphaKey] = extGState
+            }
+            stream.setGraphicsStateParameters(extGState)
         }
+
         stream.setStrokingColor(r, g, b)
+
         if (isFilled) {
             stream.setNonStrokingColor(r, g, b)
         } else {
@@ -489,20 +651,67 @@ object PdfExporter {
             stream.setLineCapStyle(1)
             stream.setLineJoinStyle(1)
         }
+
         if (coords.isNotEmpty()) {
-            stream.moveTo(coords[1], coords[2])
-            for (i in 3 until coords.size step 3) stream.lineTo(coords[i + 1], coords[i + 2])
-            if (isFilled) stream.fill() else stream.stroke()
+            stream.moveTo(coords[1] - bounds.left, pageHeight - (coords[2] - bounds.top))
+            for (i in 3 until coords.size step 3) {
+                stream.lineTo(coords[i + 1] - bounds.left, pageHeight - (coords[i + 2] - bounds.top))
+            }
+            if (isFilled) {
+                stream.fill()
+            } else {
+                stream.stroke()
+            }
         }
-        if (a < 255) {
-            stream.setGraphicsStateParameters(
-                alphaCache.getOrPut(255) {
-                    com.tom_roush.pdfbox.pdmodel.graphics.state.PDExtendedGraphicsState().apply {
-                        nonStrokingAlphaConstant = 1f
-                        strokingAlphaConstant = 1f
+
+        stream.restoreGraphicsState()
+    }
+
+    private suspend fun renderBackgroundTiledToStream(
+        doc: PDDocument,
+        stream: PDPageContentStream,
+        style: BackgroundStyle,
+        bounds: RectF,
+        pageHeight: Float,
+    ) {
+        val tileSize = 1024
+        val cols = ceil(bounds.width() / tileSize).toInt()
+        val rows = ceil(bounds.height() / tileSize).toInt()
+
+        for (r in 0 until rows) {
+            for (c in 0 until cols) {
+                val left = bounds.left + c * tileSize
+                val top = bounds.top + r * tileSize
+                val right = min(left + tileSize, bounds.right)
+                val bottom = min(top + tileSize, bounds.bottom)
+                val tileRect = RectF(left, top, right, bottom)
+
+                val w = tileRect.width().toInt().coerceAtLeast(1)
+                val h = tileRect.height().toInt().coerceAtLeast(1)
+
+                var bitmap: Bitmap? = null
+                try {
+                    bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+                    val canvas = Canvas(bitmap)
+                    canvas.drawColor(Color.WHITE)
+                    canvas.translate(-tileRect.left, -tileRect.top)
+                    BackgroundDrawer.draw(canvas, style, tileRect, forceVector = false)
+
+                    val fixedBitmap = fixBitmapColors(bitmap)
+                    val image = LosslessFactory.createFromImage(doc, fixedBitmap)
+                    if (fixedBitmap !== bitmap) {
+                        fixedBitmap.recycle()
                     }
-                },
-            )
+
+                    val pdfX = tileRect.left - bounds.left
+                    val pdfY = pageHeight - (tileRect.bottom - bounds.top)
+
+                    stream.drawImage(image, pdfX, pdfY, tileRect.width(), tileRect.height())
+                } catch (e: Exception) {
+                } finally {
+                    bitmap?.recycle()
+                }
+            }
         }
     }
 
@@ -514,21 +723,36 @@ object PdfExporter {
         bitmapScale: Float,
     ) = withContext(Dispatchers.IO) {
         val document = PDDocument(MemoryUsageSetting.setupTempFileOnly())
+
         try {
-            val cb = model.getContentBounds()
+            val contentBounds = model.getContentBounds()
             val padding = 50f
-            val bounds = if (cb.isEmpty) RectF(0f, 0f, CanvasConfig.PAGE_A4_WIDTH, CanvasConfig.PAGE_A4_HEIGHT) else RectF(cb)
+            val bounds = RectF()
+            if (contentBounds.isEmpty) {
+                bounds.set(0f, 0f, CanvasConfig.PAGE_A4_WIDTH, CanvasConfig.PAGE_A4_HEIGHT)
+            } else {
+                bounds.set(contentBounds)
+            }
             bounds.inset(-padding, -padding)
-            val page = PDPage(PDRectangle(bounds.width(), bounds.height()))
+
+            val width = bounds.width()
+            val height = bounds.height()
+
+            val page = PDPage(PDRectangle(width, height))
             document.addPage(page)
+
             val contentStream = PDPageContentStream(document, page, PDPageContentStream.AppendMode.OVERWRITE, false, false)
+
             callback?.onProgress(10, "Rendering Canvas...")
             renderTilesToPdfBox(document, contentStream, model, bounds, context, callback, bitmapScale)
+
             contentStream.close()
+
             callback?.onProgress(90, "Writing to file...")
             document.save(outputStream)
             callback?.onProgress(100, "Done")
         } catch (e: Exception) {
+            Logger.e("PdfExporter", "Bitmap Export failed", e)
             throw e
         } finally {
             document.close()
@@ -549,6 +773,7 @@ object PdfExporter {
         val pageFullHeight = pageHeight + CanvasConfig.PAGE_SPACING
         val lastPageIdx = if (contentBounds.isEmpty) 0 else floor(contentBounds.bottom / pageFullHeight).toInt().coerceAtLeast(0)
         val totalPages = lastPageIdx + 1
+
         val paint =
             Paint().apply {
                 isAntiAlias = true
@@ -556,76 +781,84 @@ object PdfExporter {
                 strokeJoin = Paint.Join.ROUND
                 strokeCap = Paint.Cap.ROUND
             }
+
         for (i in 0..lastPageIdx) {
             currentCoroutineContext().ensureActive()
-            callback?.onProgress(((i.toFloat() / totalPages) * 90).toInt(), "Exporting Page ${i + 1}/$totalPages")
-
-            val topOffset = i * pageFullHeight
-            val pageWorldRect = RectF(0f, topOffset, pageWidth, topOffset + pageHeight)
-            val patternArea = PatternLayoutHelper.calculatePatternArea(pageWorldRect, bgStyle)
-            val (offsetX, offsetY) = PatternLayoutHelper.calculateOffsets(patternArea, bgStyle)
-            val items = model.queryItems(pageWorldRect).apply { sortWith(compareBy<CanvasItem> { it.zIndex }.thenBy { it.order }) }
+            val progress = ((i.toFloat() / totalPages) * 90).toInt()
+            callback?.onProgress(progress, "Exporting Page ${i + 1}/$totalPages")
 
             val pageInfo = PdfDocument.PageInfo.Builder(pageWidth.toInt(), pageHeight.toInt(), i + 1).create()
             val page = doc.startPage(pageInfo)
-            try {
-                val canvas = page.canvas
+            val canvas = page.canvas
 
-                if (isVector) {
-                    // Vector Mode: Draw background on PDF canvas, then vector items
-                    canvas.drawColor(Color.WHITE)
-                    canvas.save()
-                    canvas.translate(0f, -topOffset)
-                    BackgroundDrawer.draw(canvas, bgStyle, patternArea, 1f, offsetX, offsetY, forceVector = true)
-                    renderVectorItems(canvas, items, paint, context)
-                    canvas.restore()
-                } else {
-                    // Bitmap Mode: Draw background AND items into a single bitmap to avoid PDF transparency issues (JPEG compression)
-                    canvas.save()
-                    canvas.translate(0f, -topOffset)
-                    renderBitmapItems(canvas, items, pageWorldRect, paint, context, bgStyle, patternArea, offsetX, offsetY)
-                    canvas.restore()
-                }
-            } finally {
-                doc.finishPage(page)
+            canvas.drawColor(Color.WHITE)
+            val topOffset = i * pageFullHeight
+
+            canvas.save()
+            canvas.translate(0f, -topOffset)
+
+            val pageWorldRect = RectF(0f, topOffset, pageWidth, topOffset + pageHeight)
+            val patternArea = PatternLayoutHelper.calculatePatternArea(pageWorldRect, bgStyle)
+            val (offsetX, offsetY) = PatternLayoutHelper.calculateOffsets(patternArea, bgStyle)
+
+            BackgroundDrawer.draw(canvas, bgStyle, patternArea, 0f, offsetX, offsetY, forceVector = isVector)
+
+            val visibleItems = model.queryItems(pageWorldRect)
+            visibleItems.sortWith(compareBy<CanvasItem> { it.zIndex }.thenBy { it.order })
+
+            if (isVector) {
+                renderVectorItems(canvas, visibleItems, paint, context)
+            } else {
+                renderBitmapItems(canvas, visibleItems, pageWorldRect, paint, context)
             }
+
+            canvas.restore()
+            doc.finishPage(page)
         }
     }
 
     private suspend fun exportInfiniteCanvasVector(
         doc: PdfDocumentWrapper,
         model: InfiniteCanvasModel,
-        cb: RectF,
+        contentBounds: RectF,
         bgStyle: BackgroundStyle,
         callback: ProgressCallback?,
         context: android.content.Context,
     ) {
         val padding = 50f
-        val bounds = if (cb.isEmpty) RectF(0f, 0f, CanvasConfig.PAGE_A4_WIDTH, CanvasConfig.PAGE_A4_HEIGHT) else RectF(cb)
-        bounds.inset(-padding, -padding)
-        val pageInfo = PdfDocument.PageInfo.Builder(bounds.width().toInt(), bounds.height().toInt(), 1).create()
-        val page = doc.startPage(pageInfo)
-        try {
-            val canvas = page.canvas
-            canvas.drawColor(Color.WHITE)
-            canvas.translate(-bounds.left, -bounds.top)
-            BackgroundDrawer.draw(canvas, bgStyle, bounds, forceVector = true)
-            renderVectorItemsFromRegions(
-                canvas,
-                model,
-                bounds,
-                Paint().apply {
-                    isAntiAlias = true
-                    isDither = true
-                    strokeJoin =
-                        Paint.Join.ROUND
-                    strokeCap = Paint.Cap.ROUND
-                },
-                context,
-            )
-        } finally {
-            doc.finishPage(page)
+        val bounds = RectF()
+        if (contentBounds.isEmpty) {
+            bounds.set(0f, 0f, CanvasConfig.PAGE_A4_WIDTH, CanvasConfig.PAGE_A4_HEIGHT)
+        } else {
+            bounds.set(contentBounds)
         }
+        bounds.inset(-padding, -padding)
+
+        val width = bounds.width().toInt()
+        val height = bounds.height().toInt()
+
+        callback?.onProgress(10, "Rendering Canvas...")
+
+        val pageInfo = PdfDocument.PageInfo.Builder(width, height, 1).create()
+        val page = doc.startPage(pageInfo)
+        val canvas = page.canvas
+
+        canvas.drawColor(Color.WHITE)
+        canvas.translate(-bounds.left, -bounds.top)
+
+        BackgroundDrawer.draw(canvas, bgStyle, bounds, forceVector = true)
+
+        val paint =
+            Paint().apply {
+                isAntiAlias = true
+                isDither = true
+                strokeJoin = Paint.Join.ROUND
+                strokeCap = Paint.Cap.ROUND
+            }
+
+        renderVectorItemsFromRegions(canvas, model, bounds, paint, context)
+
+        doc.finishPage(page)
     }
 
     private fun renderVectorItems(
@@ -652,12 +885,15 @@ object PdfExporter {
         paint: Paint,
         context: android.content.Context,
     ) {
-        val rm = model.getRegionManager() ?: return
-        for (region in rm.getRegionsInRect(bounds)) {
-            val items = ArrayList<CanvasItem>()
-            region.quadtree?.retrieve(items, bounds)
-            items.sortWith(compareBy<CanvasItem> { it.zIndex }.thenBy { it.order })
-            for (item in items) {
+        val regionManager = model.getRegionManager() ?: return
+        val regions = regionManager.getRegionsInRect(bounds)
+
+        for (region in regions) {
+            val regionItems = ArrayList<CanvasItem>()
+            region.quadtree?.retrieve(regionItems, bounds)
+            regionItems.sortWith(compareBy<CanvasItem> { it.zIndex }.thenBy { it.order })
+
+            for (item in regionItems) {
                 if (item is Stroke) {
                     paint.color = item.color
                     paint.strokeWidth = item.width
@@ -666,6 +902,7 @@ object PdfExporter {
                     StrokeRenderer.drawItem(canvas, item, false, paint, context)
                 }
             }
+            regionItems.clear()
         }
     }
 
@@ -675,74 +912,26 @@ object PdfExporter {
         bounds: RectF,
         paint: Paint,
         context: android.content.Context,
-        bgStyle: BackgroundStyle? = null,
-        patternArea: RectF? = null,
-        offsetX: Float = 0f,
-        offsetY: Float = 0f,
     ) {
         val w = bounds.width().toInt().coerceAtLeast(1)
         val h = bounds.height().toInt().coerceAtLeast(1)
+
         try {
             val bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
             val bmpCanvas = Canvas(bitmap)
+            bmpCanvas.translate(-bounds.left, -bounds.top)
 
-            // Draw Opaque Background first
-            bmpCanvas.drawColor(Color.WHITE)
-            if (bgStyle != null && patternArea != null) {
-                // Adjust pattern area to be relative to the bitmap (0,0)
-                // The bounds passed in are World Bounds (e.g. 0, topOffset).
-                // bmpCanvas is already 0-based.
-                // We need to shift patternArea by -bounds.left, -bounds.top
-                val localPatternArea = RectF(patternArea)
-                localPatternArea.offset(-bounds.left, -bounds.top)
-
-                // OffsetX/Y are relative to World Origin usually?
-                // BackgroundDrawer expects logic relative to the canvas it draws on.
-                // If we translate canvas by -bounds, we are in World Space relative to Page Top.
-                // PatternLayoutHelper calculates offsets relative to Page Rect.
-                // So we can just draw directly if we setup the matrix?
-
-                // Let's reset translation for background drawing to match expected inputs
-                // Actually BackgroundDrawer uses the rect passed to it.
-                // We passed localPatternArea.
-                // Offsets: offsetX/Y are pattern start points.
-                // If we shift the rect, we must ensure the pattern aligns.
-                // BackgroundDrawer uses (startX = floor((rect.left - offsetX) / spacing) ...).
-                // If we shift rect.left, we must shift offsetX too?
-                // The easiest way is to use the original World Coordinates but translate the canvas.
-
-                // But wait, bmpCanvas was just created. It has no translation.
-                // So (0,0) on bmpCanvas corresponds to (bounds.left, bounds.top).
-
-                bmpCanvas.save()
-                bmpCanvas.translate(-bounds.left, -bounds.top)
-                BackgroundDrawer.draw(bmpCanvas, bgStyle, patternArea, 1f, offsetX, offsetY, forceVector = false)
-
-                // Draw Items
-                for (item in items) {
-                    if (item is Stroke) {
-                        paint.color = item.color
-                        paint.strokeWidth = item.width
-                    }
-                    StrokeRenderer.drawItem(bmpCanvas, item, false, paint, context)
+            for (item in items) {
+                if (item is Stroke) {
+                    paint.color = item.color
+                    paint.strokeWidth = item.width
                 }
-                bmpCanvas.restore()
-            } else {
-                bmpCanvas.translate(-bounds.left, -bounds.top)
-                for (item in items) {
-                    if (item is Stroke) {
-                        paint.color = item.color
-                        paint.strokeWidth = item.width
-                    }
-                    StrokeRenderer.drawItem(bmpCanvas, item, false, paint, context)
-                }
+                StrokeRenderer.drawItem(bmpCanvas, item, false, paint, context)
             }
 
             canvas.drawBitmap(bitmap, bounds.left, bounds.top, null)
             bitmap.recycle()
         } catch (e: OutOfMemoryError) {
-            // Fallback to vector if OOM (Note: Background will be missing in fallback if we don't handle it,
-            // but this is a rare edge case. We prioritize not crashing.)
             renderVectorItems(canvas, items, paint, context)
         }
     }
@@ -756,42 +945,49 @@ object PdfExporter {
         callback: ProgressCallback?,
         bitmapScale: Float,
     ) = withContext(Dispatchers.Default) {
-        val ts = 2048
-        val cols = ceil(bounds.width() / ts).toInt()
-        val rows = ceil(bounds.height() / ts).toInt()
-        val total = cols * rows
-        val completed = AtomicInteger(0)
+        val tileSize = 2048
+        val cols = ceil(bounds.width() / tileSize).toInt()
+        val rows = ceil(bounds.height() / tileSize).toInt()
+        val totalTiles = cols * rows
+        val completedTiles = AtomicInteger(0)
+
         val mutex = Mutex()
-        val sem = kotlinx.coroutines.sync.Semaphore(2)
+        val semaphore = kotlinx.coroutines.sync.Semaphore(2)
+
         val bgStyle = model.backgroundStyle
-        val tiles = ArrayList<RectF>(total)
+
+        val tiles = ArrayList<RectF>(cols * rows)
         for (r in 0 until rows) {
             for (c in 0 until cols) {
-                tiles.add(
-                    RectF(
-                        bounds.left + c * ts,
-                        bounds.top + r * ts,
-                        min(bounds.left + (c + 1) * ts, bounds.right),
-                        min(bounds.top + (r + 1) * ts, bounds.bottom),
-                    ),
-                )
+                val left = bounds.left + c * tileSize
+                val top = bounds.top + r * tileSize
+                val right = min(left + tileSize, bounds.right)
+                val bottom = min(top + tileSize, bounds.bottom)
+                tiles.add(RectF(left, top, right, bottom))
             }
         }
+
         tiles
-            .map { tr ->
+            .map { tileRect ->
                 async(Dispatchers.Default) {
-                    sem.withPermit {
-                        val w = (tr.width() * bitmapScale).toInt().coerceAtLeast(1)
-                        val h = (tr.height() * bitmapScale).toInt().coerceAtLeast(1)
+                    semaphore.withPermit {
+                        val w = (tileRect.width() * bitmapScale).toInt().coerceAtLeast(1)
+                        val h = (tileRect.height() * bitmapScale).toInt().coerceAtLeast(1)
+
                         var bitmap: Bitmap? = null
                         try {
-                            bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.RGB_565)
+                            bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
                             val canvas = Canvas(bitmap)
                             canvas.scale(bitmapScale, bitmapScale)
                             canvas.drawColor(Color.WHITE)
-                            canvas.translate(-tr.left, -tr.top)
-                            BackgroundDrawer.draw(canvas, bgStyle, tr, forceVector = false)
-                            val items = model.queryItems(tr).apply { sortWith(compareBy<CanvasItem> { it.zIndex }.thenBy { it.order }) }
+                            canvas.translate(-tileRect.left, -tileRect.top)
+
+                            // Use 0f offsets for infinite canvas to match UI
+                            BackgroundDrawer.draw(canvas, bgStyle, tileRect, 1.0f, 0f, 0f, forceVector = false)
+
+                            val tileItems = model.queryItems(tileRect)
+                            tileItems.sortWith(compareBy<CanvasItem> { it.zIndex }.thenBy { it.order })
+
                             val paint =
                                 Paint().apply {
                                     isAntiAlias = true
@@ -799,28 +995,68 @@ object PdfExporter {
                                     strokeJoin = Paint.Join.ROUND
                                     strokeCap = Paint.Cap.ROUND
                                 }
-                            for (item in items) StrokeRenderer.drawItem(canvas, item, false, paint, context)
-                            val image = JPEGFactory.createFromImage(doc, bitmap, 0.9f)
+
+                            for (item in tileItems) {
+                                StrokeRenderer.drawItem(canvas, item, false, paint, context)
+                            }
+
+                            val fixedBitmap = if (isFixNeeded) fixBitmapColors(bitmap) else bitmap
+                            val image = LosslessFactory.createFromImage(doc, fixedBitmap)
+                            if (fixedBitmap !== bitmap) {
+                                fixedBitmap.recycle()
+                            }
+
                             mutex.withLock {
-                                contentStream.drawImage(
-                                    image,
-                                    tr.left - bounds.left,
-                                    bounds.height() - (tr.bottom - bounds.top),
-                                    tr.width(),
-                                    tr.height(),
-                                )
+                                val pdfX = tileRect.left - bounds.left
+                                val pdfY = bounds.height() - (tileRect.bottom - bounds.top)
+                                contentStream.drawImage(image, pdfX, pdfY, tileRect.width(), tileRect.height())
                             }
                         } catch (e: Exception) {
                             Logger.e("PdfExporter", "Error rendering tile", e)
                         } finally {
                             bitmap?.recycle()
                         }
-                        callback?.onProgress(
-                            10 + ((completed.incrementAndGet().toFloat() / total) * 80).toInt(),
-                            "Rendering Tile ${completed.get()}/$total",
-                        )
+
+                        val finished = completedTiles.incrementAndGet()
+                        val progress = 10 + ((finished.toFloat() / totalTiles) * 80).toInt()
+                        callback?.onProgress(progress, "Rendering Tile $finished/$totalTiles")
                     }
                 }
             }.forEach { it.await() }
+    }
+
+    private val isFixNeeded: Boolean by lazy {
+        // Only apply the R/B swap fix on Desktop (Robolectric) environments.
+        // PDFBox-Android's LosslessFactory on Desktop/CI often swaps channels,
+        // but actual Android devices handle the ARGB_8888 -> PDF conversion correctly.
+        val vendor = System.getProperty("java.vendor")?.lowercase() ?: ""
+        val vmName = System.getProperty("java.vm.name")?.lowercase() ?: ""
+        val isAndroid = vendor.contains("android") || vmName.contains("dalvik") || vmName.contains("art")
+
+        !isAndroid
+    }
+
+    /**
+     * Manual R/B channel swap because PDFBox-Android's LosslessFactory
+     * often swaps Red and Blue channels for ARGB_8888 bitmaps.
+     * Note: This is platform dependent and seems to be needed on Linux/Android
+     * but not on macOS (Robolectric).
+     */
+    private fun fixBitmapColors(bitmap: Bitmap): Bitmap {
+        val mutableBitmap = if (bitmap.isMutable) bitmap else bitmap.copy(Bitmap.Config.ARGB_8888, true)
+        val w = mutableBitmap.width
+        val h = mutableBitmap.height
+        val pixels = IntArray(w * h)
+        mutableBitmap.getPixels(pixels, 0, w, 0, 0, w, h)
+        for (i in pixels.indices) {
+            val p = pixels[i]
+            val a = (p shr 24) and 0xff
+            val r = (p shr 16) and 0xff
+            val g = (p shr 8) and 0xff
+            val b = p and 0xff
+            pixels[i] = (a shl 24) or (b shl 16) or (g shl 8) or r
+        }
+        mutableBitmap.setPixels(pixels, 0, w, 0, 0, w, h)
+        return mutableBitmap
     }
 }
