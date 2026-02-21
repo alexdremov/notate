@@ -64,26 +64,39 @@ data class TextItem(
         return kotlin.math.max(dLocalX, dLocalY).coerceAtLeast(0f)
     }
 
+    /**
+     * Checks if two TextItems have the same visual layout properties.
+     * Used for cache invalidation.
+     */
+    fun hasSameLayout(other: TextItem): Boolean =
+        text == other.text &&
+            fontSize == other.fontSize &&
+            color == other.color &&
+            logicalBounds.width() == other.logicalBounds.width() &&
+            alignment == other.alignment &&
+            backgroundColor == other.backgroundColor &&
+            opacity == other.opacity
+
     override fun equals(other: Any?): Boolean {
         if (this === other) return true
         if (javaClass != other?.javaClass) return false
 
         other as TextItem
 
+        // Identity check based on unique ID
         if (order != 0L && order == other.order) return true
         if (order != other.order) return false
-        if (text != other.text) return false
-        if (fontSize != other.fontSize) return false
-        if (color != other.color) return false
-        if (logicalBounds != other.logicalBounds) return false
-        if (bounds != other.bounds) return false
-        if (alignment != other.alignment) return false
-        if (backgroundColor != other.backgroundColor) return false
-        if (zIndex != other.zIndex) return false
-        if (rotation != other.rotation) return false
-        if (opacity != other.opacity) return false
 
-        return true
+        // Structural fallback for new items
+        return text == other.text &&
+            fontSize == other.fontSize &&
+            color == other.color &&
+            logicalBounds == other.logicalBounds &&
+            alignment == other.alignment &&
+            backgroundColor == other.backgroundColor &&
+            zIndex == other.zIndex &&
+            rotation == other.rotation &&
+            opacity == other.opacity
     }
 
     override fun hashCode(): Int {
@@ -92,7 +105,6 @@ data class TextItem(
         result = 31 * result + fontSize.hashCode()
         result = 31 * result + color
         result = 31 * result + logicalBounds.hashCode()
-        result = 31 * result + bounds.hashCode()
         result = 31 * result + alignment.hashCode()
         result = 31 * result + backgroundColor
         result = 31 * result + zIndex.hashCode()

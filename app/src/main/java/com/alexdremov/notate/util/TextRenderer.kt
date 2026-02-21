@@ -66,7 +66,7 @@ object TextRenderer {
     ): StaticLayout {
         val markwon = getMarkwon(context)
         val entry = if (item.order != 0L) layoutCache.get(item.order) else null
-        if (entry != null && entry.item == item) {
+        if (entry != null && entry.item.hasSameLayout(item)) {
             return entry.layout
         }
         val targetWidth = ceil(item.logicalBounds.width()).toInt().coerceAtLeast(1)

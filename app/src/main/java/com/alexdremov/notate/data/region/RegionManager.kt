@@ -235,6 +235,7 @@ class RegionManager(
                     }
                 }
             } catch (e: Exception) {
+                Logger.e("RegionManager", "Failed to load region $id during index rebuild", e)
             }
         }
         if (loadedCount > 0) {
@@ -496,12 +497,13 @@ class RegionManager(
                 }
 
                 // 3. Find actual items to remove
-                val toRemove = region.items.filter { idsToRemove.contains(it.order) }
+                val toRemove = region.items.filter { it.order in idsToRemove }
 
                 if (toRemove.isNotEmpty()) {
                     resizingId = id
                     regionCache.remove(id)
-                    region.items.removeAll(toRemove)
+                    // Use ID-based removal to handle cases where structural properties might have changed
+                    region.items.removeAll { it.order in idsToRemove }
                     toRemove.forEach { item ->
                         var removedCount = 0
                         while (region.quadtree?.remove(item) == true) {
@@ -881,16 +883,13 @@ class RegionManager(
         val regionIds = getRegionIdsInRect(rect)
         for (rId in regionIds) {
             val region = getRegion(rId)
-            val toRemove = ArrayList<CanvasItem>()
-            region.items.forEach { item ->
-                if (ids.contains(item.order)) toRemove.add(item)
-            }
+            val toRemove = region.items.filter { it.order in ids }
             if (toRemove.isNotEmpty()) {
                 stateLock.write {
                     resizingId = rId
                     regionCache.remove(rId)
                     resizingId = null
-                    region.items.removeAll(toRemove)
+                    region.items.removeAll { it.order in ids }
                     toRemove.forEach { region.quadtree?.remove(it) }
                     region.contentBounds.setEmpty()
                     region.items.forEach {

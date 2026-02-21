@@ -264,12 +264,24 @@ class Quadtree(
         if (nodes[0] != null) {
             val index = getIndex(item.bounds)
             if (index != -1) {
-                return nodes[index]?.remove(item) == true
-            } else {
-                // If it spans multiple quadrants, it might be in any of them
-                // (especially if the tree grew and midpoints shifted relative to the item)
-                for (i in nodes.indices) {
-                    if (nodes[i] != null && RectF.intersects(nodes[i]!!.bounds, item.bounds)) {
+                if (nodes[index]?.remove(item) == true) return true
+            }
+
+            // Fallback: If not found in primary quadrant or spans quadrants,
+            // check all intersecting quadrants. This is crucial if item properties
+            // changed before removal.
+            for (i in nodes.indices) {
+                if (i == index) continue // Already checked
+                if (nodes[i] != null && RectF.intersects(nodes[i]!!.bounds, item.bounds)) {
+                    if (nodes[i]?.remove(item) == true) return true
+                }
+            }
+
+            // Paranoid Fallback: Scan ALL non-empty nodes as a last resort
+            for (i in nodes.indices) {
+                if (nodes[i] != null) {
+                    // Avoid redundant check
+                    if (index == -1 || i != index) {
                         if (nodes[i]?.remove(item) == true) return true
                     }
                 }

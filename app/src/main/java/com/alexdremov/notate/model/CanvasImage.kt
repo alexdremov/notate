@@ -62,16 +62,17 @@ data class CanvasImage(
 
         other as CanvasImage
 
+        // Identity check based on unique ID
         if (order != 0L && order == other.order) return true
         if (order != other.order) return false
-        if (uri != other.uri) return false
-        if (logicalBounds != other.logicalBounds) return false
-        if (bounds != other.bounds) return false
-        if (zIndex != other.zIndex) return false
-        if (rotation != other.rotation) return false
-        if (opacity != other.opacity) return false
 
-        return true
+        // Structural fallback for new items
+        return uri == other.uri &&
+            logicalBounds == other.logicalBounds &&
+            bounds == other.bounds &&
+            zIndex == other.zIndex &&
+            rotation == other.rotation &&
+            opacity == other.opacity
     }
 
     override fun hashCode(): Int {

@@ -20,6 +20,14 @@ class TileCache(
         val level: Int,
     )
 
+    /**
+     * Wrapper for cached bitmaps that includes the render version.
+     */
+    data class CachedTile(
+        val bitmap: Bitmap,
+        val version: Int,
+    )
+
     // Bitmap Pool to reduce GC churn
     private val bitmapPool = Collections.synchronizedList(ArrayList<Bitmap>())
     private val MAX_POOL_SIZE = 32 // Cap pool to prevent OOM
@@ -33,8 +41,8 @@ class TileCache(
             eraseColor(android.graphics.Color.MAGENTA)
         }
 
-    // Main LRU Cache
-    private val memoryCache: LruCache<TileKey, Bitmap>
+    // Main LRU Cache - now stores CachedTile objects
+    private val memoryCache: LruCache<TileKey, CachedTile>
 
     private val maxSafeSize: Int by lazy {
         (Runtime.getRuntime().maxMemory() * CanvasConfig.CACHE_MEMORY_PERCENT).toInt()
@@ -48,37 +56,46 @@ class TileCache(
         Logger.i("TileCache", "Initializing with ${initialSize / (1024 * 1024)} MB")
 
         memoryCache =
-            object : LruCache<TileKey, Bitmap>(initialSize) {
+            object : LruCache<TileKey, CachedTile>(initialSize) {
                 override fun sizeOf(
                     key: TileKey,
-                    value: Bitmap,
-                ): Int = value.byteCount
+                    value: CachedTile,
+                ): Int = value.bitmap.byteCount
 
                 override fun entryRemoved(
                     evicted: Boolean,
                     key: TileKey?,
-                    oldValue: Bitmap?,
-                    newValue: Bitmap?,
+                    oldValue: CachedTile?,
+                    newValue: CachedTile?,
                 ) {
-                    if (evicted && oldValue != null && oldValue != errorBitmap && !oldValue.isRecycled) {
+                    val oldBitmap = oldValue?.bitmap
+                    val newBitmap = newValue?.bitmap
+
+                    // Pool the old bitmap ONLY if it was evicted (panning/scrolling).
+                    // If evicted=false (replacement/refresh), the bitmap might still be in use
+                    // by the UI thread (double-buffering), so we must NOT recycle it immediately.
+                    // We let GC handle the replaced bitmap safely.
+                    if (evicted && oldBitmap != null && oldBitmap != errorBitmap && oldBitmap != newBitmap && !oldBitmap.isRecycled) {
                         synchronized(bitmapPool) {
                             if (bitmapPool.size < MAX_POOL_SIZE) {
-                                bitmapPool.add(oldValue)
+                                bitmapPool.add(oldBitmap)
                             }
-                            // If pool is full, we simply drop the reference and let GC collect it.
                         }
                     }
                 }
             }
     }
 
-    fun get(key: TileKey): Bitmap? = memoryCache.get(key)
+    fun get(key: TileKey): Bitmap? = memoryCache.get(key)?.bitmap
+
+    fun getVersion(key: TileKey): Int = memoryCache.get(key)?.version ?: -1
 
     fun put(
         key: TileKey,
         bitmap: Bitmap,
+        version: Int,
     ) {
-        memoryCache.put(key, bitmap)
+        memoryCache.put(key, CachedTile(bitmap, version))
     }
 
     fun remove(key: TileKey) {
@@ -139,7 +156,7 @@ class TileCache(
         return (currentUsage + anticipatedUsage) > threshold
     }
 
-    fun snapshot(): Map<TileKey, Bitmap> = memoryCache.snapshot()
+    fun snapshot(): Map<TileKey, CachedTile> = memoryCache.snapshot()
 
     fun getStats(): Map<String, String> {
         val sizeMb = memoryCache.size() / (1024 * 1024)

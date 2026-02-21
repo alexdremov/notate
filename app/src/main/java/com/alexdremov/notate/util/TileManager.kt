@@ -200,7 +200,8 @@ class TileManager(
         val currentLevel = if (visibleRect != null) calculateLOD(lastScale) else -1
         val handledKeys = HashSet<TileCache.TileKey>()
 
-        for ((key, oldBitmap) in snapshot) {
+        for ((key, cachedTile) in snapshot) {
+            val oldBitmap = cachedTile.bitmap
             if (oldBitmap == null || oldBitmap.isRecycled || oldBitmap == tileCache.errorBitmap) continue
 
             val worldSize = calculateWorldTileSize(key.level)
@@ -225,8 +226,8 @@ class TileManager(
                 }
                 tileCanvas.restore()
 
-                // Atomic Swap
-                tileCache.put(key, newBitmap)
+                // Atomic Swap: maintain the current version of the tile to keep it valid until next refresh
+                tileCache.put(key, newBitmap, cachedTile.version)
 
                 // Re-queue to ensure final consistency if background tasks were active.
                 val isBeingGenerated = synchronized(generatingKeys) { generatingKeys.contains(key) }
@@ -730,7 +731,7 @@ class TileManager(
         val job =
             scope.launch(dispatcher, start = kotlinx.coroutines.CoroutineStart.LAZY) {
                 try {
-                    Logger.v("TileManager", "Job Start: ${pJob.key}")
+                    Logger.v("TileManager", "Job Start: ${pJob.key} V${pJob.version}")
                     // Task Cancellation Checks
                     if (!isActive || pJob.version != renderVersion.get() || (!pJob.isHighPriority && isInteracting)) {
                         return@launch
@@ -750,16 +751,19 @@ class TileManager(
 
                     if (bitmap == null || !isActive) return@launch
 
-                    // Final check before committing
-                    if (pJob.version == renderVersion.get()) {
-                        if (pJob.forceRefresh || tileCache.get(pJob.key) == null) {
-                            tileCache.put(pJob.key, bitmap)
+                    // ATOMIC COMMIT: Only put in cache if the version still matches.
+                    // This is the core of the race-proof double buffering.
+                    synchronized(pendingLock) {
+                        if (pJob.version == renderVersion.get()) {
+                            tileCache.put(pJob.key, bitmap, pJob.version)
+                        } else {
+                            Logger.v("TileManager", "Discarding stale tile result for ${pJob.key}")
                         }
                     }
                 } catch (t: Throwable) {
                     if (t !is kotlinx.coroutines.CancellationException) {
                         errorMessages.put(pJob.key, "${t.javaClass.simpleName}: ${t.message}")
-                        tileCache.put(pJob.key, tileCache.errorBitmap)
+                        tileCache.put(pJob.key, tileCache.errorBitmap, -1)
                     }
                 }
             }
@@ -843,7 +847,7 @@ class TileManager(
                 canvas,
                 canvasModel.backgroundStyle,
                 worldRect,
-                zoomLevel = 1.0f / (tileSize / scale), // Approximate zoom for background LOD
+                zoomLevel = scale, // Use world->screen scale for background LOD
             )
         }
 
@@ -880,7 +884,8 @@ class TileManager(
         val handledKeys = HashSet<TileCache.TileKey>()
 
         // 1. Update/Clean Cached Tiles (Double Buffered)
-        for ((key, oldBitmap) in snapshot) {
+        for ((key, cachedTile) in snapshot) {
+            val oldBitmap = cachedTile.bitmap
             if (oldBitmap == null || oldBitmap.isRecycled || oldBitmap == tileCache.errorBitmap) continue
 
             val worldSize = calculateWorldTileSize(key.level)
@@ -900,8 +905,8 @@ class TileManager(
                 renderer.drawItemToCanvas(tileCanvas, item, scale = scale)
                 tileCanvas.restore()
 
-                // Atomic Swap
-                tileCache.put(key, newBitmap)
+                // Atomic Swap: maintain the current version of the tile to keep it valid until next refresh
+                tileCache.put(key, newBitmap, cachedTile.version)
 
                 // Re-queue to ensure final consistency if background tasks were active.
                 val isBeingGenerated = synchronized(generatingKeys) { generatingKeys.contains(key) }
@@ -963,7 +968,8 @@ class TileManager(
         val hidden = hiddenItemIds
 
         // Update Cached Tiles
-        for ((key, oldBitmap) in snapshot) {
+        for ((key, cachedTile) in snapshot) {
+            val oldBitmap = cachedTile.bitmap
             if (oldBitmap == null || oldBitmap.isRecycled || oldBitmap == tileCache.errorBitmap) continue
 
             val worldSize = calculateWorldTileSize(key.level)
@@ -991,8 +997,8 @@ class TileManager(
                 }
                 tileCanvas.restore()
 
-                // Atomic Swap
-                tileCache.put(key, newBitmap)
+                // Atomic Swap: maintain the current version of the tile to keep it valid until next refresh
+                tileCache.put(key, newBitmap, cachedTile.version)
 
                 // Re-queue logic
                 val isBeingGenerated = synchronized(generatingKeys) { generatingKeys.contains(key) }
@@ -1036,7 +1042,8 @@ class TileManager(
         val handledKeys = HashSet<TileCache.TileKey>()
 
         // 1. Update/Clean Cached Tiles (Double Buffered)
-        for ((key, oldBitmap) in snapshot) {
+        for ((key, cachedTile) in snapshot) {
+            val oldBitmap = cachedTile.bitmap
             if (oldBitmap == null || oldBitmap.isRecycled || oldBitmap == tileCache.errorBitmap) continue
 
             val worldSize = calculateWorldTileSize(key.level)
@@ -1058,8 +1065,8 @@ class TileManager(
                 tileCanvas.drawPath(stroke.path, eraserPaint)
                 tileCanvas.restore()
 
-                // Atomic Swap
-                tileCache.put(key, newBitmap)
+                // Atomic Swap: maintain the current version of the tile to keep it valid until next refresh
+                tileCache.put(key, newBitmap, cachedTile.version)
 
                 // If currently generating, queue refresh to ensure consistency
                 val isBeingGenerated = synchronized(generatingKeys) { generatingKeys.contains(key) }
@@ -1096,23 +1103,33 @@ class TileManager(
         refreshTiles(bounds)
     }
 
+    /**
+     * Triggers a high-priority background regeneration of all tiles intersecting the given bounds.
+     * This uses a Double-Buffering strategy: the old (stale) bitmap remains in the cache until
+     * the new, correct version is generated, preventing white flashes during canvas edits.
+     */
     fun refreshTiles(bounds: RectF) {
-        val version = renderVersion.incrementAndGet()
-        val snapshot = tileCache.snapshot()
-        val currentGenerating = synchronized(generatingKeys) { HashSet(generatingKeys) }
+        // Atomically increment version inside the lock to prevent races with committing jobs.
+        val version: Int
+        val snapshot: Map<TileCache.TileKey, TileCache.CachedTile>
+        val currentGenerating: MutableSet<TileCache.TileKey>
+
+        synchronized(pendingLock) {
+            version = renderVersion.incrementAndGet()
+            snapshot = tileCache.snapshot()
+            currentGenerating = synchronized(generatingKeys) { HashSet(generatingKeys) }
+        }
 
         val visibleRect = lastVisibleRect
         val currentLevel = if (visibleRect != null) calculateLOD(lastScale) else -1
 
-        // 1. Refresh Cached Tiles
+        // 1. Identify Cached Tiles that need refresh
         for (key in snapshot.keys) {
             val worldSize = calculateWorldTileSize(key.level)
             val tileRect = getTileWorldRect(key.col, key.row, worldSize)
 
             if (RectF.intersects(bounds, tileRect)) {
-                // Queue regeneration for ALL intersected cached tiles.
-                // We do NOT remove them. This keeps stale content visible until new content arrives (Double Buffering).
-                // Priority: High if visible, Low if not.
+                // Queue regeneration. We DO NOT remove the old bitmap here (Anti-Blinking).
                 val isVisible = visibleRect != null && key.level == currentLevel && RectF.intersects(visibleRect, tileRect)
                 queueTileGeneration(key.col, key.row, key.level, worldSize, isVisible, version, forceRefresh = true)
 
@@ -1120,17 +1137,18 @@ class TileManager(
             }
         }
 
-        // 2. Refresh Generating Tiles
+        // 2. Identify Active Jobs that need to be re-started with the new version
         for (key in currentGenerating) {
             val worldSize = calculateWorldTileSize(key.level)
             val tileRect = getTileWorldRect(key.col, key.row, worldSize)
 
             if (RectF.intersects(bounds, tileRect)) {
-                // we queue even different LOD or out-of-bounds tiles as currently generating tiles may commit stale data
                 val isVisible = visibleRect != null && key.level == currentLevel && RectF.intersects(visibleRect, tileRect)
-                queueTileGeneration(key.col, key.row, key.level, worldSize, true, version, forceRefresh = true)
+                queueTileGeneration(key.col, key.row, key.level, worldSize, isVisible, version, forceRefresh = true)
             }
         }
+
+        notifyTileReady()
     }
 
     fun forceRefreshVisibleTiles(
