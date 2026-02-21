@@ -14,8 +14,8 @@ data class TextItem(
     val fontSize: Float,
     val color: Int,
     /**
-     * The unrotated, axis-aligned bounds of the text in its local coordinate system.
-     * used for layout and rendering.
+     * The unrotated, axis-aligned bounds of the text in world-space coordinates.
+     * Used for layout, hit-testing, and as the pivot origin for [rotation].
      */
     val logicalBounds: RectF,
     /**
