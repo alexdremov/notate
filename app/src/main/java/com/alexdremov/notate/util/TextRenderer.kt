@@ -66,10 +66,10 @@ object TextRenderer {
     ): StaticLayout {
         val markwon = getMarkwon(context)
         val entry = if (item.order != 0L) layoutCache.get(item.order) else null
-        if (entry != null && entry.item == item) {
+        if (entry != null && entry.item.hasSameLayout(item)) {
             return entry.layout
         }
-        val targetWidth = ceil(item.bounds.width()).toInt().coerceAtLeast(1)
+        val targetWidth = ceil(item.logicalBounds.width()).toInt().coerceAtLeast(1)
         val spanned = markwon.toMarkdown(item.text)
         val textPaint = TextPaint(Paint.ANTI_ALIAS_FLAG)
         textPaint.textSize = item.fontSize
@@ -103,12 +103,12 @@ object TextRenderer {
             // Draw
             canvas.save()
             // Translate to position
-            canvas.translate(item.bounds.left, item.bounds.top)
+            canvas.translate(item.logicalBounds.left, item.logicalBounds.top)
 
             // Rotation
             if (item.rotation != 0f) {
                 // Rotate around center of the text box
-                canvas.rotate(item.rotation, item.bounds.width() / 2f, item.bounds.height() / 2f)
+                canvas.rotate(item.rotation, item.logicalBounds.width() / 2f, item.logicalBounds.height() / 2f)
             }
 
             // Draw Background if set
@@ -121,7 +121,7 @@ object TextRenderer {
                 }
                 // Determine height from layout
                 val height = layout.height.toFloat()
-                canvas.drawRect(0f, 0f, item.bounds.width(), height, bgPaint)
+                canvas.drawRect(0f, 0f, item.logicalBounds.width(), height, bgPaint)
             }
 
             // Apply external paint properties (Xfermode) to Layout Paint

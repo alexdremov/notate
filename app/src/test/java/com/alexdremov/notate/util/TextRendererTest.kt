@@ -35,10 +35,12 @@ class TextRendererTest {
 
     @Test
     fun `test cache logic in draw`() {
+        val logical = RectF(0f, 0f, 100f, 50f)
         val item =
             TextItem(
                 text = "Cache Test",
-                bounds = RectF(0f, 0f, 100f, 50f),
+                logicalBounds = logical,
+                bounds = logical,
                 fontSize = 16f,
                 color = Color.BLACK,
                 order = 1L, // Assign order for caching
@@ -57,10 +59,11 @@ class TextRendererTest {
         val entry2 = TextRenderer.layoutCache.get(item.order)
         assertThat(entry2.layout).isSameInstanceAs(layout1)
 
-        // Draw with different text - should invalidate cache
+        // Draw with different text but SAME order - should invalidate cache and replace entry
         val updatedItem = item.copy(text = "New Text")
         TextRenderer.draw(canvas, updatedItem, context)
-        val entry3 = TextRenderer.layoutCache.get(updatedItem.order)
+        val entry3 = TextRenderer.layoutCache.get(item.order)
+        assertThat(entry3).isNotNull()
         assertThat(entry3.layout).isNotSameInstanceAs(layout1)
     }
 }

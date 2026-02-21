@@ -202,6 +202,10 @@ object StrokeRenderer {
                     if (xfermode != null) paint.xfermode = null
                 }
             }
+
+            if (debug || CanvasConfig.DEBUG_SHOW_BOUNDING_BOX) {
+                drawDebugBounds(canvas, item.bounds)
+            }
         }
     }
 
@@ -231,7 +235,12 @@ object StrokeRenderer {
             }
 
             val maxPressure = getSafeMaxPressure(stroke)
-            val displayColor = calculateDisplayColor(stroke)
+            val displayColor =
+                if (xfermode != null) {
+                    stroke.color
+                } else {
+                    calculateDisplayColor(stroke)
+                }
 
             // Setup Paint
             paint.reset()
@@ -261,8 +270,10 @@ object StrokeRenderer {
                         else -> SimplePathStrategy
                     }
                 } else if (xfermode == android.graphics.PorterDuff.Mode.CLEAR || xfermode == android.graphics.PorterDuff.Mode.DST_OUT) {
-                    // Erasure Mode: Bypass strategies that use saveLayer (Highlighter) or modulate alpha (Ballpoint)
-                    // to ensure solid erasure of the stroke path.
+                    // Erasure Mode: We MUST use the same strategy as normal rendering for filled/textured brushes
+                    // (Fountain, Charcoal, Brush) to ensure the erasure perfectly covers the original stroke.
+                    // Only Highlighter and Ballpoint are special-cased because they use alpha-modulating strategies
+                    // that would result in partial erasure if used with CLEAR.
                     when (stroke.style) {
                         StrokeType.HIGHLIGHTER, StrokeType.BALLPOINT -> SimplePathStrategy
                         StrokeType.FOUNTAIN -> FountainStrategy
@@ -290,8 +301,6 @@ object StrokeRenderer {
                 paint.style = Paint.Style.STROKE
                 canvas.drawPath(stroke.path, paint)
             }
-
-            if (debug || CanvasConfig.DEBUG_SHOW_BOUNDING_BOX) drawDebugBounds(canvas, stroke.bounds)
         }
     }
 

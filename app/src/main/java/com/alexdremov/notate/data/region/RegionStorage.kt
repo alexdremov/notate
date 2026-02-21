@@ -178,10 +178,16 @@ class RegionStorage(
                     uri = File(baseDir, uri).absolutePath
                 }
 
+                val logical = android.graphics.RectF(iData.x, iData.y, iData.x + iData.width, iData.y + iData.height)
+                val aabb =
+                    com.alexdremov.notate.util.StrokeGeometry
+                        .computeRotatedBounds(logical, iData.rotation)
+
                 val image =
                     com.alexdremov.notate.model.CanvasImage(
                         uri = uri,
-                        bounds = android.graphics.RectF(iData.x, iData.y, iData.x + iData.width, iData.y + iData.height),
+                        logicalBounds = logical,
+                        bounds = aabb,
                         zIndex = iData.zIndex,
                         order = iData.order,
                         rotation = iData.rotation,

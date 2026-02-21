@@ -7,7 +7,13 @@ import android.graphics.RectF
  * Adheres to SOLID principles by allowing polymorphic handling of Strokes, Images, etc.
  */
 interface CanvasItem {
+    /**
+     * The Axis-aligned bounding box (AABB) in World Coordinates.
+     * This MUST encompass the entire visual representation of the item, including rotation.
+     * This property is used for spatial indexing (Quadtree) and culling.
+     */
     val bounds: RectF
+
     val zIndex: Float
     val order: Long
 

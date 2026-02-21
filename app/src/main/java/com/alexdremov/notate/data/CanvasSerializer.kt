@@ -49,23 +49,37 @@ object CanvasSerializer {
     fun toCanvasImageData(item: com.alexdremov.notate.model.CanvasImage): CanvasImageData =
         CanvasImageData(
             uri = item.uri,
-            x = item.bounds.left,
-            y = item.bounds.top,
-            width = item.bounds.width(),
-            height = item.bounds.height(),
+            x = item.logicalBounds.left,
+            y = item.logicalBounds.top,
+            width = item.logicalBounds.width(),
+            height = item.logicalBounds.height(),
             zIndex = item.zIndex,
             order = item.order,
             rotation = item.rotation,
             opacity = item.opacity,
         )
 
-    fun toTextItemData(item: TextItem): TextItemData =
+    fun fromCanvasImageData(cData: CanvasImageData): com.alexdremov.notate.model.CanvasImage {
+        val logicalBounds = RectF(cData.x, cData.y, cData.x + cData.width, cData.y + cData.height)
+        val bounds = StrokeGeometry.computeRotatedBounds(logicalBounds, cData.rotation)
+        return com.alexdremov.notate.model.CanvasImage(
+            uri = cData.uri,
+            logicalBounds = logicalBounds,
+            bounds = bounds,
+            zIndex = cData.zIndex,
+            order = cData.order,
+            rotation = cData.rotation,
+            opacity = cData.opacity,
+        )
+    }
+
+    fun toTextItemData(item: com.alexdremov.notate.model.TextItem): TextItemData =
         TextItemData(
             text = item.text,
-            x = item.bounds.left,
-            y = item.bounds.top,
-            width = item.bounds.width(),
-            height = item.bounds.height(),
+            x = item.logicalBounds.left,
+            y = item.logicalBounds.top,
+            width = item.logicalBounds.width(),
+            height = item.logicalBounds.height(),
             fontSize = item.fontSize,
             color = item.color,
             zIndex = item.zIndex,
@@ -80,6 +94,29 @@ object CanvasSerializer {
                 },
             backgroundColor = item.backgroundColor,
         )
+
+    fun fromTextItemData(tData: TextItemData): com.alexdremov.notate.model.TextItem {
+        val logicalBounds = RectF(tData.x, tData.y, tData.x + tData.width, tData.y + tData.height)
+        val bounds = StrokeGeometry.computeRotatedBounds(logicalBounds, tData.rotation)
+        return com.alexdremov.notate.model.TextItem(
+            text = tData.text,
+            fontSize = tData.fontSize,
+            color = tData.color,
+            logicalBounds = logicalBounds,
+            bounds = bounds,
+            alignment =
+                when (tData.alignment) {
+                    1 -> android.text.Layout.Alignment.ALIGN_OPPOSITE
+                    2 -> android.text.Layout.Alignment.ALIGN_CENTER
+                    else -> android.text.Layout.Alignment.ALIGN_NORMAL
+                },
+            backgroundColor = tData.backgroundColor,
+            zIndex = tData.zIndex,
+            order = tData.order,
+            rotation = tData.rotation,
+            opacity = tData.opacity,
+        )
+    }
 
     fun toData(
         canvasType: CanvasType,
@@ -163,25 +200,6 @@ object CanvasSerializer {
             zIndex = sData.zIndex,
         )
     }
-
-    fun fromTextItemData(tData: TextItemData): TextItem =
-        TextItem(
-            text = tData.text,
-            fontSize = tData.fontSize,
-            color = tData.color,
-            bounds = RectF(tData.x, tData.y, tData.x + tData.width, tData.y + tData.height),
-            alignment =
-                when (tData.alignment) {
-                    1 -> android.text.Layout.Alignment.ALIGN_OPPOSITE
-                    2 -> android.text.Layout.Alignment.ALIGN_CENTER
-                    else -> android.text.Layout.Alignment.ALIGN_NORMAL
-                },
-            backgroundColor = tData.backgroundColor,
-            zIndex = tData.zIndex,
-            order = tData.order,
-            rotation = tData.rotation,
-            opacity = tData.opacity,
-        )
 
     data class LoadedCanvasState(
         val quadtree: com.alexdremov.notate.util.Quadtree,

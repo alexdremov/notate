@@ -570,4 +570,93 @@ object StrokeGeometry {
         val angleRad = kotlin.math.atan2(cross.toDouble(), dot.toDouble())
         return kotlin.math.abs(Math.toDegrees(angleRad))
     }
+
+    /**
+     * Computes the true Axis-Aligned Bounding Box (AABB) of a rectangle after it has been rotated
+     * around its center.
+     */
+    fun computeRotatedBounds(
+        logicalBounds: RectF,
+        rotation: Float,
+    ): RectF {
+        if (rotation % 360f == 0f) return RectF(logicalBounds)
+
+        val matrix = Matrix()
+        matrix.setRotate(rotation, logicalBounds.centerX(), logicalBounds.centerY())
+
+        val corners =
+            floatArrayOf(
+                logicalBounds.left,
+                logicalBounds.top,
+                logicalBounds.right,
+                logicalBounds.top,
+                logicalBounds.right,
+                logicalBounds.bottom,
+                logicalBounds.left,
+                logicalBounds.bottom,
+            )
+
+        matrix.mapPoints(corners)
+
+        var minX = corners[0]
+        var maxX = corners[0]
+        var minY = corners[1]
+        var maxY = corners[1]
+
+        for (i in 1..3) {
+            val x = corners[i * 2]
+            val y = corners[i * 2 + 1]
+            if (x < minX) minX = x
+            if (x > maxX) maxX = x
+            if (y < minY) minY = y
+            if (y > maxY) maxY = y
+        }
+
+        return RectF(minX, minY, maxX, maxY)
+    }
+
+    /**
+     * Transforms an item's logical bounds and rotation by a given matrix, then computes the new AABB.
+     * Logic:
+     * 1. Extract translation by mapping the center point.
+     * 2. Extract scaling by mapping local axis vectors.
+     * 3. Extract rotation by mapping a unit vector.
+     */
+    fun transformItemLogicalBounds(
+        originalLogicalBounds: RectF,
+        originalRotation: Float,
+        transform: Matrix,
+    ): Triple<RectF, Float, RectF> { // newLogicalBounds, newRotation, newAabb
+        // 1. Calculate new center in World Space
+        val center = floatArrayOf(originalLogicalBounds.centerX(), originalLogicalBounds.centerY())
+        transform.mapPoints(center)
+
+        // 2. Calculate new width and height (extracting scaling from the matrix)
+        val vW = floatArrayOf(originalLogicalBounds.width(), 0f)
+        transform.mapVectors(vW)
+        val newWidth = kotlin.math.hypot(vW[0], vW[1])
+
+        val vH = floatArrayOf(0f, originalLogicalBounds.height())
+        transform.mapVectors(vH)
+        val newHeight = kotlin.math.hypot(vH[0], vH[1])
+
+        // 3. Calculate rotation change
+        val vRot = floatArrayOf(1f, 0f)
+        transform.mapVectors(vRot)
+        val deltaRot = Math.toDegrees(kotlin.math.atan2(vRot[1].toDouble(), vRot[0].toDouble())).toFloat()
+        val newRotation = (originalRotation + deltaRot) % 360f
+
+        // 4. Construct new logical bounds (axis-aligned in its local space)
+        val newLogical =
+            RectF(
+                center[0] - newWidth / 2f,
+                center[1] - newHeight / 2f,
+                center[0] + newWidth / 2f,
+                center[1] + newHeight / 2f,
+            )
+
+        val newAabb = computeRotatedBounds(newLogical, newRotation)
+
+        return Triple(newLogical, newRotation, newAabb)
+    }
 }

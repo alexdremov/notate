@@ -17,10 +17,10 @@ class SelectionManager {
     // Robust Architecture: Store IDs AND Bounds.
     // Storing Bounds allows us to pinpoint items in the spatial index (RegionManager)
     // without relying on error-prone global area queries.
-    private val _ids = ArrayList<Long>()
-    private val _idSet = HashSet<Long>()
-    private var _bounds = FloatArray(1024) // Packed [left, top, right, bottom]
-    private var _count = 0
+    private val ids = ArrayList<Long>()
+    private val idSet = HashSet<Long>()
+    private var bounds = FloatArray(1024) // Packed [left, top, right, bottom]
+    private var count = 0
 
     // Current transformation applied to the selection (transient)
     private val transformMatrix = Matrix()
@@ -31,20 +31,20 @@ class SelectionManager {
     // Imposter Bitmap for High-Performance Rendering
     private var imposterBitmap: android.graphics.Bitmap? = null
     private val imposterMatrix = Matrix()
-    private var _isGeneratingImposter = false
+    private var isGeneratingImposterInternal = false
 
     var isGeneratingImposter: Boolean
-        get() = synchronized(lock) { _isGeneratingImposter }
-        set(value) = synchronized(lock) { _isGeneratingImposter = value }
+        get() = synchronized(lock) { isGeneratingImposterInternal }
+        set(value) = synchronized(lock) { isGeneratingImposterInternal = value }
 
-    fun getSelectedIds(): Set<Long> = synchronized(lock) { HashSet(_idSet) }
+    fun getSelectedIds(): Set<Long> = synchronized(lock) { HashSet(idSet) }
 
     fun forEachSelected(action: (Long, RectF) -> Unit) {
         synchronized(lock) {
             val r = RectF()
-            for (i in 0 until _count) {
-                r.set(_bounds[i * 4], _bounds[i * 4 + 1], _bounds[i * 4 + 2], _bounds[i * 4 + 3])
-                action(_ids[i], r)
+            for (i in 0 until count) {
+                r.set(bounds[i * 4], bounds[i * 4 + 1], bounds[i * 4 + 2], bounds[i * 4 + 3])
+                action(ids[i], r)
             }
         }
     }
@@ -99,25 +99,25 @@ class SelectionManager {
     }
 
     private fun ensureCapacity(minCapacity: Int) {
-        if (_bounds.size < minCapacity * 4) {
-            val newSize = (_bounds.size * 2).coerceAtLeast(minCapacity * 4)
+        if (bounds.size < minCapacity * 4) {
+            val newSize = (bounds.size * 2).coerceAtLeast(minCapacity * 4)
             val newArray = FloatArray(newSize)
-            System.arraycopy(_bounds, 0, newArray, 0, _count * 4)
-            _bounds = newArray
+            System.arraycopy(bounds, 0, newArray, 0, count * 4)
+            bounds = newArray
         }
     }
 
     fun select(item: CanvasItem) {
         synchronized(lock) {
             // Flatten if mixed selection logic requires it (adding to a single rotated selection)
-            if (_count > 0 && !transformMatrix.isIdentity) {
+            if (count > 0 && !transformMatrix.isIdentity) {
                 val currentAABB = getTransformedBounds()
                 selectionBounds.set(currentAABB)
                 transformMatrix.reset()
             }
 
-            val itemAABB = getItemWorldAABB(item)
-            if (_count == 0) {
+            val itemAABB = item.bounds // Directly use item.bounds (already AABB)
+            if (count == 0) {
                 selectionBounds.set(itemAABB)
                 transformMatrix.reset()
             } else {
@@ -125,51 +125,51 @@ class SelectionManager {
             }
 
             // Check for duplicate ID to enforce set semantics
-            if (!_idSet.contains(item.order)) {
-                ensureCapacity(_count + 1)
-                _ids.add(item.order)
-                _idSet.add(item.order)
-                val base = _count * 4
-                _bounds[base] = item.bounds.left
-                _bounds[base + 1] = item.bounds.top
-                _bounds[base + 2] = item.bounds.right
-                _bounds[base + 3] = item.bounds.bottom
-                _count++
+            if (!idSet.contains(item.order)) {
+                ensureCapacity(count + 1)
+                ids.add(item.order)
+                idSet.add(item.order)
+                val base = count * 4
+                bounds[base] = item.bounds.left
+                bounds[base + 1] = item.bounds.top
+                bounds[base + 2] = item.bounds.right
+                bounds[base + 3] = item.bounds.bottom
+                count++
             }
         }
     }
 
     fun selectAll(items: List<CanvasItem>) {
         synchronized(lock) {
-            if (items.size == 1 && _count == 0) {
+            if (items.size == 1 && count == 0) {
                 select(items[0])
                 return
             }
 
-            if (_count > 0 && !transformMatrix.isIdentity) {
+            if (count > 0 && !transformMatrix.isIdentity) {
                 val currentAABB = getTransformedBounds()
                 selectionBounds.set(currentAABB)
                 transformMatrix.reset()
             }
 
-            ensureCapacity(_count + items.size)
+            ensureCapacity(count + items.size)
             items.forEach { item ->
-                val itemAABB = getItemWorldAABB(item)
-                if (_count == 0) {
+                val itemAABB = item.bounds // Directly use item.bounds (already AABB)
+                if (count == 0) {
                     selectionBounds.set(itemAABB)
                 } else {
                     selectionBounds.union(itemAABB)
                 }
 
-                if (!_idSet.contains(item.order)) {
-                    _ids.add(item.order)
-                    _idSet.add(item.order)
-                    val base = _count * 4
-                    _bounds[base] = item.bounds.left
-                    _bounds[base + 1] = item.bounds.top
-                    _bounds[base + 2] = item.bounds.right
-                    _bounds[base + 3] = item.bounds.bottom
-                    _count++
+                if (!idSet.contains(item.order)) {
+                    ids.add(item.order)
+                    idSet.add(item.order)
+                    val base = count * 4
+                    bounds[base] = item.bounds.left
+                    bounds[base + 1] = item.bounds.top
+                    bounds[base + 2] = item.bounds.right
+                    bounds[base + 3] = item.bounds.bottom
+                    count++
                 }
             }
         }
@@ -177,19 +177,19 @@ class SelectionManager {
 
     fun deselect(item: CanvasItem) {
         synchronized(lock) {
-            val idx = _ids.indexOf(item.order)
+            val idx = ids.indexOf(item.order)
             if (idx != -1) {
-                _ids.removeAt(idx)
-                _idSet.remove(item.order)
+                ids.removeAt(idx)
+                idSet.remove(item.order)
 
                 // Shift bounds
-                val remaining = _count - 1 - idx
+                val remaining = count - 1 - idx
                 if (remaining > 0) {
-                    System.arraycopy(_bounds, (idx + 1) * 4, _bounds, idx * 4, remaining * 4)
+                    System.arraycopy(bounds, (idx + 1) * 4, bounds, idx * 4, remaining * 4)
                 }
-                _count--
+                count--
 
-                if (_count == 0) {
+                if (count == 0) {
                     selectionBounds.setEmpty()
                     transformMatrix.reset() // Reset transform on empty
                 }
@@ -201,21 +201,21 @@ class SelectionManager {
 
     fun clearSelection() {
         synchronized(lock) {
-            _ids.clear()
-            _idSet.clear()
-            _count = 0
+            ids.clear()
+            idSet.clear()
+            count = 0
             transformMatrix.reset()
             selectionBounds.setEmpty()
             clearImposter()
-            _isGeneratingImposter = false
+            isGeneratingImposterInternal = false
         }
     }
 
-    fun hasSelection(): Boolean = synchronized(lock) { _count > 0 }
+    fun hasSelection(): Boolean = synchronized(lock) { count > 0 }
 
-    fun isSelected(item: CanvasItem): Boolean = synchronized(lock) { _idSet.contains(item.order) }
+    fun isSelected(item: CanvasItem): Boolean = synchronized(lock) { idSet.contains(item.order) }
 
-    fun isSelected(id: Long): Boolean = synchronized(lock) { _idSet.contains(id) }
+    fun isSelected(id: Long): Boolean = synchronized(lock) { idSet.contains(id) }
 
     fun getOriginalBounds(): RectF = synchronized(lock) { RectF(selectionBounds) }
 
@@ -274,15 +274,4 @@ class SelectionManager {
             is CanvasImage -> item.rotation
             else -> 0f
         }
-
-    fun getItemWorldAABB(item: CanvasItem): RectF {
-        val rot = getItemRotation(item)
-        if (rot == 0f) return item.bounds
-
-        val m = Matrix()
-        m.setRotate(rot, item.bounds.centerX(), item.bounds.centerY())
-        val r = RectF(item.bounds)
-        m.mapRect(r)
-        return r
-    }
 }

@@ -63,9 +63,9 @@ object ImageRenderer {
     ) {
         com.alexdremov.notate.util.PerformanceProfiler.trace("ImageRenderer.draw") {
             try {
-                // Calculate target dimensions in pixels
-                val targetWidth = (image.bounds.width() * scale).toInt().coerceAtLeast(1)
-                val targetHeight = (image.bounds.height() * scale).toInt().coerceAtLeast(1)
+                // Calculate target dimensions in pixels using logical bounds
+                val targetWidth = (image.logicalBounds.width() * scale).toInt().coerceAtLeast(1)
+                val targetHeight = (image.logicalBounds.height() * scale).toInt().coerceAtLeast(1)
 
                 val uriStr = image.uri
 
@@ -170,8 +170,8 @@ object ImageRenderer {
                     val originalAlpha = paint.alpha
                     paint.alpha = (image.opacity * 255).toInt()
                     canvas.save()
-                    canvas.rotate(image.rotation, image.bounds.centerX(), image.bounds.centerY())
-                    canvas.drawBitmap(bitmap!!, null, image.bounds, paint)
+                    canvas.rotate(image.rotation, image.logicalBounds.centerX(), image.logicalBounds.centerY())
+                    canvas.drawBitmap(bitmap!!, null, image.logicalBounds, paint)
                     canvas.restore()
                     paint.alpha = originalAlpha
                 }
