@@ -3,12 +3,26 @@ package com.alexdremov.notate.model
 import android.graphics.RectF
 import android.text.Layout
 import android.text.StaticLayout
+import com.alexdremov.notate.util.StrokeGeometry
 import kotlin.jvm.Transient
 
+/**
+ * Represents a text item on the canvas.
+ * Implements [CanvasItem] with correct AABB calculation for rotated text.
+ */
 data class TextItem(
     val text: String, // Markdown content
     val fontSize: Float,
     val color: Int,
+    /**
+     * The unrotated, axis-aligned bounds of the text in its local coordinate system.
+     * used for layout and rendering.
+     */
+    val logicalBounds: RectF,
+    /**
+     * The actual Axis-aligned bounding box (AABB) in World Coordinates.
+     * Calculated from [logicalBounds] and [rotation].
+     */
     override val bounds: RectF,
     val alignment: Layout.Alignment = Layout.Alignment.ALIGN_NORMAL,
     val backgroundColor: Int = android.graphics.Color.TRANSPARENT,
@@ -24,16 +38,16 @@ data class TextItem(
         x: Float,
         y: Float,
     ): Float {
-        if (rotation == 0f) {
-            if (bounds.contains(x, y)) return 0f
-            val dx = kotlin.math.max(bounds.left - x, x - bounds.right)
-            val dy = kotlin.math.max(bounds.top - y, y - bounds.bottom)
+        if (rotation % 360f == 0f) {
+            if (logicalBounds.contains(x, y)) return 0f
+            val dx = kotlin.math.max(logicalBounds.left - x, x - logicalBounds.right)
+            val dy = kotlin.math.max(logicalBounds.top - y, y - logicalBounds.bottom)
             return kotlin.math.max(dx, dy).coerceAtLeast(0f)
         }
 
         // Rotate point (x,y) by -rotation around center to map it into the unrotated local space
-        val cx = bounds.centerX()
-        val cy = bounds.centerY()
+        val cx = logicalBounds.centerX()
+        val cy = logicalBounds.centerY()
         val rad = Math.toRadians(-rotation.toDouble())
         val cos = kotlin.math.cos(rad)
         val sin = kotlin.math.sin(rad)
@@ -44,9 +58,9 @@ data class TextItem(
         val localX = (cx + dx * cos - dy * sin).toFloat()
         val localY = (cy + dx * sin + dy * cos).toFloat()
 
-        if (bounds.contains(localX, localY)) return 0f
-        val dLocalX = kotlin.math.max(bounds.left - localX, localX - bounds.right)
-        val dLocalY = kotlin.math.max(bounds.top - localY, localY - bounds.bottom)
+        if (logicalBounds.contains(localX, localY)) return 0f
+        val dLocalX = kotlin.math.max(logicalBounds.left - localX, localX - logicalBounds.right)
+        val dLocalY = kotlin.math.max(logicalBounds.top - localY, localY - logicalBounds.bottom)
         return kotlin.math.max(dLocalX, dLocalY).coerceAtLeast(0f)
     }
 
@@ -56,10 +70,12 @@ data class TextItem(
 
         other as TextItem
 
+        if (order != 0L && order == other.order) return true
         if (order != other.order) return false
         if (text != other.text) return false
         if (fontSize != other.fontSize) return false
         if (color != other.color) return false
+        if (logicalBounds != other.logicalBounds) return false
         if (bounds != other.bounds) return false
         if (alignment != other.alignment) return false
         if (backgroundColor != other.backgroundColor) return false
@@ -71,10 +87,11 @@ data class TextItem(
     }
 
     override fun hashCode(): Int {
-        var result = order.hashCode()
-        result = 31 * result + text.hashCode()
+        if (order != 0L) return order.hashCode()
+        var result = text.hashCode()
         result = 31 * result + fontSize.hashCode()
         result = 31 * result + color
+        result = 31 * result + logicalBounds.hashCode()
         result = 31 * result + bounds.hashCode()
         result = 31 * result + alignment.hashCode()
         result = 31 * result + backgroundColor

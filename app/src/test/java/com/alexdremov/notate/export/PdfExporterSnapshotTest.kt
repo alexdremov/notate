@@ -258,14 +258,32 @@ class PdfExporterSnapshotTest {
 
     @Test
     fun `export Vector Image Rotated`() {
-        val bounds = RectF(100f, 100f, 200f, 200f)
-        val imageItem =
+        // 1. Non-rotated image
+        val logical1 = RectF(50f, 50f, 150f, 150f)
+        val imageItem1 =
             CanvasImage(
-                uri = "content://dummy/image.png",
-                bounds = bounds,
-                rotation = 45f,
+                uri = "content://dummy/image1.png",
+                logicalBounds = logical1,
+                bounds = RectF(logical1),
+                rotation = 0f,
                 zIndex = 0f,
-                order = 0,
+                order = 1,
+            )
+
+        // 2. Rotated image (45 degrees)
+        val logical2 = RectF(200f, 50f, 300f, 150f)
+        val rotation2 = 45f
+        val aabb2 =
+            com.alexdremov.notate.util.StrokeGeometry
+                .computeRotatedBounds(logical2, rotation2)
+        val imageItem2 =
+            CanvasImage(
+                uri = "content://dummy/image2.png",
+                logicalBounds = logical2,
+                bounds = aabb2,
+                rotation = rotation2,
+                zIndex = 0f,
+                order = 2,
             )
 
         val dummyImage = Bitmap.createBitmap(100, 100, Bitmap.Config.ARGB_8888)
@@ -282,7 +300,8 @@ class PdfExporterSnapshotTest {
         setupModel(
             canvasType = CanvasType.INFINITE,
             backgroundStyle = BackgroundStyle.Blank(Color.WHITE),
-            items = listOf(imageItem),
+            items = listOf(imageItem1, imageItem2),
+            bounds = RectF(0f, 0f, 500f, 300f),
         )
         runExportAndVerify("export_vector_image_rotated", true)
     }

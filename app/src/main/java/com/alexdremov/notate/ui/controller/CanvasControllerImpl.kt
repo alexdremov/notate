@@ -371,9 +371,34 @@ class CanvasControllerImpl(
                             }
 
                             is CanvasImage -> {
-                                val newBounds = RectF(item.bounds)
-                                matrix.mapRect(newBounds)
-                                item.copy(bounds = newBounds, order = 0)
+                                val (newLogical, newRotation, newAabb) =
+                                    StrokeGeometry.transformItemLogicalBounds(
+                                        item.logicalBounds,
+                                        item.rotation,
+                                        matrix,
+                                    )
+                                item.copy(logicalBounds = newLogical, bounds = newAabb, rotation = newRotation, order = 0)
+                            }
+
+                            is com.alexdremov.notate.model.TextItem -> {
+                                val (newLogical, newRotation, newAabb) =
+                                    StrokeGeometry.transformItemLogicalBounds(
+                                        item.logicalBounds,
+                                        item.rotation,
+                                        matrix,
+                                    )
+                                // For pasted text, re-measure height based on new logical width
+                                val newHeight =
+                                    com.alexdremov.notate.util.TextRenderer.measureHeight(
+                                        context,
+                                        item.text,
+                                        newLogical.width(),
+                                        item.fontSize,
+                                    )
+                                newLogical.bottom = newLogical.top + newHeight
+                                val finalAabb = StrokeGeometry.computeRotatedBounds(newLogical, newRotation)
+
+                                item.copy(logicalBounds = newLogical, bounds = finalAabb, rotation = newRotation, order = 0)
                             }
 
                             else -> {
@@ -412,11 +437,12 @@ class CanvasControllerImpl(
     ) {
         operationMutex.withLock {
             val importedPath = model.importImage(Uri.parse(uri), context) ?: uri
-            val bounds = RectF(x - width / 2, y - height / 2, x + width / 2, y + height / 2)
+            val logical = RectF(x - width / 2, y - height / 2, x + width / 2, y + height / 2)
             val image =
                 CanvasImage(
                     uri = importedPath,
-                    bounds = bounds,
+                    logicalBounds = logical,
+                    bounds = RectF(logical), // Initial AABB is same as logical if rotation is 0
                     zIndex = 0f,
                     order = 0,
                 )
@@ -458,14 +484,15 @@ class CanvasControllerImpl(
                     fontSize,
                 )
 
-            val bounds = RectF(x, y, x + defaultWidth, y + measuredHeight)
+            val logical = RectF(x, y, x + defaultWidth, y + measuredHeight)
 
             val textItem =
                 com.alexdremov.notate.model.TextItem(
                     text = text,
                     fontSize = fontSize,
                     color = color,
-                    bounds = bounds,
+                    logicalBounds = logical,
+                    bounds = RectF(logical),
                 )
 
             val added = model.addItem(textItem)
@@ -491,7 +518,7 @@ class CanvasControllerImpl(
     ) {
         if (newText.isBlank()) {
             operationMutex.withLock {
-                val bounds = selectionManager.getItemWorldAABB(oldItem)
+                val bounds = oldItem.bounds
                 val ids = setOf(oldItem.order)
                 selectionManager.clearSelection()
                 updatePinnedRegions()
@@ -511,25 +538,29 @@ class CanvasControllerImpl(
         }
 
         operationMutex.withLock {
-            // Measure new height
+            // Measure new height using logical width
             val newHeight =
                 com.alexdremov.notate.util.TextRenderer.measureHeight(
                     context,
                     newText,
-                    oldItem.bounds.width(),
+                    oldItem.logicalBounds.width(),
                     oldItem.fontSize,
                 )
 
-            // Create new item with updated text and bounds
-            val newBounds =
+            // Create new logical bounds
+            val newLogical =
                 RectF(
-                    oldItem.bounds.left,
-                    oldItem.bounds.top,
-                    oldItem.bounds.right,
-                    oldItem.bounds.top + newHeight,
+                    oldItem.logicalBounds.left,
+                    oldItem.logicalBounds.top,
+                    oldItem.logicalBounds.right,
+                    oldItem.logicalBounds.top + newHeight,
                 )
+            // Calculate new AABB
+            val newAabb =
+                com.alexdremov.notate.util.StrokeGeometry
+                    .computeRotatedBounds(newLogical, oldItem.rotation)
 
-            val newItem = oldItem.copy(text = newText, bounds = newBounds)
+            val newItem = oldItem.copy(text = newText, logicalBounds = newLogical, bounds = newAabb)
 
             // Apply to Model and get the committed item with new ID
             val committedItems = model.replaceItems(listOf(oldItem), listOf(newItem))
@@ -538,7 +569,7 @@ class CanvasControllerImpl(
             withContext(Dispatchers.Main) {
                 // Calculate invalidation area (Union of old and new)
                 val unionBounds = RectF(oldItem.bounds)
-                unionBounds.union(newBounds)
+                unionBounds.union(newAabb)
                 unionBounds.inset(-10f, -10f) // Inflate for safety (shadows, anti-aliasing)
 
                 // Force refresh
@@ -583,30 +614,33 @@ class CanvasControllerImpl(
                             com.alexdremov.notate.util.TextRenderer.measureHeight(
                                 context,
                                 item.text,
-                                item.bounds.width(),
+                                item.logicalBounds.width(), // Use logical bounds for text measurement
                                 newFontSize,
                             )
                         } else {
-                            item.bounds.height()
+                            item.logicalBounds.height()
                         }
 
-                    val newBounds =
+                    val newLogical =
                         RectF(
-                            item.bounds.left,
-                            item.bounds.top,
-                            item.bounds.right,
-                            item.bounds.top + newHeight,
+                            item.logicalBounds.left,
+                            item.logicalBounds.top,
+                            item.logicalBounds.right,
+                            item.logicalBounds.top + newHeight,
                         )
+                    val newAabb =
+                        com.alexdremov.notate.util.StrokeGeometry
+                            .computeRotatedBounds(newLogical, item.rotation)
 
-                    item.copy(fontSize = newFontSize, color = newColor, bounds = newBounds)
+                    item.copy(fontSize = newFontSize, color = newColor, logicalBounds = newLogical, bounds = newAabb)
                 }
 
             val committedItems = model.replaceItems(textItems, updatedItems)
 
             withContext(Dispatchers.Main) {
                 val totalBounds = RectF()
-                textItems.forEach { totalBounds.union(selectionManager.getItemWorldAABB(it)) }
-                committedItems.forEach { totalBounds.union(selectionManager.getItemWorldAABB(it)) }
+                textItems.forEach { totalBounds.union(it.bounds) }
+                committedItems.forEach { totalBounds.union(it.bounds) }
                 totalBounds.inset(-30f, -30f) // Slightly larger padding for safety
 
                 renderer.refreshTiles(totalBounds)
@@ -737,76 +771,41 @@ class CanvasControllerImpl(
             }
 
             is CanvasImage -> {
-                // 1. Calculate new center in World Space
-                val center = floatArrayOf(item.bounds.centerX(), item.bounds.centerY())
-                transform.mapPoints(center)
-
-                // 2. Calculate new width and height (decomposing scaling from the matrix)
-                val vW = floatArrayOf(item.bounds.width(), 0f)
-                transform.mapVectors(vW)
-                val newWidth = kotlin.math.hypot(vW[0], vW[1])
-
-                val vH = floatArrayOf(0f, item.bounds.height())
-                transform.mapVectors(vH)
-                val newHeight = kotlin.math.hypot(vH[0], vH[1])
-
-                // 3. Calculate rotation change
-                val vRot = floatArrayOf(1f, 0f)
-                transform.mapVectors(vRot)
-                val deltaRot = Math.toDegrees(kotlin.math.atan2(vRot[1].toDouble(), vRot[0].toDouble())).toFloat()
-
-                val newBounds =
-                    RectF(
-                        center[0] - newWidth / 2f,
-                        center[1] - newHeight / 2f,
-                        center[0] + newWidth / 2f,
-                        center[1] + newHeight / 2f,
+                val (newLogical, newRotation, newAabb) =
+                    StrokeGeometry.transformItemLogicalBounds(
+                        item.logicalBounds,
+                        item.rotation,
+                        transform,
                     )
-
-                item.copy(bounds = newBounds, rotation = item.rotation + deltaRot)
+                item.copy(logicalBounds = newLogical, bounds = newAabb, rotation = newRotation)
             }
 
             is com.alexdremov.notate.model.TextItem -> {
-                // 1. Calculate new center in World Space
-                val center = floatArrayOf(item.bounds.centerX(), item.bounds.centerY())
-                transform.mapPoints(center)
+                val (newLogical, newRotation, newAabb) =
+                    StrokeGeometry.transformItemLogicalBounds(
+                        item.logicalBounds,
+                        item.rotation,
+                        transform,
+                    )
 
-                // 2. Calculate new width (scaling along the local horizontal axis)
-                val vW = floatArrayOf(item.bounds.width(), 0f)
-                transform.mapVectors(vW)
-                val newWidth = kotlin.math.hypot(vW[0], vW[1])
-
-                // 3. Calculate rotation change
-                val vRot = floatArrayOf(1f, 0f)
-                transform.mapVectors(vRot)
-                val deltaRot = Math.toDegrees(kotlin.math.atan2(vRot[1].toDouble(), vRot[0].toDouble())).toFloat()
-
-                // 4. USER REQUEST: Keep font size constant.
-                // Text reflows into the new width.
-                val fontSize = item.fontSize
-
-                // 5. Re-measure height based on new width
+                // For text, we might need to re-measure height if width changed, keeping font size constant.
+                // Re-measure height based on new logical width
                 val newHeight =
                     com.alexdremov.notate.util.TextRenderer.measureHeight(
                         context,
                         item.text,
-                        newWidth,
-                        fontSize,
+                        newLogical.width(),
+                        item.fontSize,
                     )
 
-                // 6. Reconstruct logical bounds (axis-aligned in logical space)
-                val newBounds =
-                    RectF(
-                        center[0] - newWidth / 2f,
-                        center[1] - newHeight / 2f,
-                        center[0] + newWidth / 2f,
-                        center[1] + newHeight / 2f,
-                    )
+                // Update newLogical's height and recompute AABB
+                newLogical.bottom = newLogical.top + newHeight
+                val finalAabb = StrokeGeometry.computeRotatedBounds(newLogical, newRotation)
 
                 item.copy(
-                    bounds = newBounds,
-                    fontSize = fontSize,
-                    rotation = item.rotation + deltaRot,
+                    logicalBounds = newLogical,
+                    bounds = finalAabb,
+                    rotation = newRotation,
                 )
             }
 

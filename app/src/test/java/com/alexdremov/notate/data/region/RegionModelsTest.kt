@@ -63,6 +63,7 @@ class RegionModelsTest {
         val image =
             com.alexdremov.notate.model.CanvasImage(
                 uri = "content://test",
+                logicalBounds = RectF(0f, 0f, 100f, 100f),
                 bounds = RectF(0f, 0f, 100f, 100f),
             )
         region.items.add(image)

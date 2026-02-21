@@ -226,6 +226,7 @@ class RenderingSnapshotTest {
         val imageItem =
             CanvasImage(
                 uri = Uri.fromFile(tempFile).toString(),
+                logicalBounds = bounds,
                 bounds = bounds,
                 zIndex = 0f,
                 order = 0,

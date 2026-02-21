@@ -85,6 +85,7 @@ class CanvasImagePersistenceTest {
         val imageItem =
             CanvasImage(
                 uri = imgFile.absolutePath, // Absolute path!
+                logicalBounds = android.graphics.RectF(0f, 0f, 100f, 100f),
                 bounds = android.graphics.RectF(0f, 0f, 100f, 100f),
             )
         regionData.items.add(imageItem)

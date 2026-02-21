@@ -202,6 +202,10 @@ object StrokeRenderer {
                     if (xfermode != null) paint.xfermode = null
                 }
             }
+
+            if (debug || CanvasConfig.DEBUG_SHOW_BOUNDING_BOX) {
+                drawDebugBounds(canvas, item.bounds)
+            }
         }
     }
 
@@ -231,7 +235,12 @@ object StrokeRenderer {
             }
 
             val maxPressure = getSafeMaxPressure(stroke)
-            val displayColor = calculateDisplayColor(stroke)
+            val displayColor =
+                if (xfermode != null) {
+                    stroke.color
+                } else {
+                    calculateDisplayColor(stroke)
+                }
 
             // Setup Paint
             paint.reset()
@@ -290,8 +299,6 @@ object StrokeRenderer {
                 paint.style = Paint.Style.STROKE
                 canvas.drawPath(stroke.path, paint)
             }
-
-            if (debug || CanvasConfig.DEBUG_SHOW_BOUNDING_BOX) drawDebugBounds(canvas, stroke.bounds)
         }
     }
 

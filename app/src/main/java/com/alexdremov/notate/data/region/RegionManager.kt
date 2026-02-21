@@ -579,6 +579,12 @@ class RegionManager(
                                     bytes = ProtoBuf.encodeToByteArray(data)
                                 }
 
+                                is com.alexdremov.notate.model.TextItem -> {
+                                    type = 2
+                                    val data = CanvasSerializer.toTextItemData(item)
+                                    bytes = ProtoBuf.encodeToByteArray(data)
+                                }
+
                                 else -> {
                                     return@forEach
                                 }
@@ -647,10 +653,41 @@ class RegionManager(
                         item = CanvasSerializer.fromStrokeData(data)
                     } else if (type == 1) {
                         val data = ProtoBuf.decodeFromByteArray<CanvasImageData>(bytes)
+                        val logical = RectF(data.x, data.y, data.x + data.width, data.y + data.height)
+                        val aabb =
+                            com.alexdremov.notate.util.StrokeGeometry
+                                .computeRotatedBounds(logical, data.rotation)
                         item =
                             CanvasImage(
                                 uri = data.uri,
-                                bounds = RectF(data.x, data.y, data.x + data.width, data.y + data.height),
+                                logicalBounds = logical,
+                                bounds = aabb,
+                                zIndex = data.zIndex,
+                                order = data.order,
+                                rotation = data.rotation,
+                                opacity = data.opacity,
+                            )
+                    } else if (type == 2) {
+                        // Type 2 is TextItem
+                        val data = ProtoBuf.decodeFromByteArray<com.alexdremov.notate.data.TextItemData>(bytes)
+                        val logical = RectF(data.x, data.y, data.x + data.width, data.y + data.height)
+                        val aabb =
+                            com.alexdremov.notate.util.StrokeGeometry
+                                .computeRotatedBounds(logical, data.rotation)
+                        item =
+                            com.alexdremov.notate.model.TextItem(
+                                text = data.text,
+                                fontSize = data.fontSize,
+                                color = data.color,
+                                logicalBounds = logical,
+                                bounds = aabb,
+                                alignment =
+                                    when (data.alignment) {
+                                        1 -> android.text.Layout.Alignment.ALIGN_OPPOSITE
+                                        2 -> android.text.Layout.Alignment.ALIGN_CENTER
+                                        else -> android.text.Layout.Alignment.ALIGN_NORMAL
+                                    },
+                                backgroundColor = data.backgroundColor,
                                 zIndex = data.zIndex,
                                 order = data.order,
                                 rotation = data.rotation,
@@ -778,14 +815,36 @@ class RegionManager(
             }
 
             is CanvasImage -> {
-                val newBounds = RectF(item.bounds)
-                transform.mapRect(newBounds)
-                val values = FloatArray(9)
-                transform.getValues(values)
-                val scaleX = values[android.graphics.Matrix.MSCALE_X]
-                val skewY = values[android.graphics.Matrix.MSKEW_Y]
-                val rotation = kotlin.math.atan2(skewY.toDouble(), scaleX.toDouble()).toFloat()
-                item.copy(bounds = newBounds, rotation = item.rotation + Math.toDegrees(rotation.toDouble()).toFloat())
+                val (newLogical, newRotation, newAabb) =
+                    com.alexdremov.notate.util.StrokeGeometry.transformItemLogicalBounds(
+                        item.logicalBounds,
+                        item.rotation,
+                        transform,
+                    )
+                item.copy(logicalBounds = newLogical, bounds = newAabb, rotation = newRotation)
+            }
+
+            is com.alexdremov.notate.model.TextItem -> {
+                val (newLogical, newRotation, newAabb) =
+                    com.alexdremov.notate.util.StrokeGeometry.transformItemLogicalBounds(
+                        item.logicalBounds,
+                        item.rotation,
+                        transform,
+                    )
+
+                // For text, we might need to re-measure height if width changed, keeping font size constant.
+                // Re-measure height based on new logical width.
+                // Note: RegionManager doesn't have Context readily available for full layout measurement,
+                // so we use the scaleFactor approximation here.
+                val scaleFactor = newLogical.width() / item.logicalBounds.width()
+                val approxHeight = item.logicalBounds.height() * scaleFactor
+                newLogical.bottom = newLogical.top + approxHeight
+
+                val finalAabb =
+                    com.alexdremov.notate.util.StrokeGeometry
+                        .computeRotatedBounds(newLogical, newRotation)
+
+                item.copy(logicalBounds = newLogical, bounds = finalAabb, rotation = newRotation)
             }
 
             else -> {

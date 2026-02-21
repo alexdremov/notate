@@ -42,29 +42,60 @@ import kotlin.math.pow
 /**
  * Coordinates the Level-of-Detail (LOD) tiled rendering system for the infinite canvas.
  *
- * ## Responsibilities
- * 1. **LOD Calculation**: Determines zoom level from scale factor
- * 2. **Tile Visibility**: Calculates which tiles are visible in the current viewport
- * 3. **Background Generation**: Queues tile bitmap generation on worker threads
- * 4. **Cache Management**: Manages LRU cache with memory-aware eviction
- * 5. **Fallback Rendering**: Shows lower-resolution parent tiles while generating
+ * ## Architecture & Semantics
  *
- * ## LOD System
- * Each LOD level represents a 2x scale factor:
- * - Level 0: 1: 1 scale (512px tile = 512 world units)
- * - Level 1: 1:2 scale (512px tile = 1024 world units)
- * - Level -1: 2: 1 scale (512px tile = 256 world units)
+ * The `TileManager` acts as the high-performance rendering core for the application, bridging the gap
+ * between the synchronous UI thread and asynchronous model queries. It provides a "Double-Buffered"
+ * virtual canvas where tiles are generated at varying resolutions (LOD) based on the current zoom level.
  *
- * ## Thread Model
- * - Rendering calls happen on UI thread
- * - Tile generation happens on [dispatcher] (default: Dispatchers.Default)
- * - Cache operations are synchronized
+ * ### Parallel Execution Model
  *
- * @param canvasModel The data model to query for strokes
- * @param renderer The renderer for drawing strokes to tile bitmaps
- * @param tileSize Pixel size of each tile (default: 512)
- * @param scope Coroutine scope for background tile generation
- * @param dispatcher Dispatcher for background generation (default: Dispatchers.Default)
+ * 1. **Job Scheduling**: Tile generation is distributed across a pool of background worker threads.
+ *    To prevent CPU/IO thrashing, the scheduler employs a "Sticky Region Affinity" algorithm. Jobs are
+ *    grouped by their spatial region (as defined by [RegionManager]). The scheduler processes all
+ *    pending tiles for a specific region before switching to another, maximizing the utilization of the
+ *    underlying [RegionManager]'s LRU cache and minimizing deserialization overhead.
+ *
+ * 2. **Prioritization**:
+ *    - **High Priority**: Tiles currently within the viewport that have no valid cached bitmap.
+ *    - **Low Priority**: Speculative neighbor pre-fetching, pre-rendering of adjacent LOD levels,
+ *      and background refreshes for modified items.
+ *
+ * 3. **LOD Pyramid**: The system maintains an LOD pyramid. Each level represents a 2x scale step.
+ *    When a specific tile is being generated, the renderer automatically performs a "Vertical Fallback"
+ *    search. It looks up the LOD pyramid for a lower-resolution parent to upscale, or down for
+ *    higher-resolution children to downscale, ensuring the user never sees a "white gap" during zoom/pan.
+ *
+ * ### Threading & Safety (Parallel Correctness)
+ *
+ * - **Concurrency Control**: State is managed via several synchronized mechanisms:
+ *   - `generatingKeys`: Tracks tiles currently in the background pipeline to prevent redundant jobs.
+ *   - `generationJobs`: Holds active job references to allow instant cancellation of stale tasks.
+ *   - `pendingLock`: Serializes access to the job queue and region-affinity scheduler.
+ *   - `renderVersion`: An atomic version counter used to discard obsolete generation results if
+ *     the canvas was modified or cleared before a job finished.
+ *
+ * - **Atomic Cache Updates (Double Buffering)**:
+ *   To prevent visual artifacts and race conditions between the UI thread and background workers:
+ *   1. All synchronous cache modifications (e.g., [updateTilesWithErasure]) use a copy-on-write pattern.
+ *   2. The manager takes a snapshot of the current cache, renders the change onto a *new* bitmap
+ *      (obtained from the pool), and performs an atomic `put` back into the cache.
+ *   3. If a background generation job was active for the same tile, it is automatically re-queued
+ *      with the new version to ensure eventual consistency.
+ *
+ * ### Interaction Model
+ *
+ * - **Interaction Flag**: During active gestures (pan/zoom/ink), the manager throttles low-priority
+ *   background work and enters "Turbo Mode" waveforms (on E-Ink) to prioritize frame rate.
+ * - **Throttling**: UI update signals ([onTileReady]) are debounced to match the device's target FPS,
+ *   preventing the UI thread from being overwhelmed by background generation completions.
+ *
+ * @param context Android context for resource access.
+ * @param canvasModel The data model to query for strokes and regions.
+ * @param renderer The renderer for drawing strokes into tile bitmaps.
+ * @param tileSize Pixel size of each tile (default: 512px).
+ * @param scope Coroutine scope for background tile generation.
+ * @param dispatcher Dispatcher for background generation (default: Dispatchers.Default).
  */
 @OptIn(FlowPreview::class)
 class TileManager(
@@ -164,14 +195,24 @@ class TileManager(
         items.forEach { unionBounds.union(it.bounds) }
         unionBounds.inset(-50f, -50f) // Safety margin for text/strokes rendering outside bounds
 
-        for ((key, bitmap) in snapshot) {
-            if (bitmap == null || bitmap.isRecycled || bitmap == tileCache.errorBitmap) continue
+        val version = renderVersion.get()
+        val visibleRect = lastVisibleRect
+        val currentLevel = if (visibleRect != null) calculateLOD(lastScale) else -1
+        val handledKeys = HashSet<TileCache.TileKey>()
+
+        for ((key, oldBitmap) in snapshot) {
+            if (oldBitmap == null || oldBitmap.isRecycled || oldBitmap == tileCache.errorBitmap) continue
 
             val worldSize = calculateWorldTileSize(key.level)
             val tileRect = getTileWorldRect(key.col, key.row, worldSize)
 
             if (RectF.intersects(unionBounds, tileRect)) {
-                val tileCanvas = Canvas(bitmap)
+                // Obtain a NEW bitmap for double-buffering
+                val newBitmap = tileCache.obtainBitmap()
+                val tileCanvas = Canvas(newBitmap)
+                // Copy old content
+                tileCanvas.drawBitmap(oldBitmap, 0f, 0f, null)
+
                 val scale = tileSize.toFloat() / worldSize
                 tileCanvas.save()
                 tileCanvas.scale(scale, scale)
@@ -183,6 +224,32 @@ class TileManager(
                     }
                 }
                 tileCanvas.restore()
+
+                // Atomic Swap
+                tileCache.put(key, newBitmap)
+
+                // Re-queue to ensure final consistency if background tasks were active.
+                val isBeingGenerated = synchronized(generatingKeys) { generatingKeys.contains(key) }
+                if (isBeingGenerated) {
+                    queueTileGeneration(key.col, key.row, key.level, worldSize, true, version, forceRefresh = true)
+                }
+                handledKeys.add(key)
+            }
+        }
+
+        // Handle Generating Tiles that weren't in snapshot but intersect the items
+        val currentGenerating = synchronized(generatingKeys) { HashSet(generatingKeys) }
+        for (key in currentGenerating) {
+            if (handledKeys.contains(key)) continue
+
+            val worldSize = calculateWorldTileSize(key.level)
+            val tileRect = getTileWorldRect(key.col, key.row, worldSize)
+
+            if (RectF.intersects(unionBounds, tileRect)) {
+                val isVisible = visibleRect == null || (key.level == currentLevel && RectF.intersects(visibleRect, tileRect))
+                if (isVisible) {
+                    queueTileGeneration(key.col, key.row, key.level, worldSize, true, version, forceRefresh = true)
+                }
             }
         }
         notifyTileReady()
@@ -755,7 +822,7 @@ class TileManager(
             val tileCanvas = Canvas(bitmap)
 
             // 6. Render
-            renderItems(tileCanvas, items, worldRect, scale)
+            renderItems(tileCanvas, items, worldRect, scale, includeBackground = true)
 
             bitmap
         }
@@ -765,10 +832,20 @@ class TileManager(
         items: List<com.alexdremov.notate.model.CanvasItem>,
         worldRect: RectF,
         scale: Float,
+        includeBackground: Boolean = false,
     ) {
         canvas.save()
         canvas.scale(scale, scale)
         canvas.translate(-worldRect.left, -worldRect.top)
+
+        if (includeBackground && canvasModel.canvasType == com.alexdremov.notate.data.CanvasType.INFINITE) {
+            com.alexdremov.notate.ui.render.BackgroundDrawer.draw(
+                canvas,
+                canvasModel.backgroundStyle,
+                worldRect,
+                zoomLevel = 1.0f / (tileSize / scale), // Approximate zoom for background LOD
+            )
+        }
 
         Logger.v("TileManager", "  Found ${items.size} items")
 
@@ -802,19 +879,20 @@ class TileManager(
         // Use a set for efficient intersection checks during update
         val handledKeys = HashSet<TileCache.TileKey>()
 
-        // 1. Update/Clean Cached Tiles
-        for ((key, bitmap) in snapshot) {
-            if (bitmap == null || bitmap.isRecycled || bitmap == tileCache.errorBitmap) continue
+        // 1. Update/Clean Cached Tiles (Double Buffered)
+        for ((key, oldBitmap) in snapshot) {
+            if (oldBitmap == null || oldBitmap.isRecycled || oldBitmap == tileCache.errorBitmap) continue
 
             val worldSize = calculateWorldTileSize(key.level)
             val tileRect = getTileWorldRect(key.col, key.row, worldSize)
 
             if (RectF.intersects(bounds, tileRect)) {
-                val isVisible = visibleRect != null && key.level == currentLevel && RectF.intersects(visibleRect, tileRect)
+                // Obtain a NEW bitmap for double-buffering
+                val newBitmap = tileCache.obtainBitmap()
+                val tileCanvas = Canvas(newBitmap)
+                // Copy old content
+                tileCanvas.drawBitmap(oldBitmap, 0f, 0f, null)
 
-                // Update ANY intersected cached bitmap, regardless of visibility (level),
-                // to preserve fallback tiles (parents/children) for smooth zooming.
-                val tileCanvas = Canvas(bitmap)
                 val scale = tileSize.toFloat() / worldSize
                 tileCanvas.save()
                 tileCanvas.scale(scale, scale)
@@ -822,9 +900,10 @@ class TileManager(
                 renderer.drawItemToCanvas(tileCanvas, item, scale = scale)
                 tileCanvas.restore()
 
+                // Atomic Swap
+                tileCache.put(key, newBitmap)
+
                 // Re-queue to ensure final consistency if background tasks were active.
-                // If we don't restart, the background task (started before item addition)
-                // might overwrite our manual update with a bitmap missing the new item.
                 val isBeingGenerated = synchronized(generatingKeys) { generatingKeys.contains(key) }
                 if (isBeingGenerated) {
                     queueTileGeneration(key.col, key.row, key.level, worldSize, true, version, forceRefresh = true)
@@ -871,7 +950,7 @@ class TileManager(
 
         if (standardItems.isEmpty()) return
 
-        // 2. Handle Standard Items (Batch Draw)
+        // 2. Handle Standard Items (Batch Draw - Double Buffered)
         val unionBounds = RectF(standardItems[0].bounds)
         for (i in 1 until standardItems.size) unionBounds.union(standardItems[i].bounds)
 
@@ -884,26 +963,26 @@ class TileManager(
         val hidden = hiddenItemIds
 
         // Update Cached Tiles
-        for ((key, bitmap) in snapshot) {
-            if (bitmap == null || bitmap.isRecycled || bitmap == tileCache.errorBitmap) continue
+        for ((key, oldBitmap) in snapshot) {
+            if (oldBitmap == null || oldBitmap.isRecycled || oldBitmap == tileCache.errorBitmap) continue
 
             val worldSize = calculateWorldTileSize(key.level)
             val tileRect = getTileWorldRect(key.col, key.row, worldSize)
 
             // Fast Check: Does tile intersect the collective bounds?
             if (RectF.intersects(unionBounds, tileRect)) {
-                val isVisible = visibleRect != null && key.level == currentLevel && RectF.intersects(visibleRect, tileRect)
+                // Obtain a NEW bitmap for double-buffering
+                val newBitmap = tileCache.obtainBitmap()
+                val tileCanvas = Canvas(newBitmap)
+                // Copy old content
+                tileCanvas.drawBitmap(oldBitmap, 0f, 0f, null)
 
-                // Update ANY intersected cached bitmap, regardless of visibility (level),
-                // to preserve fallback tiles (parents/children) for smooth zooming.
-                val tileCanvas = Canvas(bitmap)
                 val scale = tileSize.toFloat() / worldSize
                 tileCanvas.save()
                 tileCanvas.scale(scale, scale)
                 tileCanvas.translate(-tileRect.left, -tileRect.top)
 
                 // Batch Draw Intersecting Items
-                // Optimization: Filter items intersecting this specific tile
                 for (item in standardItems) {
                     if (hidden.contains(item.order)) continue
                     if (RectF.intersects(item.bounds, tileRect)) {
@@ -911,6 +990,9 @@ class TileManager(
                     }
                 }
                 tileCanvas.restore()
+
+                // Atomic Swap
+                tileCache.put(key, newBitmap)
 
                 // Re-queue logic
                 val isBeingGenerated = synchronized(generatingKeys) { generatingKeys.contains(key) }
@@ -953,25 +1035,31 @@ class TileManager(
         // Use a set for efficient intersection checks during update
         val handledKeys = HashSet<TileCache.TileKey>()
 
-        // 1. Update/Clean Cached Tiles
-        for ((key, bitmap) in snapshot) {
-            if (bitmap == null || bitmap.isRecycled || bitmap == tileCache.errorBitmap) continue
+        // 1. Update/Clean Cached Tiles (Double Buffered)
+        for ((key, oldBitmap) in snapshot) {
+            if (oldBitmap == null || oldBitmap.isRecycled || oldBitmap == tileCache.errorBitmap) continue
 
             val worldSize = calculateWorldTileSize(key.level)
             val tileRect = getTileWorldRect(key.col, key.row, worldSize)
 
             if (RectF.intersects(bounds, tileRect)) {
-                // Update ALL intersected cached tiles in-place to prevent flash/inconsistency.
-                // We rely on LRU to evict them if they are truly off-screen/stale.
-                val tileCanvas = Canvas(bitmap)
+                // Obtain a NEW bitmap for double-buffering
+                val newBitmap = tileCache.obtainBitmap()
+                val tileCanvas = Canvas(newBitmap)
+                // Copy old content
+                tileCanvas.drawBitmap(oldBitmap, 0f, 0f, null)
+
                 val scale = tileSize.toFloat() / worldSize
                 tileCanvas.save()
                 tileCanvas.scale(scale, scale)
                 tileCanvas.translate(-tileRect.left, -tileRect.top)
 
-                // Draw Eraser Path instantly on UI thread
+                // Draw Eraser Path instantly
                 tileCanvas.drawPath(stroke.path, eraserPaint)
                 tileCanvas.restore()
+
+                // Atomic Swap
+                tileCache.put(key, newBitmap)
 
                 // If currently generating, queue refresh to ensure consistency
                 val isBeingGenerated = synchronized(generatingKeys) { generatingKeys.contains(key) }

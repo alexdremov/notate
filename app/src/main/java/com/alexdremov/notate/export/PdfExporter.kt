@@ -402,8 +402,8 @@ object PdfExporter {
         bounds: RectF,
         pageHeight: Float,
     ) {
-        val w = ceil(item.bounds.width()).toInt().coerceAtLeast(1)
-        val h = ceil(item.bounds.height()).toInt().coerceAtLeast(1)
+        val w = ceil(item.logicalBounds.width()).toInt().coerceAtLeast(1)
+        val h = ceil(item.logicalBounds.height()).toInt().coerceAtLeast(1)
 
         val pdfDoc = PdfDocument()
         try {
@@ -412,6 +412,7 @@ object PdfExporter {
 
             val renderItem =
                 item.copy(
+                    logicalBounds = RectF(0f, 0f, w.toFloat(), h.toFloat()),
                     bounds = RectF(0f, 0f, w.toFloat(), h.toFloat()),
                     rotation = 0f,
                 )
@@ -428,23 +429,27 @@ object PdfExporter {
                 val layerUtility = LayerUtility(document)
                 val form = layerUtility.importPageAsForm(tempDoc, tempDoc.getPage(0))
 
-                val left = item.bounds.left - bounds.left
-                val bottom = pageHeight - (item.bounds.bottom - bounds.top)
+                // The center of logicalBounds is the same as the center of AABB (bounds)
+                val centerX = item.logicalBounds.centerX()
+                val centerY = item.logicalBounds.centerY()
+
+                val pdfCenterX = centerX - bounds.left
+                val pdfCenterY = pageHeight - (centerY - bounds.top)
 
                 stream.saveGraphicsState()
 
                 // Move to center of the item
-                stream.transform(Matrix.getTranslateInstance(left + item.bounds.width() / 2f, bottom + item.bounds.height() / 2f))
+                stream.transform(Matrix.getTranslateInstance(pdfCenterX, pdfCenterY))
                 // Rotate (PDF CCW vs Android CW)
                 stream.transform(Matrix.getRotateInstance(-Math.toRadians(item.rotation.toDouble()), 0f, 0f))
-                // Move back to origin (bottom-left of block)
-                stream.transform(Matrix.getTranslateInstance(-item.bounds.width() / 2f, -item.bounds.height() / 2f))
+                // Move back to origin (bottom-left of logical block)
+                stream.transform(Matrix.getTranslateInstance(-item.logicalBounds.width() / 2f, -item.logicalBounds.height() / 2f))
 
-                // Render visual layer: No manual flip needed as form from PdfDocument is already oriented correctly
+                // Render visual layer
                 stream.drawForm(form)
 
                 // Render searchable layer: origin at top-left of block for baseline calculations
-                stream.transform(Matrix.getTranslateInstance(0f, item.bounds.height()))
+                stream.transform(Matrix.getTranslateInstance(0f, item.logicalBounds.height()))
                 addSearchableText(stream, item, context)
 
                 stream.restoreGraphicsState()
@@ -511,7 +516,7 @@ object PdfExporter {
         bounds: RectF,
         pageHeight: Float,
     ) {
-        Logger.d("PdfExporter", "Rendering image: ${item.uri} at ${item.bounds}")
+        Logger.d("PdfExporter", "Rendering image: ${item.uri} at ${item.logicalBounds}")
         try {
             val uriStr = item.uri
             val uri = Uri.parse(uriStr)
@@ -542,14 +547,17 @@ object PdfExporter {
                     fixedBitmap.recycle()
                 }
 
-                val left = item.bounds.left - bounds.left
-                val bottom = pageHeight - (item.bounds.bottom - bounds.top)
+                val centerX = item.logicalBounds.centerX()
+                val centerY = item.logicalBounds.centerY()
+
+                val pdfCenterX = centerX - bounds.left
+                val pdfCenterY = pageHeight - (centerY - bounds.top)
 
                 stream.saveGraphicsState()
 
-                stream.transform(Matrix.getTranslateInstance(left + item.bounds.width() / 2f, bottom + item.bounds.height() / 2f))
+                stream.transform(Matrix.getTranslateInstance(pdfCenterX, pdfCenterY))
                 stream.transform(Matrix.getRotateInstance(-Math.toRadians(item.rotation.toDouble()), 0f, 0f))
-                stream.transform(Matrix.getTranslateInstance(-item.bounds.width() / 2f, -item.bounds.height() / 2f))
+                stream.transform(Matrix.getTranslateInstance(-item.logicalBounds.width() / 2f, -item.logicalBounds.height() / 2f))
 
                 if (item.opacity < 1.0f) {
                     val gstate = PDExtendedGraphicsState()
@@ -557,7 +565,7 @@ object PdfExporter {
                     stream.setGraphicsStateParameters(gstate)
                 }
 
-                stream.drawImage(image, 0f, 0f, item.bounds.width(), item.bounds.height())
+                stream.drawImage(image, 0f, 0f, item.logicalBounds.width(), item.logicalBounds.height())
                 stream.restoreGraphicsState()
 
                 bitmap.recycle()
@@ -1026,14 +1034,16 @@ object PdfExporter {
     }
 
     private val isFixNeeded: Boolean by lazy {
-        // Only apply the R/B swap fix on Desktop (Robolectric) environments.
-        // PDFBox-Android's LosslessFactory on Desktop/CI often swaps channels,
-        // but actual Android devices handle the ARGB_8888 -> PDF conversion correctly.
+        // Only apply the R/B swap fix on Desktop (non-macOS) environments.
+        // PDFBox-Android's LosslessFactory on some Desktop/CI (like Linux) often swaps channels,
+        // but actual Android devices and macOS Robolectric seem to handle it correctly.
         val vendor = System.getProperty("java.vendor")?.lowercase() ?: ""
         val vmName = System.getProperty("java.vm.name")?.lowercase() ?: ""
+        val osName = System.getProperty("os.name")?.lowercase() ?: ""
         val isAndroid = vendor.contains("android") || vmName.contains("dalvik") || vmName.contains("art")
+        val isMac = osName.contains("mac") || osName.contains("darwin")
 
-        !isAndroid
+        !isAndroid && !isMac
     }
 
     /**

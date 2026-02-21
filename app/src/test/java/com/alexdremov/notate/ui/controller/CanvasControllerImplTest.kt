@@ -103,7 +103,8 @@ class CanvasControllerImplTest {
     @Test
     fun `updateText with blank text deletes item and invalidates renderer`() =
         runTest {
-            val textItem = TextItem("Test", 12f, 0, RectF(0f, 0f, 100f, 50f), order = 1L)
+            val logical = RectF(0f, 0f, 100f, 50f)
+            val textItem = TextItem("Test", 12f, 0, logicalBounds = logical, bounds = logical, order = 1L)
 
             controller.updateText(textItem, "")
             testDispatcher.scheduler.advanceUntilIdle()
