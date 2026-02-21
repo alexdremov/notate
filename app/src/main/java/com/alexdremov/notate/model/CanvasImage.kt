@@ -1,7 +1,6 @@
 package com.alexdremov.notate.model
 
 import android.graphics.RectF
-import com.alexdremov.notate.util.StrokeGeometry
 import kotlin.jvm.Transient
 
 /**

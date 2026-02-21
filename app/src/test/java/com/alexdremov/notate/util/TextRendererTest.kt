@@ -59,10 +59,10 @@ class TextRendererTest {
         val entry2 = TextRenderer.layoutCache.get(item.order)
         assertThat(entry2.layout).isSameInstanceAs(layout1)
 
-        // Draw with different text - should invalidate cache
-        val updatedItem = item.copy(text = "New Text", order = 2L)
+        // Draw with different text but SAME order - should invalidate cache and replace entry
+        val updatedItem = item.copy(text = "New Text")
         TextRenderer.draw(canvas, updatedItem, context)
-        val entry3 = TextRenderer.layoutCache.get(updatedItem.order)
+        val entry3 = TextRenderer.layoutCache.get(item.order)
         assertThat(entry3).isNotNull()
         assertThat(entry3.layout).isNotSameInstanceAs(layout1)
     }

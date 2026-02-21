@@ -9,6 +9,7 @@ import kotlin.math.min
 /**
  * Handles low-level Bitmap caching and pooling for TileManager.
  * Adheres to SRP by isolating memory management.
+ * Thread-Safe: All public operations are synchronized on this instance.
  */
 class TileCache(
     private val tileSize: Int = CanvasConfig.TILE_SIZE,
@@ -29,13 +30,14 @@ class TileCache(
     )
 
     // Bitmap Pool to reduce GC churn
-    private val bitmapPool = Collections.synchronizedList(ArrayList<Bitmap>())
+    // Guarded by this TileCache instance lock
+    private val bitmapPool = ArrayList<Bitmap>()
     private val MAX_POOL_SIZE = 32 // Cap pool to prevent OOM
 
     // Bytes per tile (512*512*4 for ARGB_8888)
     private val tileByteCount = tileSize * tileSize * CanvasConfig.TILE_BYTES_PER_PIXEL
 
-    // Placeholder for failed tilesd
+    // Placeholder for failed tiles
     val errorBitmap: Bitmap =
         Bitmap.createBitmap(1, 1, Bitmap.Config.ARGB_8888).apply {
             eraseColor(android.graphics.Color.MAGENTA)
@@ -75,21 +77,25 @@ class TileCache(
                     // If evicted=false (replacement/refresh), the bitmap might still be in use
                     // by the UI thread (double-buffering), so we must NOT recycle it immediately.
                     // We let GC handle the replaced bitmap safely.
+                    // NOTE: This method is called from within LruCache operations (put, get, remove, trimToSize).
+                    // Since all those operations are triggered by methods synchronized on 'this' TileCache instance,
+                    // we hold the lock and can safely access bitmapPool.
                     if (evicted && oldBitmap != null && oldBitmap != errorBitmap && oldBitmap != newBitmap && !oldBitmap.isRecycled) {
-                        synchronized(bitmapPool) {
-                            if (bitmapPool.size < MAX_POOL_SIZE) {
-                                bitmapPool.add(oldBitmap)
-                            }
+                        if (bitmapPool.size < MAX_POOL_SIZE) {
+                            bitmapPool.add(oldBitmap)
                         }
                     }
                 }
             }
     }
 
+    @Synchronized
     fun get(key: TileKey): Bitmap? = memoryCache.get(key)?.bitmap
 
+    @Synchronized
     fun getVersion(key: TileKey): Int = memoryCache.get(key)?.version ?: -1
 
+    @Synchronized
     fun put(
         key: TileKey,
         bitmap: Bitmap,
@@ -98,23 +104,22 @@ class TileCache(
         memoryCache.put(key, CachedTile(bitmap, version))
     }
 
+    @Synchronized
     fun remove(key: TileKey) {
         memoryCache.remove(key)
     }
 
+    @Synchronized
     fun clear() {
         memoryCache.evictAll()
-        synchronized(bitmapPool) {
-            bitmapPool.clear()
-        }
+        bitmapPool.clear()
     }
 
+    @Synchronized
     fun obtainBitmap(): Bitmap {
         var bitmap: Bitmap? = null
-        synchronized(bitmapPool) {
-            if (bitmapPool.isNotEmpty()) {
-                bitmap = bitmapPool.removeAt(bitmapPool.size - 1)
-            }
+        if (bitmapPool.isNotEmpty()) {
+            bitmap = bitmapPool.removeAt(bitmapPool.size - 1)
         }
 
         if (bitmap == null) {
@@ -130,6 +135,7 @@ class TileCache(
      * Checks if we have enough budget to cache a new tile.
      * Can trigger a resize if needed.
      */
+    @Synchronized
     fun checkBudgetAndResizeIfNeeded(generatingCount: Int) {
         val currentUsage = memoryCache.size()
         val anticipatedUsage = generatingCount * tileByteCount
@@ -146,6 +152,7 @@ class TileCache(
         }
     }
 
+    @Synchronized
     fun isFull(
         generatingCount: Int,
         thresholdPercent: Double = 0.85,
@@ -156,13 +163,15 @@ class TileCache(
         return (currentUsage + anticipatedUsage) > threshold
     }
 
+    @Synchronized
     fun snapshot(): Map<TileKey, CachedTile> = memoryCache.snapshot()
 
+    @Synchronized
     fun getStats(): Map<String, String> {
         val sizeMb = memoryCache.size() / (1024 * 1024)
         val maxMb = memoryCache.maxSize() / (1024 * 1024)
         val entries = memoryCache.snapshot().size
-        val pool = synchronized(bitmapPool) { bitmapPool.size }
+        val pool = bitmapPool.size
         val hits = memoryCache.hitCount()
         val misses = memoryCache.missCount()
         val total = hits + misses
