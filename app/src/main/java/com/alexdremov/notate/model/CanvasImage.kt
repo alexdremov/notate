@@ -10,13 +10,19 @@ import kotlin.jvm.Transient
 data class CanvasImage(
     val uri: String,
     /**
-     * The unrotated, axis-aligned bounds of the image in its local coordinate system.
-     * Used for rendering.
+     * The unrotated, axis-aligned bounds of the image in canvas/world coordinates.
+     *
+     * This rectangle represents the logical frame of the image before applying [rotation]
+     * and is typically used as the origin for rendering and hit-testing
+     * (e.g. renderers translate by [logicalBounds.left] / [logicalBounds.top]).
      */
     val logicalBounds: RectF,
     /**
-     * The actual Axis-aligned bounding box (AABB) in World Coordinates.
-     * Calculated from [logicalBounds] and [rotation].
+     * The actual axis-aligned bounding box (AABB) in canvas/world coordinates,
+     * calculated from [logicalBounds] and [rotation].
+     *
+     * When [rotation] is 0°, this is equal to [logicalBounds]. For non-zero rotation,
+     * this encloses the rotated image.
      */
     override val bounds: RectF,
     override val zIndex: Float = 0f,
