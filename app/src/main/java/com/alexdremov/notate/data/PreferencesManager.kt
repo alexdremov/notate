@@ -67,6 +67,8 @@ object PreferencesManager {
     private const val KEY_DEBUG_SHOW_REGIONS = "debug_show_regions"
     private const val KEY_DEBUG_ENABLE_PROFILING = "debug_enable_profiling"
 
+    private const val KEY_FLOAT_WINDOW_RECT = "float_window_rect"
+
     private val protoBuf = ProtoBuf
 
     private fun getPrefs(context: Context): SharedPreferences = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -438,4 +440,29 @@ object PreferencesManager {
             android.graphics.Color.parseColor("#FFCDD2"), // Pastel Pink
             android.graphics.Color.parseColor("#FFF9C4"), // Pastel Yellow
         )
+
+    fun saveFloatingWindowRect(
+        context: Context,
+        x: Int,
+        y: Int,
+        w: Int,
+        h: Int,
+    ) {
+        val str = "$x,$y,$w,$h"
+        getPrefs(context).edit().putString(KEY_FLOAT_WINDOW_RECT, str).apply()
+    }
+
+    fun getFloatingWindowRect(context: Context): IntArray? {
+        val str = getPrefs(context).getString(KEY_FLOAT_WINDOW_RECT, null) ?: return null
+        return try {
+            val parts = str.split(",")
+            if (parts.size == 4) {
+                intArrayOf(parts[0].toInt(), parts[1].toInt(), parts[2].toInt(), parts[3].toInt())
+            } else {
+                null
+            }
+        } catch (e: Exception) {
+            null
+        }
+    }
 }

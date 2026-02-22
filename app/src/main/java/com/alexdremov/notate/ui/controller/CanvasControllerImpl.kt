@@ -591,6 +591,128 @@ class CanvasControllerImpl(
         }
     }
 
+    override suspend fun addLink(
+        label: String,
+        target: String,
+        type: com.alexdremov.notate.data.LinkType,
+        x: Float,
+        y: Float,
+        fontSize: Float,
+        color: Int,
+    ) {
+        if (label.isBlank() || target.isBlank()) return
+
+        operationMutex.withLock {
+            val (width, height) =
+                com.alexdremov.notate.util.LinkRenderer
+                    .measureSize(context, label, fontSize)
+            val logical = RectF(x, y, x + width, y + height)
+
+            val linkItem =
+                com.alexdremov.notate.model.LinkItem(
+                    label = label,
+                    target = target,
+                    type = type,
+                    fontSize = fontSize,
+                    color = color,
+                    logicalBounds = logical,
+                    bounds = RectF(logical),
+                )
+
+            val added = model.addItem(linkItem)
+            if (added != null) {
+                withContext(Dispatchers.Main) {
+                    renderer.updateTilesWithItem(added)
+                    selectionManager.clearSelection()
+                    selectionManager.select(added)
+                    renderer.setHiddenItems(selectionManager.getSelectedIds())
+                    renderer.hideItemsInCache(listOf(added))
+                    generateSelectionImposter()
+                    renderer.invalidate()
+                    onContentChangedListener?.invoke()
+                }
+            }
+        }
+    }
+
+    override suspend fun updateLink(
+        oldItem: com.alexdremov.notate.model.LinkItem,
+        label: String,
+        target: String,
+        type: com.alexdremov.notate.data.LinkType,
+    ) {
+        if (label.isBlank() || target.isBlank()) {
+            // Delete if invalid
+            operationMutex.withLock {
+                val bounds = oldItem.bounds
+                val ids = setOf(oldItem.order)
+                selectionManager.clearSelection()
+                updatePinnedRegions()
+
+                withContext(Dispatchers.Default) {
+                    model.deleteItemsByIds(bounds, ids, context.cacheDir)
+                }
+
+                withContext(Dispatchers.Main) {
+                    renderer.setHiddenItems(emptySet())
+                    renderer.invalidateTiles(bounds)
+                    renderer.invalidate()
+                    onContentChangedListener?.invoke()
+                }
+            }
+            return
+        }
+
+        operationMutex.withLock {
+            val (width, height) =
+                com.alexdremov.notate.util.LinkRenderer
+                    .measureSize(context, label, oldItem.fontSize)
+
+            // Maintain top-left position but update dimensions
+            val newLogical =
+                RectF(
+                    oldItem.logicalBounds.left,
+                    oldItem.logicalBounds.top,
+                    oldItem.logicalBounds.left + width,
+                    oldItem.logicalBounds.top + height,
+                )
+
+            val newAabb =
+                com.alexdremov.notate.util.StrokeGeometry
+                    .computeRotatedBounds(newLogical, oldItem.rotation)
+
+            val newItem =
+                oldItem.copy(
+                    label = label,
+                    target = target,
+                    type = type,
+                    logicalBounds = newLogical,
+                    bounds = newAabb,
+                )
+
+            val committedItems = model.replaceItems(listOf(oldItem), listOf(newItem))
+            val committedItem = committedItems.firstOrNull() as? com.alexdremov.notate.model.LinkItem ?: return@withLock
+
+            withContext(Dispatchers.Main) {
+                val unionBounds = RectF(oldItem.bounds)
+                unionBounds.union(newAabb)
+                unionBounds.inset(-10f, -10f)
+
+                renderer.refreshTiles(unionBounds)
+                renderer.updateTilesWithItem(committedItem)
+
+                selectionManager.clearSelection()
+                selectionManager.select(committedItem)
+                renderer.setHiddenItems(selectionManager.getSelectedIds())
+                renderer.hideItemsInCache(listOf(committedItem))
+                generateSelectionImposter()
+
+                renderer.invalidate()
+                onContentChangedListener?.invoke()
+            }
+        }
+    }
+
     override suspend fun updateSelectedTextStyle(
         fontSize: Float?,
         color: Int?,
@@ -807,6 +929,16 @@ class CanvasControllerImpl(
                     bounds = finalAabb,
                     rotation = newRotation,
                 )
+            }
+
+            is com.alexdremov.notate.model.LinkItem -> {
+                val (newLogical, newRotation, newAabb) =
+                    StrokeGeometry.transformItemLogicalBounds(
+                        item.logicalBounds,
+                        item.rotation,
+                        transform,
+                    )
+                item.copy(logicalBounds = newLogical, bounds = newAabb, rotation = newRotation)
             }
 
             else -> {

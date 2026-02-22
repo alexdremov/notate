@@ -3,6 +3,9 @@ package com.alexdremov.notate.data
 import android.graphics.RectF
 import com.alexdremov.notate.config.CanvasConfig
 import com.alexdremov.notate.model.BackgroundStyle
+import com.alexdremov.notate.model.CanvasImage
+import com.alexdremov.notate.model.CanvasItem
+import com.alexdremov.notate.model.LinkItem
 import com.alexdremov.notate.model.Stroke
 import com.alexdremov.notate.model.Tag
 import com.alexdremov.notate.model.TextItem
@@ -10,6 +13,13 @@ import com.alexdremov.notate.util.Logger
 import com.alexdremov.notate.util.StrokeGeometry
 import com.onyx.android.sdk.api.device.epd.EpdController
 import com.onyx.android.sdk.data.note.TouchPoint
+import kotlinx.serialization.decodeFromString
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.protobuf.ProtoBuf
+import java.io.InputStream
+import java.io.OutputStream
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 
 /**
  * Handles serialization and deserialization of the Canvas model.
@@ -118,35 +128,85 @@ object CanvasSerializer {
         )
     }
 
-    fun toData(
-        canvasType: CanvasType,
-        pageWidth: Float,
-        pageHeight: Float,
-        backgroundStyle: BackgroundStyle,
-        viewportScale: Float,
-        viewportOffsetX: Float,
-        viewportOffsetY: Float,
-        toolbarItems: List<com.alexdremov.notate.model.ToolbarItem> = emptyList(),
-        tagIds: List<String> = emptyList(),
-        tagDefinitions: List<Tag> = emptyList(),
-        regionSize: Float = CanvasConfig.DEFAULT_REGION_SIZE,
-        nextStrokeOrder: Long = 0,
-    ): CanvasData =
-        CanvasData(
-            version = 3,
-            canvasType = canvasType,
-            pageWidth = pageWidth,
-            pageHeight = pageHeight,
-            backgroundStyle = backgroundStyle,
-            zoomLevel = viewportScale,
-            offsetX = viewportOffsetX,
-            offsetY = viewportOffsetY,
-            toolbarItems = toolbarItems,
-            tagIds = tagIds,
-            tagDefinitions = tagDefinitions,
-            regionSize = regionSize,
-            nextStrokeOrder = nextStrokeOrder,
+    fun toLinkItemData(item: LinkItem): LinkItemData =
+        LinkItemData(
+            label = item.label,
+            target = item.target,
+            type = item.type,
+            x = item.logicalBounds.left,
+            y = item.logicalBounds.top,
+            width = item.logicalBounds.width(),
+            height = item.logicalBounds.height(),
+            fontSize = item.fontSize,
+            color = item.color,
+            zIndex = item.zIndex,
+            order = item.order,
+            rotation = item.rotation,
         )
+
+    fun fromLinkItemData(lData: LinkItemData): LinkItem {
+        val logicalBounds = RectF(lData.x, lData.y, lData.x + lData.width, lData.y + lData.height)
+        val bounds = StrokeGeometry.computeRotatedBounds(logicalBounds, lData.rotation)
+        return LinkItem(
+            label = lData.label,
+            target = lData.target,
+            type = lData.type,
+            fontSize = lData.fontSize,
+            color = lData.color,
+            logicalBounds = logicalBounds,
+            bounds = bounds,
+            zIndex = lData.zIndex,
+            order = lData.order,
+            rotation = lData.rotation,
+        )
+    }
+
+    fun serializeRegion(
+        items: List<CanvasItem>,
+        idX: Int,
+        idY: Int,
+        outputStream: OutputStream,
+    ) {
+        val strokeData = ArrayList<StrokeData>()
+        val imageData = ArrayList<CanvasImageData>()
+        val textData = ArrayList<TextItemData>()
+        val linkData = ArrayList<LinkItemData>()
+
+        for (item in items) {
+            when (item) {
+                is Stroke -> strokeData.add(toStrokeData(item))
+                is com.alexdremov.notate.model.CanvasImage -> imageData.add(toCanvasImageData(item))
+                is com.alexdremov.notate.model.TextItem -> textData.add(toTextItemData(item))
+                is LinkItem -> linkData.add(toLinkItemData(item))
+            }
+        }
+
+        val regionProto =
+            RegionProto(
+                idX = idX,
+                idY = idY,
+                strokes = strokeData,
+                images = imageData,
+                texts = textData,
+                links = linkData,
+            )
+        outputStream.write(ProtoBuf.encodeToByteArray(RegionProto.serializer(), regionProto))
+    }
+
+    // --- Deserialization ---
+    fun deserializeRegion(inputStream: InputStream): RegionProto {
+        val bytes = inputStream.readBytes()
+        return ProtoBuf.decodeFromByteArray(RegionProto.serializer(), bytes)
+    }
+
+    fun toCanvasItems(regionProto: RegionProto): List<CanvasItem> {
+        val items = ArrayList<CanvasItem>()
+        regionProto.strokes.mapTo(items) { fromStrokeData(it) }
+        regionProto.images.mapTo(items) { fromCanvasImageData(it) }
+        regionProto.texts.mapTo(items) { fromTextItemData(it) }
+        regionProto.links.mapTo(items) { fromLinkItemData(it) }
+        return items
+    }
 
     fun fromStrokeData(sData: StrokeData): Stroke {
         val sysPressure = EpdController.getMaxTouchPressure()
@@ -215,5 +275,70 @@ object CanvasSerializer {
         val toolbarItems: List<com.alexdremov.notate.model.ToolbarItem> = emptyList(),
         val tagIds: List<String> = emptyList(),
         val tagDefinitions: List<Tag> = emptyList(),
+        val uuid: String? = null,
     )
+
+    fun serializeCanvasData(canvasData: CanvasData): ByteArray = ProtoBuf.encodeToByteArray(CanvasData.serializer(), canvasData)
+
+    fun deserializeCanvasData(byteArray: ByteArray): CanvasData = ProtoBuf.decodeFromByteArray(CanvasData.serializer(), byteArray)
+
+    fun deserializeCanvasData(inputStream: InputStream): CanvasData {
+        val bytes = inputStream.readBytes()
+        return ProtoBuf.decodeFromByteArray(CanvasData.serializer(), bytes)
+    }
+
+    // --- Helper for debugging packed float arrays ---
+    fun floatArrayToString(arr: FloatArray?): String = if (arr == null) "null" else arr.joinToString(prefix = "[", postfix = "]")
+
+    fun longArrayToString(arr: LongArray?): String = if (arr == null) "null" else arr.joinToString(prefix = "[", postfix = "]")
+
+    fun byteBufferToString(buffer: ByteBuffer?): String {
+        if (buffer == null) return "null"
+        val originalPosition = buffer.position()
+        val builder = StringBuilder("[")
+        while (buffer.hasRemaining()) {
+            builder.append(String.format("%02X ", buffer.get()))
+        }
+        buffer.position(originalPosition) // Reset to original position
+        builder.append("]")
+        return builder.toString()
+    }
+
+    // --- For `CanvasDataPreview` in `FileIndexManager` ---
+    fun serializeCanvasDataPreview(canvasDataPreview: CanvasDataPreview): ByteArray =
+        ProtoBuf.encodeToByteArray(CanvasDataPreview.serializer(), canvasDataPreview)
+
+    fun deserializeCanvasDataPreview(byteArray: ByteArray): CanvasDataPreview =
+        ProtoBuf.decodeFromByteArray(CanvasDataPreview.serializer(), byteArray)
+
+    fun toData(
+        canvasType: CanvasType,
+        pageWidth: Float,
+        pageHeight: Float,
+        backgroundStyle: BackgroundStyle,
+        viewportScale: Float,
+        viewportOffsetX: Float,
+        viewportOffsetY: Float,
+        toolbarItems: List<com.alexdremov.notate.model.ToolbarItem>,
+        tagIds: List<String>,
+        tagDefinitions: List<Tag>,
+        regionSize: Float,
+        nextStrokeOrder: Long,
+        uuid: String? = null,
+    ): CanvasData =
+        CanvasData(
+            canvasType = canvasType,
+            pageWidth = pageWidth,
+            pageHeight = pageHeight,
+            backgroundStyle = backgroundStyle,
+            zoomLevel = viewportScale,
+            offsetX = viewportOffsetX,
+            offsetY = viewportOffsetY,
+            toolbarItems = toolbarItems,
+            tagIds = tagIds,
+            tagDefinitions = tagDefinitions,
+            regionSize = regionSize,
+            nextStrokeOrder = nextStrokeOrder,
+            uuid = uuid,
+        )
 }

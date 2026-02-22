@@ -44,6 +44,29 @@ data class CanvasData(
     val regionSize: Float = CanvasConfig.DEFAULT_REGION_SIZE,
     @ProtoNumber(16)
     val nextStrokeOrder: Long = 0,
+    @ProtoNumber(17)
+    val uuid: String? = null,
+)
+
+enum class LinkType {
+    INTERNAL_NOTE,
+    EXTERNAL_URL,
+}
+
+@Serializable
+data class LinkItemData(
+    @ProtoNumber(1) val label: String,
+    @ProtoNumber(2) val target: String, // UUID for internal, URI for external
+    @ProtoNumber(3) val x: Float,
+    @ProtoNumber(4) val y: Float,
+    @ProtoNumber(5) val width: Float,
+    @ProtoNumber(6) val height: Float,
+    @ProtoNumber(7) val zIndex: Float,
+    @ProtoNumber(8) val order: Long,
+    @ProtoNumber(9) val color: Int,
+    @ProtoNumber(10) val rotation: Float = 0f,
+    @ProtoNumber(11) val type: LinkType = LinkType.INTERNAL_NOTE,
+    @ProtoNumber(12) val fontSize: Float = 24f,
 )
 
 @Serializable
@@ -53,6 +76,7 @@ data class RegionProto(
     @ProtoNumber(3) val strokes: List<StrokeData> = emptyList(),
     @ProtoNumber(4) val images: List<CanvasImageData> = emptyList(),
     @ProtoNumber(5) val texts: List<TextItemData> = emptyList(),
+    @ProtoNumber(6) val links: List<LinkItemData> = emptyList(),
 )
 
 @Serializable
@@ -170,4 +194,6 @@ data class CanvasDataPreview(
     val tagIds: List<String> = emptyList(),
     @ProtoNumber(14)
     val tagDefinitions: List<Tag> = emptyList(),
+    @ProtoNumber(17)
+    val uuid: String? = null,
 )

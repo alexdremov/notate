@@ -51,6 +51,8 @@ fun FileBrowserScreen(
     items: List<FileSystemItem>,
     breadcrumbs: List<BreadcrumbItem>,
     allTags: List<Tag> = emptyList(),
+    disabledItemUuid: String? = null,
+    isReadOnly: Boolean = false,
     onBreadcrumbClick: (BreadcrumbItem) -> Unit,
     onItemClick: (FileSystemItem) -> Unit,
     onItemDelete: (FileSystemItem) -> Unit,
@@ -78,10 +80,20 @@ fun FileBrowserScreen(
                 modifier = Modifier.fillMaxSize(),
             ) {
                 items(items) {
+                    val isEnabled =
+                        if (it is CanvasItem && disabledItemUuid != null) {
+                            it.uuid != disabledItemUuid
+                        } else {
+                            true
+                        }
+
                     FileGridItem(
                         item = it,
+                        enabled = isEnabled,
                         onClick = { onItemClick(it) },
-                        onLongClick = { managingItemPath = it.path },
+                        onLongClick = {
+                            if (isEnabled && !isReadOnly) managingItemPath = it.path
+                        },
                     )
                 }
             }

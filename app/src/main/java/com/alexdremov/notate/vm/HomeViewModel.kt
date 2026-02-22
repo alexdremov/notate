@@ -788,5 +788,37 @@ class HomeViewModel(
         }
     }
 
+    suspend fun ensureUuid(item: CanvasItem): String? {
+        val existingUuid = item.uuid
+        if (existingUuid != null) return existingUuid
+
+        val repo = repository ?: return null
+        val newUuid =
+            withContext(Dispatchers.IO) {
+                try {
+                    repo.ensureUuid(item.path)
+                } catch (e: Exception) {
+                    Logger.e("HomeViewModel", "Failed to ensure UUID for ${item.path}", e)
+                    null
+                }
+            }
+
+        if (newUuid != null) {
+            // Update local state to reflect change immediately
+            val currentItems = _browserItems.value
+            val updatedItems =
+                currentItems.map {
+                    if (it.path == item.path && it is CanvasItem) {
+                        it.copy(uuid = newUuid)
+                    } else {
+                        it
+                    }
+                }
+            _browserItems.value = updatedItems
+        }
+
+        return newUuid
+    }
+
     fun isAtTopLevel(): Boolean = _currentProject.value == null
 }

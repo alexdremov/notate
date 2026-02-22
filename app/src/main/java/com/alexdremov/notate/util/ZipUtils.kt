@@ -65,6 +65,7 @@ object ZipUtils {
     ) {
         // Track processed files to know what remains to be added
         val processedRelPaths = HashSet<String>()
+        Logger.d("ZipUtils", "Starting incremental zip from $sourceDir to $targetZip (Base: $baseZip)")
 
         ZipOutputStream(BufferedOutputStream(FileOutputStream(targetZip))).use { zos ->
             // 1. Copy unchanged entries from Base ZIP
@@ -77,18 +78,31 @@ object ZipUtils {
                             val relPath = entry.name
                             val localFile = File(sourceDir, relPath)
 
-                            // Check if local file exists and matches timestamp (within 2s DOS precision)
+                            // Check if local file exists and matches timestamp (within 2s DOS precision) AND size
                             if (localFile.exists() && !localFile.isDirectory) {
                                 val timeDiff = kotlin.math.abs(localFile.lastModified() - entry.time)
-                                if (timeDiff < 2000) {
+                                val sizeMatch = localFile.length() == entry.size
+
+                                if (relPath == "manifest.bin") {
+                                    Logger.d(
+                                        "ZipUtils",
+                                        "Checking manifest.bin: timeDiff=$timeDiff, sizeMatch=$sizeMatch (Local: ${localFile.length()} vs Entry: ${entry.size})",
+                                    )
+                                }
+
+                                if (timeDiff < 2000 && sizeMatch) {
                                     // Match! Copy from ZIP.
                                     // Note: Standard API re-compresses, but this saves Random IOPS on the source dir.
                                     val newEntry = ZipEntry(relPath)
-                                    // Copy metadata if needed?
+                                    newEntry.time = entry.time // Preserve original timestamp
                                     zos.putNextEntry(newEntry)
                                     zip.getInputStream(entry).use { it.copyTo(zos) }
                                     zos.closeEntry()
                                     processedRelPaths.add(relPath)
+                                } else {
+                                    if (relPath == "manifest.bin") {
+                                        Logger.d("ZipUtils", "manifest.bin CHANGED. Will re-pack.")
+                                    }
                                 }
                             }
                         }
@@ -102,6 +116,7 @@ object ZipUtils {
             // 2. Write new or modified files from Source Dir
             zipRecursiveIncremental(sourceDir, sourceDir, zos, processedRelPaths)
         }
+        Logger.d("ZipUtils", "Incremental zip complete.")
     }
 
     private fun zipRecursive(

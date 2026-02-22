@@ -1,5 +1,6 @@
 package com.alexdremov.notate.ui.controller
 
+import com.alexdremov.notate.data.LinkType
 import com.alexdremov.notate.model.EraserType
 import com.alexdremov.notate.model.Stroke
 
@@ -102,6 +103,23 @@ interface CanvasController {
     suspend fun updateText(
         oldItem: com.alexdremov.notate.model.TextItem,
         newText: String,
+    )
+
+    suspend fun addLink(
+        label: String,
+        target: String,
+        type: LinkType,
+        x: Float,
+        y: Float,
+        fontSize: Float,
+        color: Int,
+    )
+
+    suspend fun updateLink(
+        oldItem: com.alexdremov.notate.model.LinkItem,
+        label: String,
+        target: String,
+        type: LinkType,
     )
 
     /**

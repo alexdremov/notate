@@ -17,6 +17,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
@@ -39,6 +40,7 @@ fun FileGridItem(
     item: FileSystemItem,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
+    enabled: Boolean = true,
 ) {
     Card(
         modifier =
@@ -47,7 +49,9 @@ fun FileGridItem(
                 .aspectRatio(0.85f)
                 .padding(8.dp)
                 .clip(RoundedCornerShape(12.dp))
+                .alpha(if (enabled) 1f else 0.5f)
                 .combinedClickable(
+                    enabled = enabled,
                     onClick = onClick,
                     onLongClick = onLongClick,
                 ),

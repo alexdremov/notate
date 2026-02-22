@@ -201,6 +201,12 @@ object StrokeRenderer {
                     TextRenderer.draw(canvas, item, context, paint)
                     if (xfermode != null) paint.xfermode = null
                 }
+
+                is com.alexdremov.notate.model.LinkItem -> {
+                    if (xfermode != null) paint.xfermode = android.graphics.PorterDuffXfermode(xfermode)
+                    LinkRenderer.draw(canvas, item, context, paint, scale)
+                    if (xfermode != null) paint.xfermode = null
+                }
             }
 
             if (debug || CanvasConfig.DEBUG_SHOW_BOUNDING_BOX) {

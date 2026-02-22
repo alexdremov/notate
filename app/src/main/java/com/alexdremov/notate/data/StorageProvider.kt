@@ -58,6 +58,9 @@ interface StorageProvider {
     fun walkFiles(visitor: (String, String, Long) -> Unit)
 
     fun getFileMetadata(path: String): CanvasDataPreview?
+
+    // Support for ensuring UUID exists (migration)
+    fun ensureUuid(path: String): String? = null
 }
 
 internal object StorageUtils {
@@ -93,6 +96,7 @@ internal object StorageUtils {
 
                 if (read >= 4 && signature[0] == 0x50.toByte() && signature[1] == 0x4B.toByte()) {
                     // ZIP format
+                    // Logger.d("Metadata", "Extracting from ZIP: $fileName")
                     extractMetadataZip(stream)
                 } else if (read > 0 && signature[0] == 0x7B.toByte()) {
                     // JSON format
@@ -116,10 +120,12 @@ internal object StorageUtils {
                 if (entry.name == "manifest.bin") {
                     // Found manifest, parse it as protobuf
                     // ZipInputStream reads until end of entry, which is what we want
+                    // Logger.d("Metadata", "Found manifest.bin")
                     return parseProtobufMetadata(zipStream)
                 }
                 entry = zipStream.nextEntry
             }
+            // Logger.w("Metadata", "manifest.bin not found in ZIP")
             null
         } catch (e: Exception) {
             Logger.e("Metadata", "Failed to extract metadata from ZIP", e)
@@ -135,7 +141,11 @@ internal object StorageUtils {
             val header = String(buffer, 0, read, Charsets.UTF_8)
             val match = Regex("""thumbnail"\s*:\s*"([^"]+)""").find(header)
             val thumbnail = match?.groupValues?.get(1)
-            CanvasDataPreview(thumbnail = thumbnail)
+
+            val uuidMatch = Regex("""uuid"\s*:\s*"([^"]+)""").find(header)
+            val uuid = uuidMatch?.groupValues?.get(1)
+
+            CanvasDataPreview(thumbnail = thumbnail, uuid = uuid)
         } catch (e: Exception) {
             Logger.e("Metadata", "Failed to extract metadata from JSON", e)
             null
@@ -145,6 +155,7 @@ internal object StorageUtils {
     private fun parseProtobufMetadata(stream: InputStream): CanvasDataPreview? =
         try {
             var thumbnail: String? = null
+            var uuid: String? = null
             val tagIds = mutableListOf<String>()
             val tagDefinitions = mutableListOf<Tag>()
 
@@ -200,12 +211,26 @@ internal object StorageUtils {
                         }
                     }
 
+                    17 -> { // uuid
+                        if (wireType != 2) {
+                            skipField(stream, wireType)
+                        } else {
+                            val length = readVarint(stream)
+                            if (length > 0) {
+                                val bytes = ByteArray(length.toInt())
+                                readFully(stream, bytes)
+                                uuid = String(bytes, Charsets.UTF_8)
+                                Logger.d("Metadata", "Parsed UUID: $uuid")
+                            }
+                        }
+                    }
+
                     else -> {
                         skipField(stream, wireType)
                     }
                 }
             }
-            CanvasDataPreview(thumbnail, tagIds, tagDefinitions)
+            CanvasDataPreview(thumbnail, tagIds, tagDefinitions, uuid)
         } catch (e: Exception) {
             Logger.e(
                 "Metadata",
@@ -220,6 +245,7 @@ internal object StorageUtils {
         outputStream: OutputStream,
         newTagIds: List<String>,
         newTagDefinitions: List<Tag>,
+        newUuid: String? = null,
     ) {
         while (true) {
             val tag = readVarint(inputStream)
@@ -230,6 +256,9 @@ internal object StorageUtils {
 
             if (fieldNumber == 13 || fieldNumber == 14) {
                 // Skip this field
+                skipField(inputStream, wireType)
+            } else if (fieldNumber == 17 && newUuid != null) {
+                // Skip existing UUID if we are setting a new one
                 skipField(inputStream, wireType)
             } else {
                 // Write tag
@@ -282,6 +311,16 @@ internal object StorageUtils {
         for (def in newTagDefinitions) {
             val bytes = ProtoBuf.encodeToByteArray(Tag.serializer(), def)
             writeVarint(outputStream, tagDefTag.toLong())
+            writeVarint(outputStream, bytes.size.toLong())
+            outputStream.write(bytes)
+        }
+
+        // Append new UUID if provided
+        if (newUuid != null) {
+            val uuidFieldNumber = 17
+            val uuidTag = (uuidFieldNumber shl 3) or 2
+            val bytes = newUuid.toByteArray(Charsets.UTF_8)
+            writeVarint(outputStream, uuidTag.toLong())
             writeVarint(outputStream, bytes.size.toLong())
             outputStream.write(bytes)
         }
@@ -464,6 +503,7 @@ class LocalStorageProvider(
                                 thumbnail = metadata?.thumbnail,
                                 tagIds = metadata?.tagIds ?: emptyList(),
                                 embeddedTags = metadata?.tagDefinitions ?: emptyList(),
+                                uuid = metadata?.uuid,
                             )
                         }
 
@@ -698,6 +738,56 @@ class LocalStorageProvider(
         val file = File(path)
         if (!file.exists()) return null
         return StorageUtils.extractMetadata(file.name, { file.inputStream() }, file.length())
+    }
+
+    override fun ensureUuid(path: String): String? {
+        val file = File(path)
+        if (!file.exists()) return null
+
+        // 1. Check existing (fast)
+        val meta = getFileMetadata(path)
+        if (meta?.uuid != null) return meta.uuid
+
+        // 2. Generate new
+        val newUuid =
+            java.util.UUID
+                .randomUUID()
+                .toString()
+        Logger.i("Storage", "ensureUuid: Generating new UUID $newUuid for $path")
+
+        // 3. Write
+        val lock =
+            try {
+                com.alexdremov.notate.data.io.FileLockManager
+                    .acquire(path)
+            } catch (e: Exception) {
+                Logger.w("Storage", "ensureUuid: Failed to acquire lock for $path")
+                return null
+            }
+
+        val tempFile = File(file.parent, file.name + ".tmp")
+
+        return try {
+            file.inputStream().use { input ->
+                tempFile.outputStream().use { output ->
+                    StorageUtils.createUpdatedProtobuf(
+                        input,
+                        output,
+                        meta?.tagIds ?: emptyList(),
+                        meta?.tagDefinitions ?: emptyList(),
+                        newUuid,
+                    )
+                }
+            }
+            Files.move(tempFile.toPath(), file.toPath(), StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
+            newUuid
+        } catch (e: Exception) {
+            Logger.e("Storage", "Failed to ensure UUID", e)
+            tempFile.delete()
+            null
+        } finally {
+            lock.close()
+        }
     }
 }
 
@@ -1005,5 +1095,49 @@ class SafStorageProvider(
                 null
             }
         })
+    }
+
+    override fun ensureUuid(path: String): String? {
+        val uri = Uri.parse(path)
+        val file = DocumentFile.fromSingleUri(context, uri) ?: return null
+        if (!file.exists()) return null
+
+        // 1. Check existing
+        val meta = getFileMetadata(path)
+        if (meta?.uuid != null) return meta.uuid
+
+        // 2. Generate new
+        val newUuid =
+            java.util.UUID
+                .randomUUID()
+                .toString()
+        Logger.i("Storage", "ensureUuid (SAF): Generating new UUID $newUuid for $path")
+
+        // 3. Write
+        val tempFile = File.createTempFile("saf_update_uuid", ".tmp", context.cacheDir)
+        return try {
+            context.contentResolver.openInputStream(uri)?.use { input ->
+                tempFile.outputStream().use { output ->
+                    StorageUtils.createUpdatedProtobuf(
+                        input,
+                        output,
+                        meta?.tagIds ?: emptyList(),
+                        meta?.tagDefinitions ?: emptyList(),
+                        newUuid,
+                    )
+                }
+            }
+            context.contentResolver.openOutputStream(uri, "wt")?.use { output ->
+                tempFile.inputStream().use { input ->
+                    input.copyTo(output)
+                }
+            }
+            newUuid
+        } catch (e: Exception) {
+            Logger.e("Storage", "Failed to ensure UUID SAF", e)
+            null
+        } finally {
+            tempFile.delete()
+        }
     }
 }

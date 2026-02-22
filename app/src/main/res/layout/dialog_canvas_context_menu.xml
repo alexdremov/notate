@@ -38,4 +38,23 @@
         android:textSize="16sp"
         android:textStyle="bold" />
 
+    <View
+        android:layout_width="2dp"
+        android:layout_height="match_parent"
+        android:layout_marginVertical="8dp"
+        android:layout_marginHorizontal="2dp"
+        android:background="@android:color/black" />
+
+    <TextView
+        android:id="@+id/btn_insert_link"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:background="?attr/selectableItemBackground"
+        android:paddingHorizontal="16dp"
+        android:paddingVertical="12dp"
+        android:text="Link"
+        android:textColor="@android:color/black"
+        android:textSize="16sp"
+        android:textStyle="bold" />
+
 </LinearLayout>

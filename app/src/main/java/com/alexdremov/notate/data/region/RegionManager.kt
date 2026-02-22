@@ -9,9 +9,11 @@ import com.alexdremov.notate.BuildConfig
 import com.alexdremov.notate.config.CanvasConfig
 import com.alexdremov.notate.data.CanvasImageData
 import com.alexdremov.notate.data.CanvasSerializer
+import com.alexdremov.notate.data.LinkItemData
 import com.alexdremov.notate.data.StrokeData
 import com.alexdremov.notate.model.CanvasImage
 import com.alexdremov.notate.model.CanvasItem
+import com.alexdremov.notate.model.LinkItem
 import com.alexdremov.notate.model.Stroke
 import com.alexdremov.notate.util.Logger
 import com.alexdremov.notate.util.PerformanceProfiler
@@ -587,6 +589,12 @@ class RegionManager(
                                     bytes = ProtoBuf.encodeToByteArray(data)
                                 }
 
+                                is LinkItem -> {
+                                    type = 3
+                                    val data = CanvasSerializer.toLinkItemData(item)
+                                    bytes = ProtoBuf.encodeToByteArray(data)
+                                }
+
                                 else -> {
                                     return@forEach
                                 }
@@ -695,7 +703,27 @@ class RegionManager(
                                 rotation = data.rotation,
                                 opacity = data.opacity,
                             )
+                    } else if (type == 3) {
+                        val data = ProtoBuf.decodeFromByteArray<LinkItemData>(bytes)
+                        val logical = RectF(data.x, data.y, data.x + data.width, data.y + data.height)
+                        val aabb =
+                            com.alexdremov.notate.util.StrokeGeometry
+                                .computeRotatedBounds(logical, data.rotation)
+                        item =
+                            LinkItem(
+                                label = data.label,
+                                target = data.target,
+                                type = data.type,
+                                fontSize = data.fontSize,
+                                color = data.color,
+                                logicalBounds = logical,
+                                bounds = aabb,
+                                zIndex = data.zIndex,
+                                order = data.order,
+                                rotation = data.rotation,
+                            )
                     }
+
                     if (item != null) {
                         val transformed = transformItem(item, transform)
                         buffer.add(transformed)
@@ -847,6 +875,16 @@ class RegionManager(
                         .computeRotatedBounds(newLogical, newRotation)
 
                 item.copy(logicalBounds = newLogical, bounds = finalAabb, rotation = newRotation)
+            }
+
+            is LinkItem -> {
+                val (newLogical, newRotation, newAabb) =
+                    com.alexdremov.notate.util.StrokeGeometry.transformItemLogicalBounds(
+                        item.logicalBounds,
+                        item.rotation,
+                        transform,
+                    )
+                item.copy(logicalBounds = newLogical, bounds = newAabb, rotation = newRotation)
             }
 
             else -> {

@@ -1,7 +1,6 @@
 package com.alexdremov.notate.ui.dialog
 
 import android.content.Context
-import android.graphics.RectF
 import android.view.Gravity
 import android.view.LayoutInflater
 import android.view.View
@@ -13,16 +12,17 @@ import com.alexdremov.notate.util.EpdFastModeController
 import com.onyx.android.sdk.api.device.epd.EpdController
 import com.onyx.android.sdk.api.device.epd.UpdateMode
 
-class PasteActionPopup(
+class CanvasContextMenu(
     private val context: Context,
     private val onPaste: () -> Unit,
     private val onPasteImage: () -> Unit,
+    private val onInsertLink: () -> Unit,
 ) {
     private val popupWindow: PopupWindow
     private val view: View
 
     init {
-        view = LayoutInflater.from(context).inflate(R.layout.dialog_paste_action, null)
+        view = LayoutInflater.from(context).inflate(R.layout.dialog_canvas_context_menu, null)
         popupWindow =
             PopupWindow(
                 view,
@@ -40,6 +40,11 @@ class PasteActionPopup(
 
         view.findViewById<View>(R.id.btn_paste_image).setOnClickListener {
             onPasteImage()
+            dismiss()
+        }
+
+        view.findViewById<View>(R.id.btn_insert_link).setOnClickListener {
+            onInsertLink()
             dismiss()
         }
     }
