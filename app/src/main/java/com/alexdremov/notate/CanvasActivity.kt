@@ -2,8 +2,14 @@
 
 package com.alexdremov.notate
 
+import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
+import android.view.Gravity
 import android.view.ViewGroup
+import android.webkit.WebView
+import android.webkit.WebViewClient
+import android.widget.FrameLayout
 import android.widget.LinearLayout
 import androidx.activity.addCallback
 import androidx.activity.result.contract.ActivityResultContracts
@@ -18,21 +24,26 @@ import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.ProcessLifecycleOwner
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
+import com.alexdremov.notate.data.LinkType
 import com.alexdremov.notate.databinding.ActivityMainBinding
 import com.alexdremov.notate.export.CanvasExportCoordinator
 import com.alexdremov.notate.model.ToolType
 import com.alexdremov.notate.model.ToolbarItem
+import com.alexdremov.notate.ui.OnyxCanvasView
 import com.alexdremov.notate.ui.SettingsSidebarController
 import com.alexdremov.notate.ui.SidebarCoordinator
 import com.alexdremov.notate.ui.ToolbarCoordinator
 import com.alexdremov.notate.ui.export.ExportAction
 import com.alexdremov.notate.ui.toolbar.MainToolbar
+import com.alexdremov.notate.ui.view.FloatingWindowView
 import com.alexdremov.notate.util.Logger
 import com.alexdremov.notate.vm.DrawingViewModel
 import com.onyx.android.sdk.api.device.epd.EpdController
 import com.onyx.android.sdk.api.device.epd.UpdateMode
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -54,12 +65,33 @@ class CanvasActivity : AppCompatActivity() {
 
     // Repository retained for SyncManager, but session management is delegated to ViewModel
     private lateinit var canvasRepository: com.alexdremov.notate.data.CanvasRepository
+    private lateinit var projectRepository: com.alexdremov.notate.data.ProjectRepository
     private lateinit var syncManager: com.alexdremov.notate.data.SyncManager
 
     private var autoSaveJob: Job? = null
 
     private var currentCanvasPath: String? = null
     private var isFixedPageState: androidx.compose.runtime.MutableState<Boolean>? = null
+
+    // Floating Window State
+    private var floatingWindow: FloatingWindowView? = null
+    private var floatingSession: com.alexdremov.notate.data.CanvasSession? = null
+
+    private var pendingLinkCallback: ((name: String, uuid: String) -> Unit)? = null
+
+    private val notePickerLauncher =
+        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+            if (result.resultCode == RESULT_OK) {
+                val data = result.data
+                val name = data?.getStringExtra("NOTE_NAME")
+                val uuid = data?.getStringExtra("NOTE_UUID")
+
+                if (name != null && uuid != null) {
+                    pendingLinkCallback?.invoke(name, uuid)
+                }
+            }
+            pendingLinkCallback = null
+        }
 
     private val exportLauncher =
         registerForActivityResult(ActivityResultContracts.CreateDocument("application/pdf")) { uri ->
@@ -81,7 +113,7 @@ class CanvasActivity : AppCompatActivity() {
 
                             val uriToUse =
                                 if (importedPath != null) {
-                                    android.net.Uri.parse(importedPath)
+                                    Uri.parse(importedPath)
                                 } else {
                                     try {
                                         contentResolver.takePersistableUriPermission(
@@ -186,6 +218,9 @@ class CanvasActivity : AppCompatActivity() {
         canvasRepository =
             com.alexdremov.notate.data
                 .CanvasRepository(this)
+        projectRepository =
+            com.alexdremov.notate.data
+                .ProjectRepository(this)
         syncManager =
             com.alexdremov.notate.data
                 .SyncManager(this, canvasRepository)
@@ -395,6 +430,42 @@ class CanvasActivity : AppCompatActivity() {
             imagePickerLauncher.launch(arrayOf("image/*"))
         }
 
+        binding.canvasView.onBrowseFiles = { callback ->
+            pendingLinkCallback = callback
+
+            lifecycleScope.launch {
+                val currentPath = currentCanvasPath
+                val projectId =
+                    if (currentPath != null) {
+                        withContext(Dispatchers.IO) {
+                            syncManager.findProjectForFile(currentPath)
+                        }
+                    } else {
+                        null
+                    }
+
+                val currentUuid =
+                    viewModel.currentSession.value
+                        ?.metadata
+                        ?.uuid
+
+                val intent =
+                    Intent(this@CanvasActivity, NotePickerActivity::class.java).apply {
+                        if (projectId != null) {
+                            putExtra("LOCKED_PROJECT_ID", projectId)
+                        }
+                        if (currentUuid != null) {
+                            putExtra("DISABLED_ITEM_UUID", currentUuid)
+                        }
+                    }
+                notePickerLauncher.launch(intent)
+            }
+        }
+
+        binding.canvasView.onLinkActivated = { link ->
+            handleLinkActivation(link)
+        }
+
         // Setup Progress Dialog
         val progressView = layoutInflater.inflate(R.layout.dialog_progress, null)
         val progressDialogBuilder =
@@ -487,6 +558,176 @@ class CanvasActivity : AppCompatActivity() {
         setupAutoSave()
     }
 
+    private fun handleLinkActivation(link: com.alexdremov.notate.model.LinkItem) {
+        // Close existing window if any
+        floatingWindow?.onClose?.invoke()
+
+        floatingWindow =
+            FloatingWindowView(this).apply {
+                setTitle(link.label)
+                onClose = {
+                    // Save state
+                    com.alexdremov.notate.data.PreferencesManager.saveFloatingWindowRect(
+                        this@CanvasActivity,
+                        this.x.toInt(),
+                        this.y.toInt(),
+                        this.width,
+                        this.height,
+                    )
+
+                    (this.parent as? ViewGroup)?.removeView(this)
+                    floatingWindow = null
+                    closeFloatingSession()
+                }
+            }
+
+        // Restore State or Default
+        val savedRect =
+            com.alexdremov.notate.data.PreferencesManager
+                .getFloatingWindowRect(this)
+        val screenW = binding.root.width.takeIf { it > 0 } ?: resources.displayMetrics.widthPixels
+        val screenH = binding.root.height.takeIf { it > 0 } ?: resources.displayMetrics.heightPixels
+
+        val params: FrameLayout.LayoutParams
+
+        if (savedRect != null) {
+            var x = savedRect[0]
+            var y = savedRect[1]
+            var w = savedRect[2]
+            var h = savedRect[3]
+
+            // Clamp Size
+            w = w.coerceIn(300, screenW)
+            h = h.coerceIn(300, screenH)
+
+            // Clamp Position (Ensure header is reachable and window is partially visible)
+            // x: allow dragging off-screen but keep 50px visible
+            x = x.coerceIn(-w + 100, screenW - 100)
+            // y: keep top within screen (0) to screenH - 100
+            y = y.coerceIn(0, screenH - 100)
+
+            params = FrameLayout.LayoutParams(w, h)
+            params.gravity = Gravity.TOP or Gravity.START
+            floatingWindow?.translationX = x.toFloat()
+            floatingWindow?.translationY = y.toFloat()
+        } else {
+            // Default Center
+            val defaultW = 1000.coerceAtMost(screenW - 50)
+            val defaultH = 800.coerceAtMost(screenH - 50)
+
+            params = FrameLayout.LayoutParams(defaultW, defaultH)
+            params.gravity = Gravity.TOP or Gravity.START
+
+            val initialX = (screenW - defaultW) / 2
+            val initialY = (screenH - defaultH) / 2
+            floatingWindow?.translationX = initialX.toFloat()
+            floatingWindow?.translationY = initialY.toFloat()
+        }
+
+        floatingWindow?.layoutParams = params
+
+        // Add to root view (CoordinatorLayout/FrameLayout)
+        (binding.root as? ViewGroup)?.addView(floatingWindow)
+
+        when (link.type) {
+            LinkType.EXTERNAL_URL -> {
+                val webView = WebView(this)
+                webView.webViewClient = WebViewClient()
+                webView.settings.javaScriptEnabled = true
+                webView.loadUrl(link.target)
+                floatingWindow?.setContentView(webView)
+            }
+
+            LinkType.INTERNAL_NOTE -> {
+                lifecycleScope.launch {
+                    val targetUuid = link.target
+                    Logger.d("LinkResolution", "Resolving UUID: $targetUuid")
+
+                    val path =
+                        withContext(Dispatchers.IO) {
+                            // 1. Try default internal repository
+                            var foundPath = projectRepository.getPathForUuid(targetUuid)
+                            if (foundPath == null) {
+                                Logger.d("LinkResolution", "Not found in default cache, refreshing index...")
+                                projectRepository.refreshIndex()
+                                foundPath = projectRepository.getPathForUuid(targetUuid)
+                            }
+
+                            if (foundPath == null) {
+                                val projects =
+                                    com.alexdremov.notate.data.PreferencesManager
+                                        .getProjects(this@CanvasActivity)
+                                Logger.d("LinkResolution", "Searching ${projects.size} external projects")
+
+                                for (project in projects) {
+                                    val repo =
+                                        com.alexdremov.notate.data
+                                            .ProjectRepository(this@CanvasActivity, project.uri)
+                                    foundPath = repo.getPathForUuid(targetUuid)
+
+                                    if (foundPath == null) {
+                                        Logger.d("LinkResolution", "Refreshing index for project: ${project.name}")
+                                        repo.refreshIndex()
+                                        foundPath = repo.getPathForUuid(targetUuid)
+                                    }
+
+                                    if (foundPath != null) {
+                                        Logger.d("LinkResolution", "Found in project: ${project.name}")
+                                        break
+                                    }
+                                }
+                            }
+                            foundPath
+                        }
+
+                    if (path != null) {
+                        Logger.d("LinkResolution", "Resolved path: $path")
+                        openFloatingCanvas(path)
+                    } else {
+                        Logger.e("LinkResolution", "Failed to resolve note with UUID: $targetUuid")
+                        android.widget.Toast
+                            .makeText(this@CanvasActivity, "Note not found", android.widget.Toast.LENGTH_SHORT)
+                            .show()
+                        floatingWindow?.onClose?.invoke()
+                    }
+                }
+            }
+        }
+    }
+
+    private suspend fun openFloatingCanvas(path: String) {
+        val session =
+            withContext(Dispatchers.IO) {
+                canvasRepository.openCanvasSession(path)
+            }
+
+        if (session != null) {
+            floatingSession = session
+            val canvasView = OnyxCanvasView(this)
+
+            // Initialize
+            canvasView.getModel().initializeSession(session.regionManager)
+            canvasView.loadMetadata(session.metadata)
+            canvasView.setReadOnly(true)
+
+            floatingWindow?.setContentView(canvasView)
+        } else {
+            android.widget.Toast
+                .makeText(this@CanvasActivity, "Failed to load note", android.widget.Toast.LENGTH_SHORT)
+                .show()
+            floatingWindow?.onClose?.invoke()
+        }
+    }
+
+    private fun closeFloatingSession() {
+        floatingSession?.let { session ->
+            lifecycleScope.launch(Dispatchers.IO) {
+                canvasRepository.releaseCanvasSession(session)
+            }
+            floatingSession = null
+        }
+    }
+
     private fun setupAutoSave() {
         binding.canvasView.onContentChanged = {
             scheduleAutoSave()
@@ -548,6 +789,7 @@ class CanvasActivity : AppCompatActivity() {
     override fun onDestroy() {
         super.onDestroy()
         autoSaveJob?.cancel()
+        closeFloatingSession()
         // Session cleanup is handled by ViewModel or explicit close in onBackPressed
     }
 

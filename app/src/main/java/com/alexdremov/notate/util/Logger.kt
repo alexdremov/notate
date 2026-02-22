@@ -53,9 +53,9 @@ object Logger {
         tag: String,
         msg: String,
     ) {
-        if (CanvasConfig.DEBUG_SHOW_TILES || CanvasConfig.DEBUG_SHOW_REGIONS || CanvasConfig.DEBUG_ENABLE_PROFILING) {
-            Log.d(formatTag(tag), msg)
-        }
+        // Unconditional logging for debugging
+        Log.d(formatTag(tag), msg)
+
         if (minLogLevelToShow.priority <= Level.DEBUG.priority) {
             _userEvents.tryEmit(UserEvent(msg, Level.DEBUG))
         }

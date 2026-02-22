@@ -479,13 +479,28 @@ class CanvasRepository(
                     // 1. Flush RegionManager (writes to session dir)
                     session.regionManager.saveAll()
 
+                    // Ensure UUID exists
+                    val currentMeta = session.metadata
+                    val metadataWithUuid =
+                        if (currentMeta.uuid == null) {
+                            val newUuid =
+                                java.util.UUID
+                                    .randomUUID()
+                                    .toString()
+                            Logger.i("CanvasRepository", "Generating NEW UUID for canvas: $newUuid")
+                            currentMeta.copy(uuid = newUuid)
+                        } else {
+                            Logger.d("CanvasRepository", "Using existing UUID for canvas: ${currentMeta.uuid}")
+                            currentMeta
+                        }
+
                     // 2. Generate Thumbnail
-                    val thumbBase64 = ThumbnailGenerator.generateBase64(session.regionManager, session.metadata, context)
+                    val thumbBase64 = ThumbnailGenerator.generateBase64(session.regionManager, metadataWithUuid, context)
                     val metadataWithThumb =
                         if (thumbBase64 != null) {
-                            session.metadata.copy(thumbnail = thumbBase64)
+                            metadataWithUuid.copy(thumbnail = thumbBase64)
                         } else {
-                            session.metadata
+                            metadataWithUuid
                         }
                     session.updateMetadata(metadataWithThumb)
 
@@ -493,6 +508,7 @@ class CanvasRepository(
                     val manifestFile = File(session.sessionDir, "manifest.bin")
                     val metaBytes = ProtoBuf.encodeToByteArray(CanvasData.serializer(), metadataWithThumb)
                     manifestFile.writeBytes(metaBytes)
+                    Logger.d("CanvasRepository", "Wrote manifest.bin, size=${metaBytes.size}, UUID=${metadataWithThumb.uuid}")
 
                     if (!commitToZip) {
                         Logger.d("CanvasRepository", "Session flushed (no-zip). ManifestTime=${formatTime(manifestFile.lastModified())}")

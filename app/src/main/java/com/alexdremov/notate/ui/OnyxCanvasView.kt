@@ -113,6 +113,7 @@ class OnyxCanvasView
         private var twoFingerPointerId2 = -1
 
         private var currentTool: PenTool = PenTool.defaultPens()[0]
+        private var isReadOnly = false
 
         private val exclusionRects = ArrayList<Rect>()
 
@@ -123,10 +124,12 @@ class OnyxCanvasView
         var minimapDrawer: com.alexdremov.notate.ui.render.MinimapDrawer? = null
 
         var onRequestInsertImage: (() -> Unit)? = null
+        var onBrowseFiles: ((onResult: (name: String, uuid: String) -> Unit) -> Unit)? = null
+        var onLinkActivated: ((com.alexdremov.notate.model.LinkItem) -> Unit)? = null
 
         private var actionPopup: com.alexdremov.notate.ui.dialog.SelectionActionPopup? = null
 
-        private var pastePopup: com.alexdremov.notate.ui.dialog.PasteActionPopup? = null
+        private var contextMenu: com.alexdremov.notate.ui.dialog.CanvasContextMenu? = null
         private lateinit var gestureDetector: android.view.GestureDetector
 
         init {
@@ -218,7 +221,7 @@ class OnyxCanvasView
                     context,
                     object : android.view.GestureDetector.SimpleOnGestureListener() {
                         override fun onLongPress(e: MotionEvent) {
-                            if (viewportInteractor.isBusy()) return
+                            if (viewportInteractor.isBusy() || isReadOnly) return
 
                             viewScope.launch {
                                 // Compute fresh inverse to ensure hit test is accurate
@@ -238,16 +241,17 @@ class OnyxCanvasView
                                     selectionInteractor.onLongPressDragStart(e.x, e.y)
                                     performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
                                 } else {
-                                    // Show Contextual Menu (Paste / Insert Image)
-                                    pastePopup =
-                                        com.alexdremov.notate.ui.dialog.PasteActionPopup(
+                                    // Show Contextual Menu
+                                    contextMenu =
+                                        com.alexdremov.notate.ui.dialog.CanvasContextMenu(
                                             context,
                                             onPaste = {
                                                 viewScope.launch { canvasController.paste(worldX, worldY) }
                                             },
                                             onPasteImage = { onRequestInsertImage?.invoke() },
+                                            onInsertLink = { showLinkDialog(worldX, worldY) },
                                         )
-                                    pastePopup?.show(this@OnyxCanvasView, e.x, e.y)
+                                    contextMenu?.show(this@OnyxCanvasView, e.x, e.y)
                                     performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
                                 }
                             }
@@ -263,6 +267,13 @@ class OnyxCanvasView
                                 val worldY = pts[1]
 
                                 val item = canvasController.getItemAt(worldX, worldY)
+
+                                if (item is com.alexdremov.notate.model.LinkItem) {
+                                    onLinkActivated?.invoke(item)
+                                    return@launch
+                                }
+
+                                if (isReadOnly) return@launch
 
                                 if (currentTool.type == ToolType.TEXT) {
                                     if (item is TextItem) {
@@ -282,6 +293,33 @@ class OnyxCanvasView
                         }
                     },
                 )
+        }
+
+        private fun showLinkDialog(
+            x: Float,
+            y: Float,
+        ) {
+            val dialog =
+                com.alexdremov.notate.ui.dialog.InsertLinkDialog(
+                    context,
+                    onConfirm = { label, target, type ->
+                        viewScope.launch {
+                            canvasController.addLink(
+                                label,
+                                target,
+                                type,
+                                x,
+                                y,
+                                fontSize = 24f, // Default font size
+                                color = Color.BLACK,
+                            )
+                        }
+                    },
+                    onBrowse = { callback ->
+                        onBrowseFiles?.invoke(callback)
+                    },
+                )
+            dialog.show()
         }
 
         private fun showTextEditor(
@@ -318,7 +356,7 @@ class OnyxCanvasView
             val isStylus = event.getToolType(0) == MotionEvent.TOOL_TYPE_STYLUS
             if (isStylus) return false // Handled by RawInputCallback
 
-            detectTwoFingerTap(event)
+            if (!isReadOnly) detectTwoFingerTap(event)
 
             // 1. Gesture Detector (Long Press, Tap)
             if (gestureDetector.onTouchEvent(event)) {
@@ -326,19 +364,21 @@ class OnyxCanvasView
             }
 
             // 2. Selection Interaction (High Priority)
-            val action = event.actionMasked
-            if (action == MotionEvent.ACTION_DOWN) {
-                if (selectionInteractor.onDown(event.x, event.y)) {
-                    return true
+            if (!isReadOnly) {
+                val action = event.actionMasked
+                if (action == MotionEvent.ACTION_DOWN) {
+                    if (selectionInteractor.onDown(event.x, event.y)) {
+                        return true
+                    }
+                } else if (action == MotionEvent.ACTION_POINTER_DOWN) {
+                    selectionInteractor.onPointerDown(event)
+                } else if (action == MotionEvent.ACTION_MOVE) {
+                    if (selectionInteractor.onMove(event)) {
+                        return true
+                    }
+                } else if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) {
+                    selectionInteractor.onUp()
                 }
-            } else if (action == MotionEvent.ACTION_POINTER_DOWN) {
-                selectionInteractor.onPointerDown(event)
-            } else if (action == MotionEvent.ACTION_MOVE) {
-                if (selectionInteractor.onMove(event)) {
-                    return true
-                }
-            } else if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) {
-                selectionInteractor.onUp()
             }
 
             // 3. Viewport Interaction (Pan/Zoom) - Only if selection didn't consume
@@ -627,6 +667,14 @@ class OnyxCanvasView
             }
         }
 
+        fun setReadOnly(readOnly: Boolean) {
+            isReadOnly = readOnly
+            setDrawingEnabled(!readOnly)
+            if (readOnly) {
+                viewScope.launch { canvasController.clearSelection() }
+            }
+        }
+
         fun setExclusionRects(rects: List<Rect>) {
             exclusionRects.clear()
             exclusionRects.addAll(rects)
@@ -693,7 +741,7 @@ class OnyxCanvasView
 
         fun dismissActionPopup() {
             actionPopup?.dismiss()
-            pastePopup?.dismiss()
+            contextMenu?.dismiss()
         }
 
         fun refreshScreen() {

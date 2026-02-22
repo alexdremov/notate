@@ -3,6 +3,7 @@ package com.alexdremov.notate.data.region
 import android.graphics.RectF
 import com.alexdremov.notate.data.CanvasImageData
 import com.alexdremov.notate.data.CanvasSerializer
+import com.alexdremov.notate.data.LinkItemData
 import com.alexdremov.notate.data.RegionBoundsProto
 import com.alexdremov.notate.data.RegionProto
 import com.alexdremov.notate.data.StrokeData
@@ -103,6 +104,7 @@ class RegionStorage(
         val strokeData = ArrayList<StrokeData>()
         val imageData = ArrayList<CanvasImageData>()
         val textData = ArrayList<TextItemData>()
+        val linkData = ArrayList<LinkItemData>()
 
         for (item in data.items) {
             when (item) {
@@ -122,10 +124,14 @@ class RegionStorage(
                 is com.alexdremov.notate.model.TextItem -> {
                     textData.add(CanvasSerializer.toTextItemData(item))
                 }
+
+                is com.alexdremov.notate.model.LinkItem -> {
+                    linkData.add(CanvasSerializer.toLinkItemData(item))
+                }
             }
         }
 
-        val proto = RegionProto(data.id.x, data.id.y, strokeData, imageData, textData)
+        val proto = RegionProto(data.id.x, data.id.y, strokeData, imageData, textData, linkData)
         val file = getRegionFile(data.id)
 
         return try {
@@ -200,6 +206,12 @@ class RegionStorage(
             proto.texts.forEach { tData ->
                 val textItem = CanvasSerializer.fromTextItemData(tData)
                 data.items.add(textItem)
+            }
+
+            // Convert Links
+            proto.links.forEach { lData ->
+                val linkItem = CanvasSerializer.fromLinkItemData(lData)
+                data.items.add(linkItem)
             }
 
             Logger.d("RegionStorage", "Loaded region $id (${data.items.size} items)")

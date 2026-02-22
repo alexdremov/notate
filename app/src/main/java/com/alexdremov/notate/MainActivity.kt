@@ -96,7 +96,13 @@ class MainActivity : ComponentActivity() {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun MainScreen(viewModel: HomeViewModel) {
+fun MainScreen(
+    viewModel: HomeViewModel,
+    isPickerMode: Boolean = false,
+    lockedProjectId: String? = null,
+    disabledItemUuid: String? = null,
+    onFilePicked: ((CanvasItem) -> Unit)? = null,
+) {
     val currentProject by viewModel.currentProject.collectAsState()
     val projects by viewModel.projects.collectAsState()
     val browserItems by viewModel.browserItems.collectAsState()
@@ -112,6 +118,7 @@ fun MainScreen(viewModel: HomeViewModel) {
     val context = LocalContext.current
     val snackbarHostState = remember { SnackbarHostState() }
     val lifecycleOwner = LocalLifecycleOwner.current
+    val activity = LocalContext.current as? ComponentActivity
 
     // Listen for global errors
     LaunchedEffect(lifecycleOwner) {
@@ -178,24 +185,35 @@ fun MainScreen(viewModel: HomeViewModel) {
         }
 
     // Back Handler
-    BackHandler {
-        viewModel.navigateUp() // Will close project if at root
+    val isAtRoot = breadcrumbs.size <= 1
+    val shouldHandleBack =
+        if (lockedProjectId != null) {
+            !isAtRoot
+        } else {
+            currentProject != null
+        }
+
+    BackHandler(enabled = shouldHandleBack) {
+        viewModel.navigateUp()
     }
 
     Row(modifier = Modifier.fillMaxSize()) {
         // --- Sidebar (Left) ---
-        Sidebar(
-            projects = projects,
-            tags = tags,
-            selectedProject = currentProject,
-            selectedTag = selectedTag,
-            onProjectSelected = { viewModel.openProject(it) },
-            onProjectLongClick = { projectToManage = it },
-            onTagSelected = { viewModel.selectTag(it) },
-            onAddProject = { showNameDialog = DialogType.ADD_PROJECT },
-            onManageTags = { showNameDialog = DialogType.MANAGE_TAGS },
-            onSettingsClick = { showSettingsDialog = true },
-        )
+        // Hide sidebar if project is locked to enforce single-project mode
+        if (lockedProjectId == null) {
+            Sidebar(
+                projects = projects,
+                tags = tags,
+                selectedProject = currentProject,
+                selectedTag = selectedTag,
+                onProjectSelected = { viewModel.openProject(it) },
+                onProjectLongClick = { projectToManage = it },
+                onTagSelected = { viewModel.selectTag(it) },
+                onAddProject = { showNameDialog = DialogType.ADD_PROJECT },
+                onManageTags = { showNameDialog = DialogType.MANAGE_TAGS },
+                onSettingsClick = { showSettingsDialog = true },
+            )
+        }
 
         // --- Content Area (Right) ---
         Scaffold(
@@ -210,6 +228,13 @@ fun MainScreen(viewModel: HomeViewModel) {
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                         )
+                    },
+                    navigationIcon = {
+                        if (isPickerMode) {
+                            IconButton(onClick = { activity?.finish() }) {
+                                Icon(Icons.Default.Close, contentDescription = "Cancel")
+                            }
+                        }
                     },
                     actions = {
                         if (currentProject != null || selectedTag != null) {
@@ -249,11 +274,13 @@ fun MainScreen(viewModel: HomeViewModel) {
                             }
                         } else {
                             // Project List Actions
-                            IconButton(onClick = { showSettingsDialog = true }) {
-                                Icon(Icons.Filled.Settings, contentDescription = "Settings")
-                            }
-                            IconButton(onClick = { showNameDialog = DialogType.ADD_PROJECT }) {
-                                Icon(Icons.Filled.Add, contentDescription = "Add Project")
+                            if (!isPickerMode) {
+                                IconButton(onClick = { showSettingsDialog = true }) {
+                                    Icon(Icons.Filled.Settings, contentDescription = "Settings")
+                                }
+                                IconButton(onClick = { showNameDialog = DialogType.ADD_PROJECT }) {
+                                    Icon(Icons.Filled.Add, contentDescription = "Add Project")
+                                }
                             }
                         }
                     },
@@ -268,7 +295,7 @@ fun MainScreen(viewModel: HomeViewModel) {
                         contentAlignment = Alignment.Center,
                     ) {
                         Text(
-                            text = "Select a project from the sidebar",
+                            text = if (lockedProjectId != null) "Loading project..." else "Select a project from the sidebar",
                             style = MaterialTheme.typography.bodyLarge,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -279,6 +306,7 @@ fun MainScreen(viewModel: HomeViewModel) {
                         items = browserItems,
                         breadcrumbs = breadcrumbs,
                         allTags = tags,
+                        disabledItemUuid = disabledItemUuid,
                         onBreadcrumbClick = { viewModel.loadBrowserItems(it.path) },
                         onItemClick = { item ->
                             when (item) {
@@ -287,11 +315,15 @@ fun MainScreen(viewModel: HomeViewModel) {
                                 }
 
                                 is CanvasItem -> {
-                                    val intent =
-                                        Intent(context, CanvasActivity::class.java).apply {
-                                            putExtra("CANVAS_PATH", item.path)
-                                        }
-                                    context.startActivity(intent)
+                                    if (isPickerMode && onFilePicked != null) {
+                                        onFilePicked(item)
+                                    } else {
+                                        val intent =
+                                            Intent(context, CanvasActivity::class.java).apply {
+                                                putExtra("CANVAS_PATH", item.path)
+                                            }
+                                        context.startActivity(intent)
+                                    }
                                 }
                             }
                         },
@@ -303,31 +335,34 @@ fun MainScreen(viewModel: HomeViewModel) {
                 }
 
                 // Sync Progress Overlay
-                syncProgress?.let { (progress, message) ->
-                    Box(
-                        modifier =
-                            Modifier
-                                .fillMaxSize()
-                                .background(Color.Black.copy(alpha = 0.1f)),
-                        contentAlignment = Alignment.BottomCenter,
-                    ) {
-                        Card(
+                // Hide sync progress if in Picker Mode (Read Only / Minimal Distraction)
+                if (!isPickerMode) {
+                    syncProgress?.let { (progress, message) ->
+                        Box(
                             modifier =
                                 Modifier
-                                    .padding(16.dp)
-                                    .fillMaxWidth()
-                                    .border(2.dp, Color.Black, RoundedCornerShape(12.dp)),
-                            colors = CardDefaults.cardColors(containerColor = Color.White),
+                                    .fillMaxSize()
+                                    .background(Color.Black.copy(alpha = 0.1f)),
+                            contentAlignment = Alignment.BottomCenter,
                         ) {
-                            Column(Modifier.padding(16.dp)) {
-                                Text(message, style = MaterialTheme.typography.bodyMedium)
-                                Spacer(Modifier.height(8.dp))
-                                LinearProgressIndicator(
-                                    progress = progress / 100f,
-                                    modifier = Modifier.fillMaxWidth(),
-                                    color = Color.Black,
-                                    trackColor = Color.LightGray,
-                                )
+                            Card(
+                                modifier =
+                                    Modifier
+                                        .padding(16.dp)
+                                        .fillMaxWidth()
+                                        .border(2.dp, Color.Black, RoundedCornerShape(12.dp)),
+                                colors = CardDefaults.cardColors(containerColor = Color.White),
+                            ) {
+                                Column(Modifier.padding(16.dp)) {
+                                    Text(message, style = MaterialTheme.typography.bodyMedium)
+                                    Spacer(Modifier.height(8.dp))
+                                    LinearProgressIndicator(
+                                        progress = progress / 100f,
+                                        modifier = Modifier.fillMaxWidth(),
+                                        color = Color.Black,
+                                        trackColor = Color.LightGray,
+                                    )
+                                }
                             }
                         }
                     }

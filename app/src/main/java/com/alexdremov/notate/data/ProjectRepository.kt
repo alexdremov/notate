@@ -42,6 +42,7 @@ data class CanvasItem(
     val tagIds: List<String> = emptyList(),
     val embeddedTags: List<Tag> = emptyList(),
     override val syncStatus: SyncStatus = SyncStatus.NONE,
+    val uuid: String? = null, // Added UUID for linking
 ) : FileSystemItem
 
 class ProjectRepository(
@@ -105,6 +106,10 @@ class ProjectRepository(
                 canvasType = type,
                 pageWidth = pageWidth,
                 pageHeight = pageHeight,
+                uuid =
+                    java.util.UUID
+                        .randomUUID()
+                        .toString(),
             )
         val result = getProvider(parentPath).createCanvas(name, parentPath, emptyCanvas)
         if (result != null) indexManager.updateIndex(getProvider(parentPath))
@@ -166,6 +171,31 @@ class ProjectRepository(
                 val metadata = provider.getFileMetadata(path)
                 CanvasItem(
                     name = meta.name,
+                    fileName = "${meta.name}.notate",
+                    path = path,
+                    lastModified = meta.lastModified,
+                    size = 0,
+                    thumbnail = metadata?.thumbnail,
+                    tagIds = meta.tagIds,
+                    embeddedTags = meta.embeddedTags,
+                    uuid = meta.uuid, // Pass UUID
+                )
+            }.sortedByDescending { it.lastModified }
+    }
+
+    /**
+     * Returns all files known to the index.
+     * Note: This relies on the index being up-to-date.
+     */
+    suspend fun getAllIndexedFiles(): List<CanvasItem> {
+        val indexed = indexManager.getAllIndexedFiles()
+        val provider = getProvider(null)
+
+        return indexed
+            .mapNotNull { (path, meta) ->
+                val metadata = provider.getFileMetadata(path)
+                CanvasItem(
+                    name = meta.name,
                     fileName = "${meta.name}.notate", // Best effort guess from index
                     path = path,
                     lastModified = meta.lastModified,
@@ -173,6 +203,7 @@ class ProjectRepository(
                     thumbnail = metadata?.thumbnail,
                     tagIds = meta.tagIds,
                     embeddedTags = meta.embeddedTags,
+                    uuid = meta.uuid,
                 )
             }.sortedByDescending { it.lastModified }
     }
@@ -191,4 +222,20 @@ class ProjectRepository(
     }
 
     suspend fun getAllIndexedTags(): List<Tag> = indexManager.getAllTags()
+
+    suspend fun getPathForUuid(uuid: String): String? = indexManager.getPathForUuid(uuid)
+
+    suspend fun ensureUuid(path: String): String? {
+        val uuid = getProvider(path).ensureUuid(path)
+        if (uuid != null) {
+            val currentMeta = indexManager.getFileMetadata(path)
+            if (currentMeta != null) {
+                val newMeta = currentMeta.copy(uuid = uuid)
+                indexManager.updateFileEntry(path, newMeta)
+            } else {
+                indexManager.updateIndex(getProvider(path))
+            }
+        }
+        return uuid
+    }
 }

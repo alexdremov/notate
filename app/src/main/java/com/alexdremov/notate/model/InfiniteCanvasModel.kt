@@ -15,6 +15,7 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import java.util.UUID
 import kotlin.math.floor
 
 /**
@@ -84,6 +85,9 @@ class InfiniteCanvasModel {
     var tagIds: List<String> = emptyList()
     var tagDefinitions: List<Tag> = emptyList()
 
+    // UUID for linking
+    private var uuid: String? = null
+
     fun getRegionManager(): RegionManager? = regionManager
 
     suspend fun initializeSession(manager: RegionManager) {
@@ -145,6 +149,7 @@ class InfiniteCanvasModel {
                     is Stroke -> item.copy(strokeOrder = nextOrder++)
                     is CanvasImage -> item.copy(order = nextOrder++)
                     is TextItem -> item.copy(order = nextOrder++)
+                    is LinkItem -> item.copy(order = nextOrder++)
                     else -> throw IllegalArgumentException("Unsupported CanvasItem type: ${item::class.java.name}")
                 }
 
@@ -192,6 +197,10 @@ class InfiniteCanvasModel {
                         ) {
                             toRemove.add(item)
                         } else if (item is TextItem && RectF.intersects(item.bounds, eraserStroke.bounds) &&
+                            item.bounds.contains(eraserStroke.bounds.centerX(), eraserStroke.bounds.centerY())
+                        ) {
+                            toRemove.add(item)
+                        } else if (item is LinkItem && RectF.intersects(item.bounds, eraserStroke.bounds) &&
                             item.bounds.contains(eraserStroke.bounds.centerX(), eraserStroke.bounds.centerY())
                         ) {
                             toRemove.add(item)
@@ -289,6 +298,7 @@ class InfiniteCanvasModel {
                         is Stroke -> item.copy(strokeOrder = nextOrder++)
                         is CanvasImage -> item.copy(order = nextOrder++)
                         is TextItem -> item.copy(order = nextOrder++)
+                        is LinkItem -> item.copy(order = nextOrder++)
                         else -> item
                     }
                 }
@@ -553,6 +563,11 @@ class InfiniteCanvasModel {
                     ?: throw IllegalStateException("toCanvasData() called before session initialization: regionManager is null")
             val size = manager.regionSize
 
+            // Auto-generate UUID if missing
+            if (uuid.isNullOrBlank()) {
+                uuid = UUID.randomUUID().toString()
+            }
+
             CanvasSerializer.toData(
                 canvasType,
                 pageWidth,
@@ -566,6 +581,7 @@ class InfiniteCanvasModel {
                 tagDefinitions,
                 regionSize = size,
                 nextStrokeOrder = nextOrder,
+                uuid = uuid,
             )
         }
 
@@ -591,6 +607,7 @@ class InfiniteCanvasModel {
             toolbarItems = state.toolbarItems
             tagIds = state.tagIds
             tagDefinitions = state.tagDefinitions
+            uuid = state.uuid
         }
     }
 
@@ -607,6 +624,7 @@ class InfiniteCanvasModel {
             tagIds = data.tagIds
             tagDefinitions = data.tagDefinitions
             nextOrder = data.nextStrokeOrder
+            uuid = data.uuid
         }
     }
 
