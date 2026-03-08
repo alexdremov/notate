@@ -137,7 +137,14 @@ interface CanvasController {
         dy: Float,
     )
 
+    fun moveSelectionSync(
+        dx: Float,
+        dy: Float,
+    )
+
     suspend fun transformSelection(matrix: android.graphics.Matrix)
+
+    fun transformSelectionSync(matrix: android.graphics.Matrix)
 
     suspend fun commitMoveSelection(shouldReselect: Boolean = true)
 

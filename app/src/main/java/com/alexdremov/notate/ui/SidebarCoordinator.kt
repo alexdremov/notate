@@ -29,9 +29,11 @@ class SidebarCoordinator(
         // Register back callback. It is enabled/disabled based on sidebar state.
         activity.onBackPressedDispatcher.addCallback(activity, backCallback)
 
-        // Initial Layout Setup: Move sidebar off-screen to the right
+        // Initial Layout Setup: Ensure it's off-screen even if it starts as GONE
+        container.visibility = View.INVISIBLE // Use INVISIBLE to allow measurement
         container.post {
             container.translationX = container.width.toFloat()
+            container.visibility = View.GONE // Hide it again
         }
 
         scrim.setOnClickListener {
@@ -48,6 +50,7 @@ class SidebarCoordinator(
             .enterFastMode()
 
         scrim.visibility = View.VISIBLE
+        container.visibility = View.VISIBLE
         container
             .animate()
             .translationX(0f)

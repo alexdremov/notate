@@ -42,6 +42,8 @@ import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.res.vectorResource
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
@@ -190,12 +192,16 @@ fun MainToolbar(
         if (showExpanded) {
             // --- Expanded (Normal) State ---
             Surface(
-                modifier = Modifier.wrapContentSize(),
+                modifier = Modifier.wrapContentSize().border(1.dp, Color.Black, RoundedCornerShape(11.dp)),
                 shape = RoundedCornerShape(12.dp),
                 color = Color.White,
-                shadowElevation = 4.dp,
             ) {
-                val layoutModifier = Modifier.wrapContentSize().padding(2.dp)
+                val layoutModifier =
+                    if (isHorizontal) {
+                        Modifier.wrapContentSize().padding(horizontal = 1.dp, vertical = 2.dp)
+                    } else {
+                        Modifier.wrapContentSize().padding(horizontal = 2.dp, vertical = 1.dp)
+                    }
 
                 // Layout Container
                 if (isHorizontal) {
@@ -596,10 +602,10 @@ fun ToolbarItemWrapper(
                 modifier =
                     Modifier
                         .size(48.dp)
-                        .clip(RoundedCornerShape(8.dp))
+                        .clip(RoundedCornerShape(12.dp))
                         .then(
                             if (isActive && !isEditMode) {
-                                Modifier.border(2.dp, Color.Black, RoundedCornerShape(8.dp))
+                                Modifier.border(1.dp, Color.Black, RoundedCornerShape(11.dp))
                             } else {
                                 Modifier
                             },
@@ -740,7 +746,7 @@ fun ToolbarEditPanel(
         modifier =
             Modifier
                 .width(240.dp)
-                .border(2.dp, Color.Black, RoundedCornerShape(12.dp))
+                .border(1.dp, Color.Black, RoundedCornerShape(11.dp))
                 .clip(RoundedCornerShape(12.dp))
                 .background(Color.White)
                 .padding(16.dp),
@@ -875,12 +881,13 @@ fun AddItemButton(
             modifier =
                 Modifier
                     .size(40.dp)
-                    .background(Color.LightGray.copy(alpha = 0.3f), RoundedCornerShape(8.dp)),
+                    .background(Color.White, RoundedCornerShape(12.dp))
+                    .border(1.dp, Color.Black, RoundedCornerShape(12.dp)),
             contentAlignment = Alignment.Center,
         ) {
             RenderToolbarItemIcon(item)
         }
-        Text(label, style = MaterialTheme.typography.labelSmall)
+        Text(label, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = Color.Black)
     }
 }
 

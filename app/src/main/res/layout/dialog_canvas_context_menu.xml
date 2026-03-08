@@ -2,59 +2,65 @@
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="wrap_content"
     android:layout_height="wrap_content"
-    android:background="@drawable/bg_tool_active"
-    android:elevation="0dp"
+    android:background="@drawable/bg_popup_outlined"
     android:orientation="horizontal"
-    android:clipToOutline="true">
+    android:padding="2dp">
 
     <TextView
         android:id="@+id/btn_paste"
         android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:background="?attr/selectableItemBackground"
-        android:paddingHorizontal="16dp"
-        android:paddingVertical="12dp"
+        android:layout_height="48dp"
+        android:minWidth="64dp"
+        android:gravity="center"
         android:text="Paste"
+        android:drawableTop="@drawable/ic_content_paste"
         android:textColor="@android:color/black"
-        android:textSize="16sp"
-        android:textStyle="bold" />
+        android:textSize="10sp"
+        android:paddingHorizontal="8dp"
+        android:background="?attr/selectableItemBackground"
+        android:clickable="true"
+        android:focusable="true" />
 
     <View
-        android:layout_width="2dp"
+        android:layout_width="@dimen/ui_stroke_standard"
         android:layout_height="match_parent"
-        android:layout_marginVertical="8dp"
-        android:layout_marginHorizontal="2dp"
-        android:background="@android:color/black" />
+        android:background="@android:color/black"
+        android:layout_marginVertical="4dp" />
 
     <TextView
         android:id="@+id/btn_paste_image"
         android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:background="?attr/selectableItemBackground"
-        android:paddingHorizontal="16dp"
-        android:paddingVertical="12dp"
-        android:text="Paste Image"
+        android:layout_height="48dp"
+        android:minWidth="64dp"
+        android:gravity="center"
+        android:text="Image"
+        android:drawableTop="@drawable/ic_image"
         android:textColor="@android:color/black"
-        android:textSize="16sp"
-        android:textStyle="bold" />
+        android:textSize="10sp"
+        android:paddingHorizontal="8dp"
+        android:background="?attr/selectableItemBackground"
+        android:clickable="true"
+        android:focusable="true" />
 
     <View
-        android:layout_width="2dp"
+        android:layout_width="@dimen/ui_stroke_standard"
         android:layout_height="match_parent"
-        android:layout_marginVertical="8dp"
-        android:layout_marginHorizontal="2dp"
-        android:background="@android:color/black" />
+        android:background="@android:color/black"
+        android:layout_marginVertical="4dp" />
 
     <TextView
         android:id="@+id/btn_insert_link"
         android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:background="?attr/selectableItemBackground"
-        android:paddingHorizontal="16dp"
-        android:paddingVertical="12dp"
+        android:layout_height="48dp"
+        android:minWidth="64dp"
+        android:gravity="center"
         android:text="Link"
+        android:drawableTop="@drawable/ic_link"
         android:textColor="@android:color/black"
-        android:textSize="16sp"
-        android:textStyle="bold" />
+        android:textSize="10sp"
+        android:paddingHorizontal="8dp"
+        android:background="?attr/selectableItemBackground"
+        android:clickable="true"
+        android:focusable="true" />
 
 </LinearLayout>

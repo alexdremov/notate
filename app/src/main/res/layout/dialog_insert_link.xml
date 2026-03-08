@@ -11,7 +11,7 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:text="Insert Link"
-        android:textSize="20sp"
+        android:textSize="18sp"
         android:textStyle="bold"
         android:textColor="@android:color/black"
         android:gravity="center"
@@ -23,6 +23,7 @@
         android:layout_height="wrap_content"
         android:text="Link Name"
         android:textSize="14sp"
+        android:textStyle="bold"
         android:textColor="@android:color/black"
         android:layout_marginBottom="4dp" />
 
@@ -51,6 +52,7 @@
             android:layout_height="wrap_content"
             android:text="Note"
             android:textSize="14sp"
+            android:textStyle="bold"
             android:layout_weight="1"
             android:checked="true" />
 
@@ -59,6 +61,7 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="URL"
+            android:textStyle="bold"
             android:textSize="14sp"
             android:layout_weight="1" />
 
@@ -67,6 +70,7 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="File"
+            android:textStyle="bold"
             android:textSize="14sp"
             android:layout_weight="1" />
     </RadioGroup>
@@ -77,6 +81,7 @@
         android:layout_height="wrap_content"
         android:text="Target"
         android:textSize="14sp"
+        android:textStyle="bold"
         android:textColor="@android:color/black"
         android:layout_marginBottom="4dp" />
 
@@ -96,6 +101,7 @@
             android:textSize="16sp"
             android:hint="Select a note..."
             android:enabled="false"
+            android:textStyle="bold"
             android:textColor="@android:color/black" />
 
         <Button
@@ -106,6 +112,7 @@
             android:text="Browse"
             android:layout_marginStart="8dp"
             android:textColor="@android:color/black"
+            app:strokeWidth="@dimen/ui_stroke_standard"
             app:strokeColor="@android:color/black" />
     </LinearLayout>
 
@@ -124,6 +131,7 @@
             android:layout_height="wrap_content"
             android:text="Cancel"
             android:textColor="@android:color/black"
+            app:strokeWidth="@dimen/ui_stroke_standard"
             app:strokeColor="@android:color/black" />
 
         <Button

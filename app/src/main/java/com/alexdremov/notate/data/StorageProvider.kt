@@ -265,6 +265,65 @@ internal object StorageUtils {
             null
         }
 
+    fun updateMetadata(
+        inputStream: InputStream,
+        outputStream: OutputStream,
+        tagIds: List<String>,
+        tagDefinitions: List<Tag>,
+        uuid: String? = null,
+    ) {
+        val rawStream = if (inputStream.markSupported()) inputStream else java.io.BufferedInputStream(inputStream)
+        rawStream.mark(4)
+        val signature = ByteArray(4)
+        val read = rawStream.read(signature)
+        rawStream.reset()
+
+        if (read >= 4 && signature[0] == 0x50.toByte() && signature[1] == 0x4B.toByte()) {
+            // ZIP format
+            updateMetadataZip(rawStream, outputStream, tagIds, tagDefinitions, uuid)
+        } else if (read > 0 && signature[0] == 0x7B.toByte()) {
+            // JSON format
+            if (uuid != null) {
+                injectUuidIntoJson(rawStream, outputStream, uuid)
+            } else {
+                rawStream.copyTo(outputStream)
+            }
+        } else {
+            // Legacy Protobuf
+            createUpdatedProtobuf(rawStream, outputStream, tagIds, tagDefinitions, uuid)
+        }
+    }
+
+    private fun updateMetadataZip(
+        inputStream: InputStream,
+        outputStream: OutputStream,
+        tagIds: List<String>,
+        tagDefinitions: List<Tag>,
+        uuid: String? = null,
+    ) {
+        val zis = java.util.zip.ZipInputStream(inputStream)
+        val zos = java.util.zip.ZipOutputStream(outputStream)
+
+        try {
+            var entry = zis.nextEntry
+            while (entry != null) {
+                val newEntry = java.util.zip.ZipEntry(entry.name)
+                newEntry.time = entry.time
+                zos.putNextEntry(newEntry)
+
+                if (entry.name == "manifest.bin") {
+                    createUpdatedProtobuf(zis, zos, tagIds, tagDefinitions, uuid)
+                } else {
+                    zis.copyTo(zos)
+                }
+                zos.closeEntry()
+                entry = zis.nextEntry
+            }
+        } finally {
+            zos.finish()
+        }
+    }
+
     fun createUpdatedProtobuf(
         inputStream: InputStream,
         outputStream: OutputStream,
@@ -692,7 +751,7 @@ class LocalStorageProvider(
         val file = File(path)
         if (!file.exists() || file.isDirectory) return false
 
-        if (file.extension != "notate") return false
+        if (file.extension != "notate" && file.extension != "json") return false
 
         // Acquire lock to ensure we don't modify an open file
         val lock =
@@ -708,7 +767,7 @@ class LocalStorageProvider(
         return try {
             file.inputStream().use { input ->
                 tempFile.outputStream().use { output ->
-                    StorageUtils.createUpdatedProtobuf(input, output, tagIds, tagDefinitions)
+                    StorageUtils.updateMetadata(input, output, tagIds, tagDefinitions)
                 }
             }
             Files.move(
@@ -808,20 +867,13 @@ class LocalStorageProvider(
             val tempFile = File(file.parent, file.name + ".tmp")
             file.inputStream().use { input ->
                 tempFile.outputStream().use { output ->
-                    if (file.extension == "notate") {
-                        StorageUtils.createUpdatedProtobuf(
-                            input,
-                            output,
-                            meta?.tagIds ?: emptyList(),
-                            meta?.tagDefinitions ?: emptyList(),
-                            newUuid,
-                        )
-                    } else if (file.extension == "json") {
-                        StorageUtils.injectUuidIntoJson(input, output, newUuid)
-                    } else {
-                        // Fallback copy if unsupported format but somehow reached here
-                        input.copyTo(output)
-                    }
+                    StorageUtils.updateMetadata(
+                        input,
+                        output,
+                        meta?.tagIds ?: emptyList(),
+                        meta?.tagDefinitions ?: emptyList(),
+                        newUuid,
+                    )
                 }
             }
             Files.move(tempFile.toPath(), file.toPath(), StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
@@ -1037,7 +1089,7 @@ class SafStorageProvider(
         if (file.isDirectory) return false
         // Basic check for file extension from name
         val name = file.name ?: ""
-        if (!name.endsWith(".notate")) return false
+        if (!name.endsWith(".notate") && !name.endsWith(".json")) return false
 
         val mutex = getMutex(path)
         val tempFile = File.createTempFile("saf_update", ".tmp", context.cacheDir)
@@ -1053,7 +1105,7 @@ class SafStorageProvider(
 
                 context.contentResolver.openInputStream(uri)?.use { input ->
                     tempFile.outputStream().use { output ->
-                        StorageUtils.createUpdatedProtobuf(input, output, tagIds, tagDefinitions, uuid)
+                        StorageUtils.updateMetadata(input, output, tagIds, tagDefinitions, uuid)
                     }
                 }
                 context.contentResolver.openOutputStream(uri, "wt")?.use { output ->
@@ -1197,20 +1249,13 @@ class SafStorageProvider(
                 try {
                     context.contentResolver.openInputStream(uri)?.use { input ->
                         tempFile.outputStream().use { output ->
-                            val name = file.name ?: ""
-                            if (name.endsWith(".notate")) {
-                                StorageUtils.createUpdatedProtobuf(
-                                    input,
-                                    output,
-                                    meta?.tagIds ?: emptyList(),
-                                    meta?.tagDefinitions ?: emptyList(),
-                                    newUuid,
-                                )
-                            } else if (name.endsWith(".json")) {
-                                StorageUtils.injectUuidIntoJson(input, output, newUuid)
-                            } else {
-                                input.copyTo(output)
-                            }
+                            StorageUtils.updateMetadata(
+                                input,
+                                output,
+                                meta?.tagIds ?: emptyList(),
+                                meta?.tagDefinitions ?: emptyList(),
+                                newUuid,
+                            )
                         }
                     }
                     context.contentResolver.openOutputStream(uri, "wt")?.use { output ->

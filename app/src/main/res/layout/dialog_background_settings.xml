@@ -1,8 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    android:layout_width="300dp"
+    android:layout_width="match_parent"
     android:layout_height="wrap_content"
-    android:background="@drawable/bg_popup_plain"
     android:orientation="vertical"
     android:padding="16dp">
 
@@ -49,6 +48,8 @@
             android:id="@+id/tv_spacing_label"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
+            android:textStyle="bold"
+            android:textColor="#000000"
             android:text="Spacing: 5 mm" />
 
         <SeekBar
@@ -71,6 +72,8 @@
             android:id="@+id/tv_size_label"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
+            android:textStyle="bold"
+            android:textColor="#000000"
             android:text="Size: 1 mm" />
 
         <SeekBar
@@ -92,6 +95,8 @@
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
+            android:textStyle="bold"
+            android:textColor="#000000"
             android:text="Color" />
 
         <HorizontalScrollView
@@ -120,6 +125,8 @@
             android:id="@+id/cb_center_align"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
+            android:textStyle="bold"
+            android:textColor="#000000"
             android:text="Center Pattern" />
 
         <!-- Top Padding -->
@@ -133,6 +140,8 @@
                 android:id="@+id/tv_padding_top_label"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
+                android:textStyle="bold"
+                android:textColor="#000000"
                 android:text="Top Padding: 0 mm" />
 
             <SeekBar
@@ -153,6 +162,8 @@
                 android:id="@+id/tv_padding_bottom_label"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
+                android:textStyle="bold"
+                android:textColor="#000000"
                 android:text="Bottom Padding: 0 mm" />
 
             <SeekBar
@@ -173,6 +184,8 @@
                 android:id="@+id/tv_padding_left_label"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
+                android:textStyle="bold"
+                android:textColor="#000000"
                 android:text="Left Padding: 0 mm" />
 
             <SeekBar
@@ -193,6 +206,8 @@
                 android:id="@+id/tv_padding_right_label"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
+                android:textStyle="bold"
+                android:textColor="#000000"
                 android:text="Right Padding: 0 mm" />
 
             <SeekBar

@@ -2,4 +2,9 @@
 <resources>
     <dimen name="palette_item_size_dp">48dp</dimen>
     <dimen name="palette_item_margin_dp">4dp</dimen>
+    <dimen name="ui_radius_standard">12dp</dimen>
+    <dimen name="ui_stroke_standard">1dp</dimen>
+    <dimen name="ui_spacing_small">8dp</dimen>
+    <dimen name="ui_spacing_medium">16dp</dimen>
+    <dimen name="ui_spacing_large">24dp</dimen>
 </resources>

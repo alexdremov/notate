@@ -3,11 +3,11 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="340dp"
     android:layout_height="wrap_content"
-    app:cardCornerRadius="16dp"
+    app:cardCornerRadius="@dimen/ui_radius_standard"
     app:cardElevation="8dp"
     app:cardBackgroundColor="@android:color/white"
     app:strokeColor="#000000"
-    app:strokeWidth="2dp">
+    app:strokeWidth="@dimen/ui_stroke_standard">
 
     <ViewFlipper
         android:id="@+id/viewFlipper"
@@ -107,8 +107,8 @@
                 <View
                     android:id="@+id/divider1"
                     android:layout_width="match_parent"
-                    android:layout_height="1dp"
-                    android:background="#EEEEEE"
+                    android:layout_height="@dimen/ui_stroke_standard"
+                    android:background="#000000"
                     android:layout_marginTop="16dp" />
 
                 <!-- Width -->
@@ -123,7 +123,8 @@
                         android:layout_height="wrap_content"
                         android:text="Thickness"
                         android:textSize="14sp"
-                        android:textColor="#666666" />
+                        android:textStyle="bold"
+                        android:textColor="#000000" />
 
                     <TextView
                         android:id="@+id/tvWidthValue"
@@ -150,8 +151,8 @@
                 <View
                     android:id="@+id/divider2"
                     android:layout_width="match_parent"
-                    android:layout_height="1dp"
-                    android:background="#EEEEEE"
+                    android:layout_height="@dimen/ui_stroke_standard"
+                    android:background="#000000"
                     android:layout_marginTop="8dp" />
 
                 <!-- Color Palette -->
@@ -166,7 +167,8 @@
                         android:layout_height="wrap_content"
                         android:text="Color"
                         android:textSize="14sp"
-                        android:textColor="#666666" />
+                        android:textStyle="bold"
+                        android:textColor="#000000" />
 
                     <TextView
                         android:id="@+id/tvColorName"
@@ -239,7 +241,8 @@
                     android:layout_height="wrap_content"
                     android:text="Presets"
                     android:textSize="14sp"
-                    android:textColor="#666666"
+                    android:textStyle="bold"
+                    android:textColor="#000000"
                     android:layout_marginTop="20dp"/>
 
                 <GridLayout
@@ -254,8 +257,8 @@
 
                 <View
                     android:layout_width="match_parent"
-                    android:layout_height="1dp"
-                    android:background="#EEEEEE"
+                    android:layout_height="@dimen/ui_stroke_standard"
+                    android:background="#000000"
                     android:layout_marginTop="20dp"/>
 
                 <Button
@@ -322,7 +325,8 @@
                     android:text="Dark Blue"
                     android:gravity="center"
                     android:textSize="14sp"
-                    android:textColor="#666666"
+                    android:textStyle="bold"
+                    android:textColor="#000000"
                     android:layout_marginBottom="8dp"/>
 
                 <com.skydoves.colorpickerview.ColorPickerView
@@ -336,7 +340,8 @@
                     android:layout_height="wrap_content"
                     android:text="Brightness"
                     android:textSize="12sp"
-                    android:textColor="#666666"
+                    android:textStyle="bold"
+                    android:textColor="#000000"
                     android:layout_marginTop="16dp"/>
 
                 <com.skydoves.colorpickerview.sliders.BrightnessSlideBar
@@ -350,7 +355,8 @@
                     android:layout_height="wrap_content"
                     android:text="Transparency"
                     android:textSize="12sp"
-                    android:textColor="#666666"
+                    android:textStyle="bold"
+                    android:textColor="#000000"
                     android:layout_marginTop="12dp"/>
 
                 <com.skydoves.colorpickerview.sliders.AlphaSlideBar

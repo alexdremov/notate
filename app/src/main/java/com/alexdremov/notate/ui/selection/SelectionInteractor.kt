@@ -76,7 +76,7 @@ class SelectionInteractor(
 
                     if (activeHandle == HandleType.BODY) {
                         val scale = view.getCurrentScale()
-                        controller.moveSelection(stepX / scale, stepY / scale)
+                        controller.moveSelectionSync(stepX / scale, stepY / scale)
                     }
                     delay(16)
                 }
@@ -179,6 +179,8 @@ class SelectionInteractor(
             handleMultiTouchTransform(event)
             return true
         } else if (isDragging) {
+            // OPTIMIZATION: Do not process historical points for object moving.
+            // The additive deltas result in the same final position but flood the UI thread.
             handleSingleTouchDrag(event.x, event.y)
             return true
         }
@@ -247,7 +249,7 @@ class SelectionInteractor(
                 dragDistanceAccumulator += hypot(dx, dy)
 
                 val scale = view.getCurrentScale()
-                scope.launch { controller.moveSelection(dx / scale, dy / scale) }
+                controller.moveSelectionSync(dx / scale, dy / scale)
                 updateAutoScroll(targetX, targetY)
             }
 
@@ -401,7 +403,7 @@ class SelectionInteractor(
 
             m.postRotate(rotationDeg, px, py)
 
-            scope.launch { controller.transformSelection(m) }
+            controller.transformSelectionSync(m)
         }
     }
 
@@ -452,7 +454,7 @@ class SelectionInteractor(
 
         val m = Matrix()
         m.postRotate(stepNormalized, center[0], center[1])
-        scope.launch { controller.transformSelection(m) }
+        controller.transformSelectionSync(m)
     }
 
     private fun handleScale(
@@ -483,7 +485,7 @@ class SelectionInteractor(
             val scale = (currDist / prevDist).coerceAtLeast(0.05f)
             val m = Matrix()
             m.postScale(scale, scale, px, py)
-            scope.launch { controller.transformSelection(m) }
+            controller.transformSelectionSync(m)
         }
     }
 
@@ -517,7 +519,7 @@ class SelectionInteractor(
             inverseMatrix.mapVectors(worldDelta)
             m.postTranslate(worldDelta[0], worldDelta[1])
 
-            scope.launch { controller.transformSelection(m) }
+            controller.transformSelectionSync(m)
         }
 
         prevSpan = currSpan

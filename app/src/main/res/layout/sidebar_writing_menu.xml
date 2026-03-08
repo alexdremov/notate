@@ -23,6 +23,7 @@
                 android:layout_height="wrap_content"
                 android:text="Scribble to Erase"
                 android:textSize="16sp"
+                android:textStyle="bold"
                 android:textColor="#000000" />
 
             <TextView
@@ -30,7 +31,7 @@
                 android:layout_height="wrap_content"
                 android:text="Rapidly scribble over strokes to delete them."
                 android:textSize="12sp"
-                android:textColor="#888888"
+                android:textColor="#444444"
                 android:layout_marginTop="2dp" />
 
         </LinearLayout>
@@ -44,8 +45,8 @@
 
     <View
         android:layout_width="match_parent"
-        android:layout_height="1dp"
-        android:background="#DDDDDD"
+        android:layout_height="@dimen/ui_stroke_standard"
+        android:background="#000000"
         android:layout_marginTop="16dp"
         android:layout_marginBottom="16dp" />
 
@@ -68,6 +69,7 @@
                 android:layout_height="wrap_content"
                 android:text="Angle Snapping"
                 android:textSize="16sp"
+                android:textStyle="bold"
                 android:textColor="#000000" />
 
             <TextView
@@ -75,7 +77,7 @@
                 android:layout_height="wrap_content"
                 android:text="Snap rotation to 0°, 90°, 180°."
                 android:textSize="12sp"
-                android:textColor="#888888"
+                android:textColor="#444444"
                 android:layout_marginTop="2dp" />
 
         </LinearLayout>
@@ -106,6 +108,7 @@
                 android:layout_height="wrap_content"
                 android:text="Axis Snapping"
                 android:textSize="16sp"
+                android:textStyle="bold"
                 android:textColor="#000000" />
 
             <TextView
@@ -113,7 +116,7 @@
                 android:layout_height="wrap_content"
                 android:text="Snap elements movement to horizontal or vertical axes."
                 android:textSize="12sp"
-                android:textColor="#888888"
+                android:textColor="#444444"
                 android:layout_marginTop="2dp" />
 
         </LinearLayout>
@@ -127,8 +130,8 @@
 
     <View
         android:layout_width="match_parent"
-        android:layout_height="1dp"
-        android:background="#DDDDDD"
+        android:layout_height="@dimen/ui_stroke_standard"
+        android:background="#000000"
         android:layout_marginTop="16dp"
         android:layout_marginBottom="16dp" />
 
@@ -149,6 +152,7 @@
                 android:layout_height="wrap_content"
                 android:text="Shape Perfection"
                 android:textSize="16sp"
+                android:textStyle="bold"
                 android:textColor="#000000" />
 
             <TextView
@@ -157,7 +161,7 @@
                 android:layout_height="wrap_content"
                 android:text="Hold stylus to convert drawing to shape."
                 android:textSize="12sp"
-                android:textColor="#888888"
+                android:textColor="#444444"
                 android:layout_marginTop="2dp" />
 
         </LinearLayout>
@@ -178,8 +182,8 @@
 
     <View
         android:layout_width="match_parent"
-        android:layout_height="1dp"
-        android:background="#DDDDDD"
+        android:layout_height="@dimen/ui_stroke_standard"
+        android:background="#000000"
         android:layout_marginTop="16dp"
         android:layout_marginBottom="16dp" />
 
@@ -193,6 +197,7 @@
             android:layout_height="wrap_content"
             android:text="Toolbar Auto-Collapse"
             android:textSize="16sp"
+            android:textStyle="bold"
             android:textColor="#000000" />
 
         <TextView
@@ -201,7 +206,7 @@
             android:layout_height="wrap_content"
             android:text="Collapse after 3.0s of inactivity."
             android:textSize="12sp"
-            android:textColor="#888888"
+            android:textColor="#444444"
             android:layout_marginTop="2dp" />
 
         <SeekBar

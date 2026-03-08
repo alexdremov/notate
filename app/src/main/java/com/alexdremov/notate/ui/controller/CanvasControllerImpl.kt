@@ -993,9 +993,22 @@ class CanvasControllerImpl(
         withContext(Dispatchers.Main) { renderer.invalidate() }
     }
 
+    override fun moveSelectionSync(
+        dx: Float,
+        dy: Float,
+    ) {
+        selectionManager.translate(dx, dy)
+        renderer.invalidate()
+    }
+
     override suspend fun transformSelection(matrix: Matrix) {
         selectionManager.applyTransform(matrix)
         withContext(Dispatchers.Main) { renderer.invalidate() }
+    }
+
+    override fun transformSelectionSync(matrix: Matrix) {
+        selectionManager.applyTransform(matrix)
+        renderer.invalidate()
     }
 
     override suspend fun commitMoveSelection(shouldReselect: Boolean) {

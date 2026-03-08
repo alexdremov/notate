@@ -31,6 +31,7 @@
             android:layout_weight="1"
             android:text="Background"
             android:textSize="16sp"
+            android:textStyle="bold"
             android:textColor="#000000"
             android:layout_marginStart="16dp" />
 
@@ -38,14 +39,14 @@
             android:layout_width="24dp"
             android:layout_height="24dp"
             android:src="@drawable/ic_chevron_right"
-            app:tint="#888888" />
+            app:tint="#000000" />
 
     </LinearLayout>
 
     <View
         android:layout_width="match_parent"
-        android:layout_height="1dp"
-        android:background="#EEEEEE"
+        android:layout_height="@dimen/ui_stroke_standard"
+        android:background="#000000"
         android:layout_marginStart="56dp" />
 
     <!-- Writing Item -->
@@ -73,6 +74,7 @@
             android:layout_weight="1"
             android:text="Writing"
             android:textSize="16sp"
+            android:textStyle="bold"
             android:textColor="#000000"
             android:layout_marginStart="16dp" />
 
@@ -80,14 +82,14 @@
             android:layout_width="24dp"
             android:layout_height="24dp"
             android:src="@drawable/ic_chevron_right"
-            app:tint="#888888" />
+            app:tint="#000000" />
 
     </LinearLayout>
 
     <View
         android:layout_width="match_parent"
-        android:layout_height="1dp"
-        android:background="#EEEEEE"
+        android:layout_height="@dimen/ui_stroke_standard"
+        android:background="#000000"
         android:layout_marginStart="56dp" />
 
     <!-- Edit Toolbar Item -->
@@ -115,6 +117,7 @@
             android:layout_weight="1"
             android:text="Edit Toolbar"
             android:textSize="16sp"
+            android:textStyle="bold"
             android:textColor="#000000"
             android:layout_marginStart="16dp" />
 
@@ -122,14 +125,14 @@
             android:layout_width="24dp"
             android:layout_height="24dp"
             android:src="@drawable/ic_chevron_right"
-            app:tint="#888888" />
+            app:tint="#000000" />
 
     </LinearLayout>
 
     <View
         android:layout_width="match_parent"
-        android:layout_height="1dp"
-        android:background="#EEEEEE"
+        android:layout_height="@dimen/ui_stroke_standard"
+        android:background="#000000"
         android:layout_marginStart="56dp" />
 
     <!-- Export Item -->
@@ -157,6 +160,7 @@
             android:layout_weight="1"
             android:text="Export PDF"
             android:textSize="16sp"
+            android:textStyle="bold"
             android:textColor="#000000"
             android:layout_marginStart="16dp" />
 
@@ -164,14 +168,14 @@
             android:layout_width="24dp"
             android:layout_height="24dp"
             android:src="@drawable/ic_chevron_right"
-            app:tint="#888888" />
+            app:tint="#000000" />
 
     </LinearLayout>
 
     <View
         android:layout_width="match_parent"
-        android:layout_height="1dp"
-        android:background="#EEEEEE"
+        android:layout_height="@dimen/ui_stroke_standard"
+        android:background="#000000"
         android:layout_marginStart="56dp" />
 
     <!-- Debug Item -->
@@ -199,6 +203,7 @@
             android:layout_weight="1"
             android:text="Debug"
             android:textSize="16sp"
+            android:textStyle="bold"
             android:textColor="#000000"
             android:layout_marginStart="16dp" />
 
@@ -206,14 +211,14 @@
             android:layout_width="24dp"
             android:layout_height="24dp"
             android:src="@drawable/ic_chevron_right"
-            app:tint="#888888" />
+            app:tint="#000000" />
 
     </LinearLayout>
 
     <View
         android:layout_width="match_parent"
-        android:layout_height="1dp"
-        android:background="#EEEEEE"
+        android:layout_height="@dimen/ui_stroke_standard"
+        android:background="#000000"
         android:layout_marginStart="56dp" />
 
 </LinearLayout>

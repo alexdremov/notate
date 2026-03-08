@@ -8,6 +8,7 @@ import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.Rect
 import android.graphics.RectF
+import android.os.Looper
 import android.util.AttributeSet
 import android.view.Choreographer
 import android.view.MotionEvent
@@ -120,6 +121,9 @@ class OnyxCanvasView
 
         private val exclusionRects = ArrayList<Rect>()
 
+        // Optimization: Pre-allocated RectF for sync updates
+        private val selectionBoundsCache = RectF()
+
         var onStrokeStarted: (() -> Unit)? = null
 
         var onContentChanged: (() -> Unit)? = null
@@ -130,8 +134,6 @@ class OnyxCanvasView
         var onBrowseFiles: ((onResult: (name: String, uuid: String) -> Unit) -> Unit)? = null
         var onSelectFile: ((onResult: (name: String, path: String) -> Unit) -> Unit)? = null
         var onLinkActivated: ((com.alexdremov.notate.model.LinkItem) -> Unit)? = null
-
-        private var actionPopup: com.alexdremov.notate.ui.dialog.SelectionActionPopup? = null
 
         private var contextMenu: com.alexdremov.notate.ui.dialog.CanvasContextMenu? = null
         private lateinit var gestureDetector: android.view.GestureDetector
@@ -532,9 +534,13 @@ class OnyxCanvasView
         }
 
         private fun invalidateCanvas() {
-            if (!drawScheduled) {
-                drawScheduled = true
-                Choreographer.getInstance().postFrameCallback(frameCallback)
+            if (Looper.myLooper() == Looper.getMainLooper()) {
+                if (!drawScheduled) {
+                    drawScheduled = true
+                    Choreographer.getInstance().postFrameCallback(frameCallback)
+                }
+            } else {
+                post { invalidateCanvas() }
             }
         }
 
@@ -627,6 +633,10 @@ class OnyxCanvasView
                 } finally {
                     holder.unlockCanvasAndPost(cv)
                 }
+
+                // FRAME SYNC: Update action popup position immediately AFTER unlocking the canvas.
+                // This ensures View hierarchy updates (translation) don't happen while Surface lock is held.
+                updateActionPopup()
 
                 val mode = pendingEpdUpdateMode
                 pendingEpdUpdateMode = null
@@ -770,28 +780,49 @@ class OnyxCanvasView
             onContentChanged?.invoke()
         }
 
+        private var actionPopup: com.alexdremov.notate.ui.dialog.SelectionActionPopup? = null
+        private var actionPopupContainer: android.widget.FrameLayout? = null
+
+        fun setActionPopupContainer(container: android.widget.FrameLayout) {
+            actionPopup?.destroy()
+            actionPopup = null
+            actionPopupContainer = container
+        }
+
         fun showActionPopup() {
             val sm = canvasController.getSelectionManager()
             if (sm.hasSelection()) {
                 if (actionPopup == null) {
+                    val container = actionPopupContainer ?: return
                     actionPopup =
                         com.alexdremov.notate.ui.dialog.SelectionActionPopup(
                             context,
+                            container,
                             onCopy = { viewScope.launch { canvasController.copySelection() } },
                             onDelete = { viewScope.launch { canvasController.deleteSelection() } },
                             onDismiss = { },
                         )
                 }
                 if (!selectionInteractor.isInteracting()) {
-                    val bounds = sm.getTransformedBounds()
-                    if (!bounds.isEmpty && bounds.width() > 1f && bounds.height() > 1f) {
-                        actionPopup?.show(this, bounds, matrix)
+                    sm.getTransformedBounds(selectionBoundsCache)
+                    if (!selectionBoundsCache.isEmpty && selectionBoundsCache.width() > 1f && selectionBoundsCache.height() > 1f) {
+                        actionPopup?.show(selectionBoundsCache, matrix)
                     } else {
                         actionPopup?.dismiss()
                     }
                 }
             } else {
                 actionPopup?.dismiss()
+            }
+        }
+
+        fun updateActionPopup() {
+            val sm = canvasController.getSelectionManager()
+            if (sm.hasSelection() && actionPopup?.isShowing() == true) {
+                sm.getTransformedBounds(selectionBoundsCache)
+                if (!selectionBoundsCache.isEmpty && selectionBoundsCache.width() > 1f && selectionBoundsCache.height() > 1f) {
+                    actionPopup?.updatePosition(selectionBoundsCache, matrix)
+                }
             }
         }
 

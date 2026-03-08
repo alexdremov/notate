@@ -11,6 +11,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.ArrowForward
@@ -22,6 +23,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -94,6 +96,8 @@ fun PageNavigationStrip(
     Card(
         elevation = CardDefaults.cardElevation(defaultElevation = 8.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        shape = RoundedCornerShape(12.dp),
+        border = androidx.compose.foundation.BorderStroke(1.dp, Color.Black),
         modifier = modifier.padding(16.dp),
     ) {
         Row(
@@ -106,11 +110,11 @@ fun PageNavigationStrip(
                     currentPage = controller.getCurrentPageIndex() + 1
                 }
             }) {
-                Icon(Icons.Default.ArrowBack, "Previous Page")
+                Icon(Icons.Default.ArrowBack, "Previous Page", tint = Color.Black)
             }
 
             TextButton(onClick = { showGrid = true }) {
-                Text(text = "$currentPage")
+                Text(text = "$currentPage", style = MaterialTheme.typography.titleLarge, color = Color.Black)
             }
 
             IconButton(onClick = {
@@ -119,7 +123,7 @@ fun PageNavigationStrip(
                     currentPage = controller.getCurrentPageIndex() + 1
                 }
             }) {
-                Icon(Icons.Default.ArrowForward, "Next Page")
+                Icon(Icons.Default.ArrowForward, "Next Page", tint = Color.Black)
             }
         }
     }
@@ -176,7 +180,7 @@ fun CompactPageNavigation(
                 Text(
                     text = "$currentPage",
                     color = Color.Black,
-                    style = MaterialTheme.typography.labelSmall,
+                    style = MaterialTheme.typography.titleLarge,
                     textAlign = androidx.compose.ui.text.style.TextAlign.Center,
                 )
             }
@@ -215,7 +219,7 @@ fun CompactPageNavigation(
                 contentPadding = PaddingValues(horizontal = 4.dp),
                 modifier = Modifier.height(36.dp),
             ) {
-                Text(text = "$currentPage", color = Color.Black, style = MaterialTheme.typography.labelLarge)
+                Text(text = "$currentPage", color = Color.Black, style = MaterialTheme.typography.titleLarge)
             }
 
             IconButton(
@@ -263,8 +267,8 @@ fun PageGridDialog(
         properties = DialogProperties(usePlatformDefaultWidth = false),
     ) {
         Surface(
-            modifier = Modifier.fillMaxSize().padding(16.dp),
-            shape = MaterialTheme.shapes.medium,
+            modifier = Modifier.fillMaxSize().padding(16.dp).border(1.dp, Color.Black, RoundedCornerShape(12.dp)),
+            shape = RoundedCornerShape(12.dp),
             color = MaterialTheme.colorScheme.background,
         ) {
             Column {
@@ -273,9 +277,9 @@ fun PageGridDialog(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Text("All Pages", style = MaterialTheme.typography.titleMedium)
+                    Text("All Pages", style = MaterialTheme.typography.titleLarge, color = Color.Black)
                     IconButton(onClick = onDismiss) {
-                        Icon(Icons.Default.Close, "Close")
+                        Icon(Icons.Default.Close, "Close", tint = Color.Black)
                     }
                 }
 
@@ -335,8 +339,8 @@ fun PageThumbnailItem(
                     Modifier
                         .fillMaxSize()
                         .border(
-                            width = if (isSelected) 3.dp else 1.dp,
-                            color = if (isSelected) MaterialTheme.colorScheme.primary else Color.Gray,
+                            width = 1.dp,
+                            color = if (isSelected) MaterialTheme.colorScheme.primary else Color.Black,
                             shape = androidx.compose.ui.graphics.RectangleShape,
                         ),
             ) {
@@ -353,12 +357,13 @@ fun PageThumbnailItem(
                 Text(
                     text = "$pageNumber",
                     modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 8.dp),
-                    style = MaterialTheme.typography.labelLarge,
-                    color = Color.Gray,
+                    style = MaterialTheme.typography.titleMedium,
+                    color = Color.Black,
+                    fontWeight = FontWeight.Bold,
                 )
             }
         }
         Spacer(modifier = Modifier.height(4.dp))
-        Text("Page $pageNumber", style = MaterialTheme.typography.bodySmall)
+        Text("Page $pageNumber", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold, color = Color.Black)
     }
 }

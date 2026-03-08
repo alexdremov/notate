@@ -227,6 +227,13 @@ class SelectionManager {
         }
     }
 
+    fun getTransformedBounds(outRect: RectF) {
+        synchronized(lock) {
+            outRect.set(selectionBounds)
+            transformMatrix.mapRect(outRect)
+        }
+    }
+
     fun getTransformedCorners(): FloatArray {
         synchronized(lock) {
             val pts =
@@ -256,15 +263,21 @@ class SelectionManager {
     fun translate(
         dx: Float,
         dy: Float,
-    ) {
+    ): RectF {
         synchronized(lock) {
             transformMatrix.postTranslate(dx, dy)
+            val r = RectF(selectionBounds)
+            transformMatrix.mapRect(r)
+            return r
         }
     }
 
-    fun applyTransform(matrix: Matrix) {
+    fun applyTransform(matrix: Matrix): RectF {
         synchronized(lock) {
             transformMatrix.postConcat(matrix)
+            val r = RectF(selectionBounds)
+            transformMatrix.mapRect(r)
+            return r
         }
     }
 

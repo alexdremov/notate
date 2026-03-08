@@ -294,6 +294,8 @@ class CanvasActivity : AppCompatActivity() {
             viewModel.setToolbarDragging(isDragging)
         }
 
+        binding.canvasView.setActionPopupContainer(binding.selectionActionsContainer)
+
         var isToolbarInteractionActive = false
         val finishToolbarInteraction = {
             if (isToolbarInteractionActive) {

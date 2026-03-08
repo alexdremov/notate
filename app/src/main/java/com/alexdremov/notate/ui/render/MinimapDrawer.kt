@@ -54,9 +54,11 @@ class MinimapDrawer(
     private val textPaint =
         Paint().apply {
             color = Color.BLACK
-            textSize = 30f
+            textSize = 24f
             textAlign = Paint.Align.RIGHT
             isAntiAlias = true
+            // Add a slight white shadow for readability over content
+            setShadowLayer(3f, 0f, 0f, Color.WHITE)
         }
 
     fun setDirty() {
@@ -166,8 +168,9 @@ class MinimapDrawer(
         minimapMatrix.mapRect(mappedViewport)
         canvas.drawRect(mappedViewport, viewportPaint)
 
+        // 7. Draw Zoom Text (Inside map, bottom-right)
         val scaleText = "${(currentScale * 100).toInt()}%"
-        canvas.drawText(scaleText, width - padding, mapTop + targetH + 40f, textPaint)
+        canvas.drawText(scaleText, mapLeft + targetW - 4f, mapTop + targetH - 4f, textPaint)
     }
 
     private val dirtyRegionIds = mutableSetOf<com.alexdremov.notate.data.region.RegionId>()
