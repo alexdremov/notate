@@ -70,15 +70,13 @@ class SelectionActionPopup(
         matrix: android.graphics.Matrix,
     ) {
         if (!isVisible) return
-        val pos = calculatePosition(selectionBounds, matrix)
-        binding.root.translationX = pos.first
-        binding.root.translationY = pos.second
+        calculateAndApplyPosition(selectionBounds, matrix)
     }
 
-    private fun calculatePosition(
+    private fun calculateAndApplyPosition(
         selectionBounds: RectF,
         matrix: android.graphics.Matrix,
-    ): Pair<Float, Float> {
+    ) {
         // Calculate screen coordinates using reused buffer
         val cx = selectionBounds.centerX()
         ptsBuffer[0] = cx
@@ -122,7 +120,8 @@ class SelectionActionPopup(
         if (x < 0) x = 0f
         if (x + popupWidth > displayMetrics.widthPixels) x = displayMetrics.widthPixels.toFloat() - popupWidth
 
-        return Pair(x, y)
+        binding.root.translationX = x
+        binding.root.translationY = y
     }
 
     fun dismiss() {
@@ -137,6 +136,7 @@ class SelectionActionPopup(
     fun isShowing() = isVisible
 
     fun destroy() {
+        dismiss()
         container.removeView(binding.root)
     }
 }

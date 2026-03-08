@@ -339,8 +339,8 @@ fun PageThumbnailItem(
                     Modifier
                         .fillMaxSize()
                         .border(
-                            width = 1.dp,
-                            color = if (isSelected) MaterialTheme.colorScheme.primary else Color.Black,
+                            width = if (isSelected) 2.dp else 1.dp,
+                            color = Color.Black,
                             shape = androidx.compose.ui.graphics.RectangleShape,
                         ),
             ) {

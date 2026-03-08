@@ -16,6 +16,7 @@ import io.mockk.mockk
 import io.mockk.mockkObject
 import io.mockk.slot
 import io.mockk.unmockkObject
+import io.mockk.verify
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
@@ -124,16 +125,16 @@ class SelectionInteractorTest {
             interactor.onDown(300f, 200f)
 
             val matrixSlot = slot<Matrix>()
-            io.mockk.coEvery { controller.transformSelection(capture(matrixSlot)) } returns Unit
+            every { controller.transformSelectionSync(capture(matrixSlot)) } returns Unit
 
             // Act
             val event = mockk<android.view.MotionEvent>(relaxed = true)
             every { event.pointerCount } returns 1
             every { event.x } returns 400f
             every { event.y } returns 200f
+            every { event.historySize } returns 0
 
             interactor.onMove(event)
-            advanceUntilIdle()
 
             // Assert
             assertTrue("Matrix should be captured", matrixSlot.isCaptured)
@@ -141,6 +142,9 @@ class SelectionInteractorTest {
             val values = FloatArray(9)
             m.getValues(values)
 
+            // Check horizontal scale
+            // pivot is Left Edge (px=100), handle is at 300, target is 400.
+            // scale = (worldCurr-px)/(worldLast-px) = (400-100)/(300-100) = 300/200 = 1.5
             assertEquals(1.5f, values[Matrix.MSCALE_X], 0.01f)
             assertEquals(1.0f, values[Matrix.MSCALE_Y], 0.01f)
         }
@@ -148,6 +152,10 @@ class SelectionInteractorTest {
     private fun setupSelection(bounds: RectF) {
         every { selectionManager.hasSelection() } returns true
         every { selectionManager.getTransformedBounds() } returns bounds
+        every { selectionManager.getTransformedBounds(any()) } answers {
+            val out = it.invocation.args[0] as RectF
+            out.set(bounds)
+        }
 
         val corners =
             floatArrayOf(
