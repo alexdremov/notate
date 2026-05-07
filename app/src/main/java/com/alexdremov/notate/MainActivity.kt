@@ -531,8 +531,13 @@ fun MainScreen(
                 com.alexdremov.notate.data.SyncPreferencesManager
                     .saveRemoteStorages(context, current)
 
-                com.alexdremov.notate.data.SyncPreferencesManager
-                    .savePassword(context, config.id, password)
+                if (config.type.toString() == "WEBDAV") {
+                    com.alexdremov.notate.data.SyncPreferencesManager
+                        .savePassword(context, config.id, password)
+                } else {
+                    com.alexdremov.notate.data.SyncPreferencesManager
+                        .savePassword(context, config.id, "")
+                }
                 showEditStorage = false
                 refreshStoragesTrigger++
             },
