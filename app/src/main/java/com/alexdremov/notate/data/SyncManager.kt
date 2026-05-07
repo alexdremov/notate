@@ -9,6 +9,7 @@ import com.alexdremov.notate.export.PdfExporter
 import com.alexdremov.notate.model.InfiniteCanvasModel
 import com.alexdremov.notate.util.Logger
 import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.sync.Semaphore
@@ -18,7 +19,12 @@ import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.IOException
 import java.io.InputStream
+import java.util.concurrent.ConcurrentHashMap
 
+/**
+ * Manages the synchronization between local project files and remote storage providers.
+ * Handles uploads, downloads, and conflict resolution (preferring local changes).
+ */
 class SyncManager(
     private val context: Context,
     private val canvasRepository: CanvasRepository,
@@ -78,26 +84,21 @@ class SyncManager(
     )
 
     companion object {
+        private const val TAG = "SyncManager"
+        private const val WAKE_LOCK_TIMEOUT_MS = 60 * 60 * 1000L // 1 hour safety bound
+
         @Volatile
         var isCanvasOpen: Boolean = false
 
-        // Global Semaphore to limit concurrent syncs to 1 (prevents OOM)
         private val globalSyncSemaphore = Semaphore(1)
+        private val activeSyncJobs = ConcurrentHashMap<Job, String>()
+        private val interruptedProjects = java.util.Collections.newSetFromMap(ConcurrentHashMap<String, Boolean>())
 
-        // Track active jobs: Job -> ProjectID
-        private val activeSyncJobs = java.util.concurrent.ConcurrentHashMap<Job, String>()
-
-        // Track projects that were syncing when cancelled
-        private val interruptedProjects = java.util.Collections.newSetFromMap(java.util.concurrent.ConcurrentHashMap<String, Boolean>())
-
-        // Global progress flow: ProjectID -> (Progress, Message)
-        private val _globalSyncProgress = kotlinx.coroutines.flow.MutableStateFlow<Map<String, Pair<Int, String>>>(emptyMap())
+        private val _globalSyncProgress = MutableStateFlow<Map<String, Pair<Int, String>>>(emptyMap())
         val globalSyncProgress = _globalSyncProgress.asStateFlow()
 
         fun cancelAllSyncs() {
-            Logger.i("SyncManager", "Cancelling all active sync jobs due to canvas activity")
-            // No need to synchronize activeSyncJobs for iteration if it's ConcurrentHashMap,
-            // but for atomic clear+copy logic, synchronized block is safer/simpler.
+            Logger.i(TAG, "Cancelling all active sync jobs due to canvas activity")
             synchronized(activeSyncJobs) {
                 activeSyncJobs.forEach { (job, projectId) ->
                     interruptedProjects.add(projectId)
@@ -105,7 +106,6 @@ class SyncManager(
                 }
                 activeSyncJobs.clear()
             }
-            // Clear progress for cancelled jobs
             _globalSyncProgress.value = emptyMap()
         }
 
@@ -114,6 +114,8 @@ class SyncManager(
             interruptedProjects.clear()
             return set
         }
+
+        private fun normalizePath(path: String): String = path.replace("\\", "/")
     }
 
     suspend fun syncProject(
@@ -121,616 +123,474 @@ class SyncManager(
         progressCallback: ((Int, String) -> Unit)? = null,
     ) = withContext(ioDispatcher) {
         if (isCanvasOpen) {
-            Logger.w("SyncManager", "Skipping sync because canvas is open")
+            Logger.w(TAG, "Skipping sync for $projectId: Canvas is currently open")
             return@withContext
         }
 
         val job = currentCoroutineContext()[Job]
         if (job != null) {
             activeSyncJobs[job] = projectId
-            job.invokeOnCompletion {
-                activeSyncJobs.remove(job)
-            }
+            job.invokeOnCompletion { activeSyncJobs.remove(job) }
         }
 
-        // Remove from interrupted if we are restarting it
         interruptedProjects.remove(projectId)
-
-        Logger.d("SyncManager", "Queued sync for project ID: $projectId (Waiting for semaphore)")
+        Logger.d(TAG, "Sync for $projectId queued, waiting for permit")
 
         globalSyncSemaphore.withPermit {
-            Logger.d("SyncManager", "Starting sync execution for project ID: $projectId")
+            performSyncWithLocks(projectId, progressCallback)
+        }
+    }
 
-            val powerManager = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
-            val wakeLock =
-                powerManager?.newWakeLock(
-                    PowerManager.PARTIAL_WAKE_LOCK,
-                    "Notate:SyncWakeLock",
-                )
-            val wifiManager = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
-            val wifiLock = wifiManager?.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "Notate:SyncWifiLock")
+    private suspend fun performSyncWithLocks(
+        projectId: String,
+        progressCallback: ((Int, String) -> Unit)?,
+    ) {
+        val powerManager = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
+        val wakeLock = powerManager?.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Notate:SyncWakeLock")
 
-            // Helper to update both global and local callback
-            val updateProgress: (Int, String) -> Unit = { p, m ->
-                _globalSyncProgress.update { it + (projectId to (p to m)) }
-                progressCallback?.invoke(p, m)
-            }
+        val wifiManager = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+        val wifiLock = wifiManager?.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "Notate:SyncWifiLock")
 
+        val updateProgress: (Int, String) -> Unit = { p, m ->
+            _globalSyncProgress.update { it + (projectId to (p to m)) }
+            progressCallback?.invoke(p, m)
+        }
+
+        try {
+            wakeLock?.acquire(WAKE_LOCK_TIMEOUT_MS)
+            wifiLock?.acquire()
+
+            performSyncInternal(projectId, updateProgress)
+        } catch (e: CancellationException) {
+            Logger.i(TAG, "Sync for $projectId was cancelled")
+            updateProgress(0, "Sync cancelled")
+            throw e
+        } catch (e: Exception) {
+            Logger.e(TAG, "Sync failed for project $projectId", e, showToUser = true)
+            updateProgress(0, "Sync failed: ${e.localizedMessage ?: e.message}")
+        } finally {
+            _globalSyncProgress.update { it - projectId }
             try {
-                // Acquire with a 1-hour timeout as a safety bound against battery drain if release is skipped
-                wakeLock?.acquire(60 * 60 * 1000L)
-                wifiLock?.acquire()
-
-                updateProgress(0, "Initializing sync...")
-
-                val config = SyncPreferencesManager.getProjectSyncConfig(context, projectId)
-
-                if (config == null) {
-                    Logger.w("SyncManager", "No sync config found for project $projectId")
-                    return@withPermit
-                }
-
-                if (!config.isEnabled) {
-                    Logger.d("SyncManager", "Sync disabled for project $projectId")
-                    return@withPermit
-                }
-
-                val storageConfig = SyncPreferencesManager.getRemoteStorages(context).find { it.id == config.remoteStorageId }
-                if (storageConfig == null) {
-                    Logger.e("SyncManager", "Storage config not found for ID: ${config.remoteStorageId}", showToUser = true)
-                    return@withPermit
-                }
-
-                val password = SyncPreferencesManager.getPassword(context, storageConfig.id) ?: ""
-
-                val provider: RemoteStorageProvider = providerFactory(context, storageConfig, password)
-
-                updateProgress(0, "Initializing sync...")
-
-                // Check/Create Root Directory
-                try {
-                    // Just check existence of root
-                    provider.listFiles(config.remotePath)
-                } catch (e: java.io.FileNotFoundException) {
-                    Logger.w("SyncManager", "Remote directory not found, creating: ${config.remotePath}")
-                    updateProgress(5, "Creating remote directory...")
-                    if (!provider.createDirectory(config.remotePath)) {
-                        throw java.io.IOException("Failed to create remote directory: ${config.remotePath}")
-                    }
-                } catch (e: Exception) {
-                    Logger.e("SyncManager", "Error checking remote root", e)
-                    // Continue, listFiles might fail later or succeed
-                }
-
-                // Load Sync Metadata
-                var syncMetadata = SyncPreferencesManager.getProjectSyncMetadata(context, projectId)
-                val fileStates = syncMetadata.files.toMutableMap()
-
-                // 1. Scan Local Project (Moved up to validate pending deletions)
-                updateProgress(10, "Scanning local project...")
-                val projects = PreferencesManager.getProjects(context)
-                val projectConfig = projects.find { it.id == projectId } ?: return@withPermit
-                Logger.d("SyncManager", "Syncing local project at ${projectConfig.uri}")
-
-                val localFiles = mutableListOf<LocalFile>()
-
-                if (projectConfig.uri.startsWith("content://")) {
-                    DocumentFile.fromTreeUri(context, Uri.parse(projectConfig.uri))?.let { rootDir ->
-                        scanDocumentFilesRecursively(context, rootDir, "", localFiles)
-                    }
-                } else {
-                    val rootDir = File(projectConfig.uri)
-                    if (rootDir.exists()) {
-                        scanJavaFilesRecursively(rootDir, rootDir, localFiles)
-                    }
-                }
-
-                // --- Pending Deletions Processing ---
-                val pendingDeletions = SyncPreferencesManager.getPendingDeletions(context).filter { it.projectId == projectId }
-                if (pendingDeletions.isNotEmpty()) {
-                    Logger.d("SyncManager", "Processing ${pendingDeletions.size} pending deletions")
-                    updateProgress(12, "Processing deletions...")
-
-                    for (deletion in pendingDeletions) {
-                        try {
-                            val cleanRelativePath = deletion.relativePath.replace("\\", "/")
-
-                            // CRITICAL FIX: If local file exists, the user re-created it.
-                            // Do NOT delete from remote. Instead, clear the pending deletion and let Upload logic handle it.
-                            val localExists = localFiles.any { it.relativePath.replace("\\", "/") == cleanRelativePath }
-
-                            if (localExists) {
-                                Logger.i(
-                                    "SyncManager",
-                                    "Pending deletion for $cleanRelativePath skipped because local file exists (Superseded).",
-                                )
-                                SyncPreferencesManager.removePendingDeletion(context, projectId, deletion.relativePath)
-                                continue
-                            }
-
-                            val remotePath = "${config.remotePath.trimEnd('/')}/$cleanRelativePath"
-
-                            Logger.d("SyncManager", "Deleting pending remote file: $remotePath")
-
-                            try {
-                                provider.deleteFile(remotePath)
-                                if (config.syncPdf && deletion.relativePath.endsWith(".notate")) {
-                                    val pdfRelativePath = cleanRelativePath.substringBeforeLast(".") + ".pdf"
-                                    val remotePdfPath = "${config.remotePath.trimEnd('/')}/$pdfRelativePath"
-                                    try {
-                                        provider.deleteFile(remotePdfPath)
-                                    } catch (ignored: Exception) {
-                                    }
-                                }
-
-                                // Success! Remove from pending and metadata
-                                SyncPreferencesManager.removePendingDeletion(context, projectId, deletion.relativePath)
-                                fileStates.remove(cleanRelativePath)
-                            } catch (e: java.io.FileNotFoundException) {
-                                // Already gone
-                                SyncPreferencesManager.removePendingDeletion(context, projectId, deletion.relativePath)
-                                fileStates.remove(cleanRelativePath)
-                            } catch (e: Exception) {
-                                Logger.w("SyncManager", "Failed to process pending deletion for ${deletion.relativePath}", e)
-                                // Keep in pending list to retry later, AND prevent download below
-                            }
-                        } catch (e: Exception) {
-                            Logger.e("SyncManager", "Error in pending deletion loop", e)
-                        }
-                    }
-                }
-
-                // Reload pending deletions in case some failed - we must filter them out from download list
-                val remainingPendingDeletions =
-                    SyncPreferencesManager
-                        .getPendingDeletions(context)
-                        .filter { it.projectId == projectId }
-                        .map { it.relativePath.replace("\\", "/") }
-                        .toSet()
-
-                updateProgress(15, "Listing remote files recursively...")
-                Logger.d("SyncManager", "Scanning remote files at ${config.remotePath}")
-                val allRemoteFilesRaw = scanRemoteFilesRecursively(provider, config.remotePath, "")
-
-                // Filter out files that are pending deletion
-                val allRemoteFiles =
-                    allRemoteFilesRaw.filter {
-                        val cleanPath = it.relativePath.replace("\\", "/")
-                        !remainingPendingDeletions.contains(cleanPath)
-                    }
-
-                Logger.d("SyncManager", "Found ${localFiles.size} local files and ${allRemoteFiles.size} remote files")
-
-                val totalSteps = localFiles.size + allRemoteFiles.size
-                var currentStep = 0
-
-                updateProgress(20, "Synchronizing files...")
-
-                // 1. Upload/Update local files to remote
-                for (localFile in localFiles) {
-                    if (SaveStatusManager.isSaving(localFile.path)) {
-                        Logger.d("SyncManager", "Skipping ${localFile.name} because it is currently saving")
-                        continue
-                    }
-
-                    val cleanRelativePath = localFile.relativePath.replace("\\", "/")
-                    val fileState = fileStates[cleanRelativePath]
-                    val remoteEntry = allRemoteFiles.find { it.relativePath.replace("\\", "/") == cleanRelativePath }
-                    val remoteFile = remoteEntry?.file
-
-                    // Logic:
-                    // - If no state (new file), upload.
-                    // - If local modified > stored last local modified, upload.
-                    // - If the remote file is missing entirely, we must upload it (e.g. storage switch).
-
-                    val shouldUpload = fileState == null || localFile.lastModified > fileState.lastLocalModified || remoteFile == null
-
-                    if (shouldUpload) {
-                        Logger.d(
-                            "SyncManager",
-                            "Uploading ${localFile.name} (Local: ${localFile.lastModified}, LastSyncedLocal: ${fileState?.lastLocalModified})",
-                        )
-                        updateProgress((20 + (currentStep++ * 60 / totalSteps)), "Uploading ${localFile.name}...")
-
-                        val remotePath = "${config.remotePath.trimEnd('/')}/$cleanRelativePath"
-                        val parentRemotePath = remotePath.substringBeforeLast('/')
-                        try {
-                            provider.createDirectory(parentRemotePath)
-                        } catch (e: Exception) {
-                            Logger.w("SyncManager", "Failed to verify/create parent directory $parentRemotePath", e)
-                        }
-
-                        // Retry loop for actual upload to handle transient "Stream Closed" timeouts
-                        var uploaded = false
-                        var attempts = 0
-                        var lastException: Exception? = null
-
-                        while (attempts < 3 && !uploaded) {
-                            try {
-                                localFile.openInputStream()?.use { input ->
-                                    uploaded = provider.uploadFile(remotePath, input, localFile.size)
-                                }
-                            } catch (e: Exception) {
-                                lastException = e
-                                attempts++
-                                Logger.w("SyncManager", "Upload attempt $attempts failed for ${localFile.name}", e)
-                                if (attempts < 3) {
-                                    delay(1500L * attempts)
-                                }
-                            }
-                        }
-
-                        if (!uploaded) {
-                            Logger.e("SyncManager", "Failed to upload ${localFile.name} after 3 attempts", lastException)
-                            throw IOException("Failed to upload ${localFile.name}", lastException)
-                        }
-
-                        // Also sync PDF if enabled
-                        if (config.syncPdf) {
-                            Logger.d("SyncManager", "Generating/Uploading PDF for ${localFile.name}")
-                            val baseProgress = 20 + ((currentStep - 1) * 60 / totalSteps)
-                            val stepSize = 60.0 / totalSteps
-                            syncPdf(localFile, config.remotePath, provider) { p, m ->
-                                val pdfProgress = (baseProgress + (p / 100.0) * stepSize).toInt()
-                                updateProgress(pdfProgress, "PDF ${localFile.name}: $m")
-                            }
-                        }
-
-                        // Update State
-                        try {
-                            val updatedRemoteItems = provider.listFiles(remotePath.substringBeforeLast('/'))
-                            val updatedRemoteFile = updatedRemoteItems.find { it.name == localFile.name }
-
-                            if (updatedRemoteFile != null) {
-                                fileStates[cleanRelativePath] =
-                                    FileSyncState(
-                                        lastLocalModified = localFile.lastModified,
-                                        lastRemoteModified = updatedRemoteFile.lastModified,
-                                        lastSyncTime = System.currentTimeMillis(),
-                                    )
-                            } else {
-                                // Weird, we just uploaded it.
-                                Logger.w("SyncManager", "Uploaded file not found immediately after upload: $cleanRelativePath")
-                            }
-                        } catch (e: Exception) {
-                            Logger.w("SyncManager", "Failed to update metadata after upload for $cleanRelativePath", e)
-                        }
-                    }
-                }
-
-                // 2. Download remote files that don't exist locally or are newer
-                for (remoteEntry in allRemoteFiles) {
-                    val remoteFile = remoteEntry.file
-                    if (remoteFile.isDirectory || !remoteFile.name.endsWith(".notate")) continue
-                    val cleanRelativePath = remoteEntry.relativePath.replace("\\", "/")
-
-                    val localFile = localFiles.find { it.relativePath.replace("\\", "/") == cleanRelativePath }
-                    val fileState = fileStates[cleanRelativePath]
-
-                    // Logic:
-                    // - If no local file, download (unless we deleted it pending? No, we filtered those).
-                    // - If remote timestamp > stored last remote modified, it's a remote change -> Download.
-                    // - BUT if local also changed (conflict), we currently prefer local (handled in step 1).
-                    //   So here, we only download if we DID NOT just upload.
-
-                    // If we just uploaded, fileState.lastLocalModified should equal localFile.lastModified
-                    val localChanged = localFile != null && (fileState == null || localFile.lastModified > fileState.lastLocalModified)
-
-                    if (localChanged) {
-                        // We have local changes that haven't been synced (or we just synced them).
-                        // In either case, don't overwrite with remote unless we implement conflict resolution.
-                        continue
-                    }
-
-                    val isNewRemote = fileState == null || remoteFile.lastModified > fileState.lastRemoteModified
-
-                    if (localFile == null || isNewRemote) {
-                        Logger.d(
-                            "SyncManager",
-                            "Downloading ${remoteFile.name} (Remote: ${remoteFile.lastModified}, LastSyncedRemote: ${fileState?.lastRemoteModified})",
-                        )
-                        updateProgress((20 + (currentStep++ * 60 / totalSteps)), "Downloading ${remoteFile.name}...")
-
-                        provider.downloadFile(remoteFile.path)?.use { input ->
-                            if (projectConfig.uri.startsWith("content://")) {
-                                val dir = DocumentFile.fromTreeUri(context, Uri.parse(projectConfig.uri))
-                                // Handle nested directories for SAF
-                                val relativeParts = remoteEntry.relativePath.split('/').dropLast(1)
-                                var currentDir = dir
-                                for (part in relativeParts) {
-                                    currentDir = currentDir?.findFile(part) ?: currentDir?.createDirectory(part)
-                                }
-
-                                val existing = currentDir?.findFile(remoteFile.name)
-                                val file = existing ?: currentDir?.createFile("application/octet-stream", remoteFile.name)
-                                file?.let {
-                                    context.contentResolver.openOutputStream(it.uri)?.use { output ->
-                                        input.copyTo(output)
-                                    }
-                                }
-                            } else {
-                                val file = File(projectConfig.uri, remoteEntry.relativePath)
-                                file.parentFile?.mkdirs() // Ensure parent exists
-                                file.outputStream().use { output ->
-                                    input.copyTo(output)
-                                }
-                                file.setLastModified(remoteFile.lastModified)
-                            }
-                        }
-
-                        // Update State after download
-                        var newLocalTimestamp = remoteFile.lastModified
-                        if (projectConfig.uri.startsWith("content://")) {
-                            // Re-query SAF to get actual timestamp
-                        } else {
-                            // We called file.setLastModified(remoteFile.lastModified)
-                            newLocalTimestamp = remoteFile.lastModified
-                        }
-
-                        fileStates[cleanRelativePath] =
-                            FileSyncState(
-                                lastLocalModified = newLocalTimestamp,
-                                lastRemoteModified = remoteFile.lastModified,
-                                lastSyncTime = System.currentTimeMillis(),
-                            )
-                    }
-                }
-
-                // Save updated metadata
-                SyncPreferencesManager.saveProjectSyncMetadata(
-                    context,
-                    projectId,
-                    syncMetadata.copy(files = fileStates),
-                )
-
-                // Update last sync time
-                SyncPreferencesManager.updateProjectSyncConfig(context, config.copy(lastSyncTimestamp = System.currentTimeMillis()))
-                updateProgress(100, "Sync complete")
-                Logger.d("SyncManager", "Sync finished successfully")
-            } catch (e: CancellationException) {
-                Logger.d("SyncManager", "Sync cancelled")
-                updateProgress(0, "Sync cancelled: ${e.message}")
+                if (wakeLock?.isHeld == true) wakeLock.release()
+                if (wifiLock?.isHeld == true) wifiLock.release()
             } catch (e: Exception) {
-                Logger.e("SyncManager", "Sync failed", e, showToUser = true)
-                updateProgress(0, "Sync failed: ${e.message}")
-            } finally {
-                _globalSyncProgress.update { it - projectId }
-                try {
-                    if (wakeLock?.isHeld ?: false) wakeLock?.release()
-                    if (wifiLock?.isHeld ?: false) wifiLock?.release()
-                } catch (e: Exception) {
-                    Logger.w("SyncManager", "Failed to release WakeLocks", e)
-                }
+                Logger.w(TAG, "Error releasing locks", e)
             }
         }
+    }
+
+    private suspend fun performSyncInternal(
+        projectId: String,
+        updateProgress: (Int, String) -> Unit,
+    ) {
+        updateProgress(0, "Initializing...")
+
+        val config =
+            SyncPreferencesManager.getProjectSyncConfig(context, projectId)
+                ?: throw IllegalStateException("No sync configuration for project $projectId")
+
+        if (!config.isEnabled) {
+            Logger.d(TAG, "Sync disabled for $projectId")
+            return
+        }
+
+        val storageConfig =
+            SyncPreferencesManager.getRemoteStorages(context).find { it.id == config.remoteStorageId }
+                ?: throw IllegalStateException("Remote storage config not found for ID: ${config.remoteStorageId}")
+
+        val password = SyncPreferencesManager.getPassword(context, storageConfig.id) ?: ""
+        val provider = providerFactory(context, storageConfig, password)
+
+        ensureRemoteDirectoryExists(provider, config.remotePath)
+
+        // 1. Scan Local
+        updateProgress(5, "Scanning local files...")
+        val localFiles = scanLocalFiles(projectId)
+
+        // 2. Load Metadata
+        val syncMetadata = SyncPreferencesManager.getProjectSyncMetadata(context, projectId)
+        val fileStates = syncMetadata.files.toMutableMap()
+
+        // 3. Process Deletions
+        updateProgress(10, "Processing pending deletions...")
+        processPendingDeletions(projectId, config, provider, localFiles, fileStates)
+
+        // 4. Scan Remote
+        updateProgress(15, "Scanning remote storage...")
+        val allRemoteFiles =
+            scanRemoteFilesRecursively(provider, config.remotePath, "")
+                .filterNot { remote ->
+                    SyncPreferencesManager
+                        .getPendingDeletions(context)
+                        .any { it.projectId == projectId && normalizePath(it.relativePath) == normalizePath(remote.relativePath) }
+                }
+
+        Logger.d(TAG, "Found ${localFiles.size} local and ${allRemoteFiles.size} remote files")
+
+        // 5. Sync Logic
+        val totalSteps = localFiles.size + allRemoteFiles.size
+        var currentStep = 0
+
+        // 5a. Uploads
+        for (local in localFiles) {
+            if (SaveStatusManager.isSaving(local.path)) continue
+
+            val relPath = normalizePath(local.relativePath)
+            val state = fileStates[relPath]
+            val remote = allRemoteFiles.find { normalizePath(it.relativePath) == relPath }
+
+            if (state == null || local.lastModified > state.lastLocalModified || remote == null) {
+                val progress = 20 + (currentStep * 60 / totalSteps)
+                val stepSize = 60 / totalSteps
+                updateProgress(progress, "Uploading ${local.name}...")
+
+                uploadFileWithRetries(local, config, provider, fileStates) { p, m ->
+                    val subProgress = progress + (p * stepSize / 100)
+                    updateProgress(subProgress, "${local.name}: $m")
+                }
+            }
+            currentStep++
+        }
+
+        // 5b. Downloads
+        for (remoteWrap in allRemoteFiles) {
+            val remote = remoteWrap.file
+            if (remote.isDirectory || !remote.name.endsWith(".notate")) {
+                currentStep++
+                continue
+            }
+
+            val relPath = normalizePath(remoteWrap.relativePath)
+            val local = localFiles.find { normalizePath(it.relativePath) == relPath }
+            val state = fileStates[relPath]
+
+            // Conflict: If local changed but not uploaded yet, skip download
+            val localHasUnsyncedChanges = local != null && (state == null || local.lastModified > state.lastLocalModified)
+            if (localHasUnsyncedChanges) {
+                currentStep++
+                continue
+            }
+
+            if (local == null || state == null || remote.lastModified > state.lastRemoteModified) {
+                val progress = 20 + (currentStep * 60 / totalSteps)
+                updateProgress(progress, "Downloading ${remote.name}...")
+                downloadFile(remoteWrap, projectId, provider, fileStates)
+            }
+            currentStep++
+        }
+
+        // 6. Finalize
+        SyncPreferencesManager.saveProjectSyncMetadata(context, projectId, syncMetadata.copy(files = fileStates))
+        SyncPreferencesManager.updateProjectSyncConfig(context, config.copy(lastSyncTimestamp = System.currentTimeMillis()))
+        updateProgress(100, "Sync complete")
+    }
+
+    private suspend fun processPendingDeletions(
+        projectId: String,
+        config: ProjectSyncConfig,
+        provider: RemoteStorageProvider,
+        localFiles: List<LocalFile>,
+        fileStates: MutableMap<String, FileSyncState>,
+    ) {
+        val pending = SyncPreferencesManager.getPendingDeletions(context).filter { it.projectId == projectId }
+        for (deletion in pending) {
+            val relPath = normalizePath(deletion.relativePath)
+
+            // Re-creation check: if file exists locally, it was deleted and re-created
+            if (localFiles.any { normalizePath(it.relativePath) == relPath }) {
+                SyncPreferencesManager.removePendingDeletion(context, projectId, deletion.relativePath)
+                continue
+            }
+
+            val remotePath = "${config.remotePath.trimEnd('/')}/$relPath"
+            try {
+                provider.deleteFile(remotePath)
+                if (config.syncPdf && relPath.endsWith(".notate")) {
+                    val pdfPath = relPath.substringBeforeLast(".") + ".pdf"
+                    provider.deleteFile("${config.remotePath.trimEnd('/')}/$pdfPath")
+                }
+                SyncPreferencesManager.removePendingDeletion(context, projectId, deletion.relativePath)
+                fileStates.remove(relPath)
+            } catch (e: java.io.FileNotFoundException) {
+                SyncPreferencesManager.removePendingDeletion(context, projectId, deletion.relativePath)
+                fileStates.remove(relPath)
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                Logger.w(TAG, "Deletion failed for $relPath, will retry", e)
+            }
+        }
+    }
+
+    private suspend fun uploadFileWithRetries(
+        local: LocalFile,
+        config: ProjectSyncConfig,
+        provider: RemoteStorageProvider,
+        fileStates: MutableMap<String, FileSyncState>,
+        progressCallback: ((Int, String) -> Unit)? = null,
+    ) {
+        val relPath = normalizePath(local.relativePath)
+        val remotePath = "${config.remotePath.trimEnd('/')}/$relPath"
+
+        provider.createDirectory(remotePath.substringBeforeLast('/'))
+
+        var success = false
+        var lastErr: Exception? = null
+        for (attempt in 1..3) {
+            try {
+                local.openInputStream()?.use { input ->
+                    success = provider.uploadFile(remotePath, input, local.size)
+                }
+                if (success) break
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                lastErr = e
+                delay(1000L * attempt)
+            }
+        }
+
+        if (!success) throw IOException("Failed to upload ${local.name} after retries", lastErr)
+
+        if (config.syncPdf && relPath.endsWith(".notate")) {
+            syncPdf(local, config.remotePath, provider, progressCallback)
+        }
+
+        // Refresh remote state to get exact remote timestamp
+        try {
+            val remoteItems = provider.listFiles(remotePath.substringBeforeLast('/'))
+            remoteItems.find { it.name == local.name }?.let {
+                fileStates[relPath] =
+                    FileSyncState(
+                        lastLocalModified = local.lastModified,
+                        lastRemoteModified = it.lastModified,
+                        lastSyncTime = System.currentTimeMillis(),
+                    )
+            }
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
+            Logger.w(TAG, "Metadata update failed for $relPath", e)
+        }
+    }
+
+    private suspend fun downloadFile(
+        remoteWrap: RemoteFileWithRelativePath,
+        projectId: String,
+        provider: RemoteStorageProvider,
+        fileStates: MutableMap<String, FileSyncState>,
+    ) {
+        val relPath = normalizePath(remoteWrap.relativePath)
+        val projects = PreferencesManager.getProjects(context)
+        val project = projects.find { it.id == projectId } ?: return
+
+        provider.downloadFile(remoteWrap.file.path)?.use { input ->
+            if (project.uri.startsWith("content://")) {
+                downloadToSaf(input, project.uri, remoteWrap)
+            } else {
+                val dest = File(project.uri, remoteWrap.relativePath)
+                dest.parentFile?.mkdirs()
+                dest.outputStream().use { output -> input.copyTo(output) }
+                dest.setLastModified(remoteWrap.file.lastModified)
+            }
+
+            fileStates[relPath] =
+                FileSyncState(
+                    lastLocalModified = remoteWrap.file.lastModified, // Assumes perfect set
+                    lastRemoteModified = remoteWrap.file.lastModified,
+                    lastSyncTime = System.currentTimeMillis(),
+                )
+        }
+    }
+
+    private fun downloadToSaf(
+        input: InputStream,
+        rootUri: String,
+        remote: RemoteFileWithRelativePath,
+    ) {
+        val dir = DocumentFile.fromTreeUri(context, Uri.parse(rootUri)) ?: return
+        val parts = remote.relativePath.split('/').filter { it.isNotEmpty() }
+        var current: DocumentFile? = dir
+
+        for (i in 0 until parts.size - 1) {
+            val part = parts[i]
+            current = current?.findFile(part) ?: current?.createDirectory(part)
+        }
+
+        val fileName = parts.last()
+        val file = current?.findFile(fileName) ?: current?.createFile("application/octet-stream", fileName)
+        file?.let {
+            context.contentResolver.openOutputStream(it.uri)?.use { output ->
+                input.copyTo(output)
+            }
+        }
+    }
+
+    private suspend fun ensureRemoteDirectoryExists(
+        provider: RemoteStorageProvider,
+        path: String,
+    ) {
+        try {
+            provider.listFiles(path)
+        } catch (e: java.io.FileNotFoundException) {
+            if (!provider.createDirectory(path)) throw IOException("Failed to create remote root: $path")
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
+            Logger.e(TAG, "Error verifying remote root", e)
+        }
+    }
+
+    private fun scanLocalFiles(projectId: String): List<LocalFile> {
+        val project = PreferencesManager.getProjects(context).find { it.id == projectId } ?: return emptyList()
+        val result = mutableListOf<LocalFile>()
+        if (project.uri.startsWith("content://")) {
+            DocumentFile.fromTreeUri(context, Uri.parse(project.uri))?.let {
+                scanDocumentFilesRecursively(context, it, "", result)
+            }
+        } else {
+            val root = File(project.uri)
+            if (root.exists()) scanJavaFilesRecursively(root, root, result)
+        }
+        return result
     }
 
     private suspend fun scanRemoteFilesRecursively(
         provider: RemoteStorageProvider,
-        currentRemotePath: String,
-        currentRelativePath: String,
+        currentPath: String,
+        relative: String,
     ): List<RemoteFileWithRelativePath> {
         val results = mutableListOf<RemoteFileWithRelativePath>()
-        try {
-            val items = provider.listFiles(currentRemotePath)
-            for (item in items) {
-                // Ensure proper path separation
-                val itemRelativePath = if (currentRelativePath.isEmpty()) item.name else "$currentRelativePath/${item.name}"
-
-                if (item.isDirectory) {
-                    val childRemotePath = "$currentRemotePath/${item.name}"
-                    results.addAll(scanRemoteFilesRecursively(provider, childRemotePath, itemRelativePath))
-                } else {
-                    results.add(RemoteFileWithRelativePath(item, itemRelativePath))
-                }
+        val items = provider.listFiles(currentPath)
+        for (item in items) {
+            val itemRel = if (relative.isEmpty()) item.name else "$relative/${item.name}"
+            if (item.isDirectory) {
+                results.addAll(scanRemoteFilesRecursively(provider, "$currentPath/${item.name}", itemRel))
+            } else {
+                results.add(RemoteFileWithRelativePath(item, itemRel))
             }
-        } catch (e: Exception) {
-            if (e is CancellationException) {
-                throw e
-            }
-            Logger.w("SyncManager", "Error scanning $currentRemotePath", e)
-            throw e
         }
         return results
     }
 
-    suspend fun findProjectForFile(filePath: String): String? =
-        withContext(ioDispatcher) {
-            Logger.d("SyncManager", "Searching project for file: $filePath")
-            val projects = PreferencesManager.getProjects(context)
-
-            // Normalize file path if it's content://
-            val targetUri = if (filePath.startsWith("content://")) Uri.parse(filePath) else Uri.fromFile(File(filePath))
-
-            for (project in projects) {
-                Logger.d("SyncManager", "Checking against project: ${project.name} (${project.uri})")
-
-                if (filePath.startsWith("content://") && project.uri.startsWith("content://")) {
-                    // For SAF, simple string prefix check is weak but often sufficient for tree URIs
-                    // A better check would be seeing if the file URI contains the project Tree URI's ID
-                    if (filePath.contains(project.uri) || filePath.startsWith(project.uri)) {
-                        Logger.d("SyncManager", "Match found via SAF prefix")
-                        return@withContext project.id
-                    }
-                } else if (!filePath.startsWith("content://") && !project.uri.startsWith("content://")) {
-                    // Local File
-                    try {
-                        val fileCanonical = File(filePath).canonicalPath
-                        val projectCanonical = File(project.uri).canonicalPath
-                        if (fileCanonical.startsWith(projectCanonical)) {
-                            Logger.d("SyncManager", "Match found via File path")
-                            return@withContext project.id
-                        }
-                    } catch (e: Exception) {
-                        Logger.w("SyncManager", "Path comparison error", e)
-                    }
-                }
-            }
-            Logger.w("SyncManager", "No matching project found for $filePath")
-            return@withContext null
-        }
-
-    suspend fun deleteFromRemote(
-        projectId: String,
-        relativePath: String,
-    ): Boolean =
-        withContext(ioDispatcher) {
-            val config = SyncPreferencesManager.getProjectSyncConfig(context, projectId)
-            if (config == null || !config.isEnabled) return@withContext false
-
-            val storageConfig = SyncPreferencesManager.getRemoteStorages(context).find { it.id == config.remoteStorageId }
-            if (storageConfig == null) return@withContext false
-
-            val password = SyncPreferencesManager.getPassword(context, storageConfig.id) ?: ""
-
-            val provider: RemoteStorageProvider =
-                when (storageConfig.type) {
-                    RemoteStorageType.WEBDAV -> WebDavProvider(storageConfig, password)
-                    RemoteStorageType.GOOGLE_DRIVE -> GoogleDriveProvider(context, storageConfig)
-                }
-
-            val cleanRelativePath = relativePath.replace("\\", "/")
-            val remotePath = "${config.remotePath.trimEnd('/')}/$cleanRelativePath"
-
-            try {
-                Logger.d("SyncManager", "Deleting remote file: $remotePath")
-                var success = provider.deleteFile(remotePath)
-
-                if (config.syncPdf && relativePath.endsWith(".notate")) {
-                    val pdfRelativePath = cleanRelativePath.substringBeforeLast(".") + ".pdf"
-                    val remotePdfPath = "${config.remotePath.trimEnd('/')}/$pdfRelativePath"
-                    Logger.d("SyncManager", "Deleting remote PDF: $remotePdfPath")
-                    // We don't fail the whole operation if PDF delete fails, but we try
-                    try {
-                        provider.deleteFile(remotePdfPath)
-                    } catch (e: Exception) {
-                        Logger.w("SyncManager", "Failed to delete remote PDF", e)
-                    }
-                }
-
-                // Also remove from metadata
-                if (success) {
-                    val metadata = SyncPreferencesManager.getProjectSyncMetadata(context, projectId)
-                    val newFiles = metadata.files.toMutableMap()
-                    newFiles.remove(cleanRelativePath)
-                    SyncPreferencesManager.saveProjectSyncMetadata(context, projectId, metadata.copy(files = newFiles))
-                }
-
-                return@withContext success
-            } catch (e: Exception) {
-                Logger.e("SyncManager", "Failed to delete remote file", e)
-                return@withContext false
-            }
-        }
-
     private suspend fun syncPdf(
-        localFile: LocalFile,
+        local: LocalFile,
         remoteDir: String,
         provider: RemoteStorageProvider,
         progressCallback: ((Int, String) -> Unit)? = null,
     ) {
         var session: CanvasSession? = null
         try {
-            // Open a session for reading the canvas
-            session = canvasRepository.openCanvasSession(localFile.path) ?: return
-
-            // Create a model and initialize it with the session's region manager
-            val model = InfiniteCanvasModel()
-            model.initializeSession(session.regionManager)
-            model.loadFromCanvasData(session.metadata)
-
-            val cleanRelativePath = localFile.relativePath.replace("\\", "/")
-            // Fixed: removed extra space from substringBeforeLast
-            val pdfRelativePath = cleanRelativePath.substringBeforeLast(".") + ".pdf"
-            val remotePdfPath = "${remoteDir.trimEnd('/')}/$pdfRelativePath"
-
-            val pdfCallback =
-                if (progressCallback != null) {
-                    object : PdfExporter.ProgressCallback {
-                        override fun onProgress(
-                            progress: Int,
-                            message: String,
-                        ) {
-                            progressCallback(progress, message)
-                        }
-                    }
-                } else {
-                    null
+            session = canvasRepository.openCanvasSession(local.path) ?: return
+            val model =
+                InfiniteCanvasModel().apply {
+                    initializeSession(session!!.regionManager)
+                    loadFromCanvasData(session!!.metadata)
                 }
 
-            val syncType = PreferencesManager.getSyncPdfType(context)
-            val isVector = syncType == "VECTOR"
-            val scale = PreferencesManager.getPdfExportScale(context)
+            val pdfRelPath = normalizePath(local.relativePath).substringBeforeLast(".") + ".pdf"
+            val remotePdfPath = "${remoteDir.trimEnd('/')}/$pdfRelPath"
+
+            val pdfCallback =
+                object : PdfExporter.ProgressCallback {
+                    override fun onProgress(
+                        progress: Int,
+                        message: String,
+                    ) {
+                        progressCallback?.invoke(progress, message)
+                    }
+                }
 
             val out = ByteArrayOutputStream()
             PdfExporter.export(
                 context,
                 model,
                 out,
-                isVector = isVector,
+                isVector = PreferencesManager.getSyncPdfType(context) == "VECTOR",
                 callback = pdfCallback,
-                bitmapScale = scale,
+                bitmapScale = PreferencesManager.getPdfExportScale(context),
             )
 
-            // Implement retry loop for PDF upload
-            var uploaded = false
-            var attempts = 0
-            var lastException: Exception? = null
-
             val bytes = out.toByteArray()
-            val size = bytes.size.toLong()
-
-            while (attempts < 3 && !uploaded) {
+            for (attempt in 1..3) {
                 try {
-                    val pdfInput = ByteArrayInputStream(bytes)
-                    pdfInput.use { input ->
-                        uploaded = provider.uploadFile(remotePdfPath, input, size)
-                    }
-                    if (!uploaded) {
-                        attempts++
-                        lastException = IOException("Upload returned false")
-                        Logger.w("SyncManager", "PDF upload attempt $attempts returned false for ${localFile.name}")
-                        if (attempts < 3) {
-                            delay(1500L * attempts)
-                        }
-                    }
+                    if (provider.uploadFile(remotePdfPath, ByteArrayInputStream(bytes), bytes.size.toLong())) break
                 } catch (e: Exception) {
-                    lastException = e
-                    attempts++
-                    Logger.w("SyncManager", "PDF upload attempt $attempts failed for ${localFile.name}", e)
-                    if (attempts < 3) {
-                        delay(1500L * attempts)
-                    }
+                    if (e is CancellationException) throw e
+                    if (attempt == 3) Logger.w(TAG, "Failed to upload PDF for ${local.name}", e)
+                    delay(1000L * attempt)
                 }
             }
-
-            if (!uploaded) {
-                Logger.e("SyncManager", "Failed to upload PDF ${localFile.name} after 3 attempts", lastException)
-            }
         } catch (e: Exception) {
-            Logger.e("SyncManager", "Failed to sync PDF for ${localFile.name}", e)
+            if (e is CancellationException) throw e
+            Logger.e(TAG, "PDF sync failed for ${local.name}", e)
         } finally {
-            // Always release the session properly
-            if (session != null) {
-                canvasRepository.releaseCanvasSession(session)
-            }
+            session?.let { canvasRepository.releaseCanvasSession(it) }
         }
     }
 
-    private fun scanDocumentFilesRecursively(
-        context: Context,
-        dir: DocumentFile,
+    suspend fun deleteFromRemote(
+        projectId: String,
         relativePath: String,
+    ): Boolean =
+        withContext(ioDispatcher) {
+            globalSyncSemaphore.withPermit {
+                val config = SyncPreferencesManager.getProjectSyncConfig(context, projectId) ?: return@withContext false
+                if (!config.isEnabled) return@withContext false
+
+                val storage =
+                    SyncPreferencesManager.getRemoteStorages(context).find { it.id == config.remoteStorageId } ?: return@withContext false
+                val password = SyncPreferencesManager.getPassword(context, storage.id) ?: ""
+                val provider = providerFactory(context, storage, password)
+
+                val rel = normalizePath(relativePath)
+                val remotePath = "${config.remotePath.trimEnd('/')}/$rel"
+
+                try {
+                    if (provider.deleteFile(remotePath)) {
+                        if (config.syncPdf && rel.endsWith(".notate")) {
+                            provider.deleteFile("${config.remotePath.trimEnd('/')}/${rel.substringBeforeLast(".")}.pdf")
+                        }
+                        val metadata = SyncPreferencesManager.getProjectSyncMetadata(context, projectId)
+                        val newFiles = metadata.files.toMutableMap().apply { remove(rel) }
+                        SyncPreferencesManager.saveProjectSyncMetadata(context, projectId, metadata.copy(files = newFiles))
+                        return@withContext true
+                    }
+                } catch (e: Exception) {
+                    if (e is CancellationException) throw e
+                    Logger.e(TAG, "Remote delete failed for $rel", e)
+                }
+                false
+            }
+        }
+
+    suspend fun findProjectForFile(filePath: String): String? =
+        withContext(ioDispatcher) {
+            val projects = PreferencesManager.getProjects(context)
+            for (project in projects) {
+                if (filePath.startsWith("content://") && project.uri.startsWith("content://")) {
+                    if (filePath.contains(project.uri)) return@withContext project.id
+                } else if (!filePath.startsWith("content://") && !project.uri.startsWith("content://")) {
+                    try {
+                        val fileCan = File(filePath).canonicalPath
+                        val projCan = File(project.uri).canonicalPath
+                        if (fileCan.startsWith(projCan)) return@withContext project.id
+                    } catch (ignored: Exception) {
+                    }
+                }
+            }
+            null
+        }
+
+    private fun scanDocumentFilesRecursively(
+        ctx: Context,
+        dir: DocumentFile,
+        rel: String,
         result: MutableList<LocalFile>,
     ) {
         dir.listFiles().forEach { file ->
-            val fileName = file.name ?: return@forEach
+            val name = file.name ?: return@forEach
+            val itemRel = if (rel.isEmpty()) name else "$rel/$name"
             if (file.isDirectory) {
-                val newRelativePath = if (relativePath.isEmpty()) fileName else "$relativePath/$fileName"
-                scanDocumentFilesRecursively(context, file, newRelativePath, result)
-            } else if (fileName.endsWith(".notate")) {
-                val fileRelativePath = if (relativePath.isEmpty()) fileName else "$relativePath/$fileName"
-                result.add(DocumentFileWrapper(context, file, fileRelativePath))
+                scanDocumentFilesRecursively(ctx, file, itemRel, result)
+            } else if (name.endsWith(".notate")) {
+                result.add(DocumentFileWrapper(ctx, file, itemRel))
             }
         }
     }
@@ -741,9 +601,7 @@ class SyncManager(
         result: MutableList<LocalFile>,
     ) {
         if (file.isDirectory) {
-            file.listFiles()?.forEach { child ->
-                scanJavaFilesRecursively(child, root, result)
-            }
+            file.listFiles()?.forEach { scanJavaFilesRecursively(it, root, result) }
         } else if (file.extension == "notate") {
             result.add(JavaFileWrapper(file, root))
         }
