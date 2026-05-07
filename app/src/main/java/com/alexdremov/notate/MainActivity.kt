@@ -30,6 +30,7 @@ import com.alexdremov.notate.CanvasActivity
 import com.alexdremov.notate.data.CanvasItem
 import com.alexdremov.notate.data.ProjectItem
 import com.alexdremov.notate.data.SortOption
+import com.alexdremov.notate.data.RemoteStorageType
 import com.alexdremov.notate.ui.home.*
 import com.alexdremov.notate.ui.home.components.DeleteConfirmationDialog
 import com.alexdremov.notate.ui.theme.NotateTheme
