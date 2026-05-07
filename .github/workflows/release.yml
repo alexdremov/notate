@@ -5,12 +5,14 @@ on:
     tags:
       - 'v*'
   pull_request:
-    types: [labeled] # Triggers only when a label is applied
+    types: [labeled, synchronize] # 'synchronize' triggers on new commits
 
 jobs:
   build:
-    # Run for tag pushes OR if the 'build-apk' label is applied to a PR
-    if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.label.name == 'build-apk')
+    # Runs if it's a tag push OR if the PR currently has the 'build-apk' label applied
+    if: >
+      github.event_name == 'push' || 
+      (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'build-apk'))
     runs-on: ubuntu-latest
     permissions:
       contents: write
