@@ -422,9 +422,7 @@ fun ProjectSyncConfigDialog(
                 val current = SyncPreferencesManager.getRemoteStorages(context).toMutableList()
                 current.add(config)
                 SyncPreferencesManager.saveRemoteStorages(context, current)
-                if (password.isNotBlank()) {
-                    SyncPreferencesManager.savePassword(context, config.id, password)
-                }
+                SyncPreferencesManager.savePassword(context, config.id, password)
 
                 val updatedSync = (syncConfig ?: ProjectSyncConfig(projectId, "", "")).copy(remoteStorageId = config.id)
                 SyncPreferencesManager.updateProjectSyncConfig(context, updatedSync)

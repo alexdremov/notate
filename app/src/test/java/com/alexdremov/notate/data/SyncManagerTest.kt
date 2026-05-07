@@ -54,6 +54,7 @@ class SyncManagerTest {
                     override suspend fun uploadFile(
                         remotePath: String,
                         inputStream: InputStream,
+                        size: Long,
                     ) = true
 
                     override suspend fun downloadFile(remotePath: String): InputStream? = null
@@ -61,6 +62,8 @@ class SyncManagerTest {
                     override suspend fun createDirectory(remotePath: String) = true
 
                     override suspend fun deleteFile(remotePath: String) = true
+
+                    override suspend fun testConnection() = true
                 }
 
             val testDispatcher = UnconfinedTestDispatcher(testScheduler)

@@ -276,7 +276,7 @@ class WebDavProvider(
             Logger.d("WebDavProvider", "Testing connection to $url")
             val resource = DavResource(client, url)
             try {
-                resource.propfind(0) { _, _ -> }
+                resource.propfind(0, ResourceType.NAME) { _, _ -> }
                 true
             } catch (e: Exception) {
                 Logger.e("WebDavProvider", "Connection test failed", e)

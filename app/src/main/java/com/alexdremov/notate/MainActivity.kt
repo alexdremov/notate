@@ -531,10 +531,8 @@ fun MainScreen(
                 com.alexdremov.notate.data.SyncPreferencesManager
                     .saveRemoteStorages(context, current)
 
-                if (password.isNotBlank()) {
-                    com.alexdremov.notate.data.SyncPreferencesManager
-                        .savePassword(context, config.id, password)
-                }
+                com.alexdremov.notate.data.SyncPreferencesManager
+                    .savePassword(context, config.id, password)
                 showEditStorage = false
                 refreshStoragesTrigger++
             },
