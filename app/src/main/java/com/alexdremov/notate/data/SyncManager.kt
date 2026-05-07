@@ -142,8 +142,13 @@ class SyncManager(
             Logger.d("SyncManager", "Starting sync execution for project ID: $projectId")
 
             val powerManager = context.getSystemService(Context.POWER_SERVICE) as PowerManager
+
             @Suppress("DEPRECATION")
-            val wakeLock = powerManager.newWakeLock(PowerManager.SCREEN_DIM_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP, "Notate:SyncWakeLock")
+            val wakeLock =
+                powerManager.newWakeLock(
+                    PowerManager.SCREEN_DIM_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP,
+                    "Notate:SyncWakeLock",
+                )
             val wifiManager = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
             val wifiLock = wifiManager.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "Notate:SyncWifiLock")
 
@@ -156,7 +161,7 @@ class SyncManager(
             try {
                 wakeLock.acquire(10 * 60 * 1000L /*10 minutes*/)
                 wifiLock.acquire()
-                
+
                 updateProgress(0, "Initializing sync...")
 
                 val config = SyncPreferencesManager.getProjectSyncConfig(context, projectId)
@@ -741,11 +746,6 @@ class SyncManager(
                 scanJavaFilesRecursively(child, root, result)
             }
         } else if (file.extension == "notate") {
-            result.add(JavaFileWrapper(file, root))
-        }
-    }
-}
-ension == "notate") {
             result.add(JavaFileWrapper(file, root))
         }
     }

@@ -75,7 +75,7 @@ class WebDavProvider(
             val files = mutableListOf<RemoteFile>()
 
             try {
-                resource.propfind(1) { response, _ ->
+                resource.propfind(1, GetLastModified.NAME, GetContentLength.NAME, ResourceType.NAME) { response, _ ->
                     val href = response.href
 
                     val requestSegments = url.pathSegments.filter { it.isNotEmpty() }
@@ -228,7 +228,7 @@ class WebDavProvider(
                 try {
                     var exists = false
                     try {
-                        resource.propfind(0) { _, _ -> exists = true }
+                        resource.propfind(0, ResourceType.NAME) { _, _ -> exists = true }
                     } catch (e: Exception) {
                         exists = false
                     }

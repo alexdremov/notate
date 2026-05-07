@@ -22,6 +22,7 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.Notate"
         android:largeHeap="true"
+        android:usesCleartextTraffic="true"
         tools:targetApi="31">
         
         <activity
