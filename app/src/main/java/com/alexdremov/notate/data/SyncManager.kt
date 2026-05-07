@@ -496,8 +496,8 @@ class SyncManager(
             } finally {
                 _globalSyncProgress.update { it - projectId }
                 try {
-                    if (wakeLock.isHeld) wakeLock.release()
-                    if (wifiLock.isHeld) wifiLock.release()
+                    if (wakeLock?.isHeld ?: false) wakeLock?.release()
+                    if (wifiLock?.isHeld ?: false) wifiLock?.release()
                 } catch (e: Exception) {
                     Logger.w("SyncManager", "Failed to release WakeLocks", e)
                 }
