@@ -737,13 +737,38 @@ class OnyxCanvasView
             }
         }
 
+        private fun scaleRectForEpd(context: Context, logicalRect: Rect): Rect {
+            val metrics = context.resources.displayMetrics
+            val wm = context.getSystemService(Context.WINDOW_SERVICE) as android.view.WindowManager
+            val realMetrics = android.util.DisplayMetrics()
+            wm.defaultDisplay.getRealMetrics(realMetrics)
+
+            // Calculate the scaling ratio caused by Onyx App Optimization / DPI settings
+            val scaleX = realMetrics.widthPixels / metrics.widthPixels.toFloat()
+            val scaleY = realMetrics.heightPixels / metrics.heightPixels.toFloat()
+
+            // Return the hardware-mapped coordinates
+            return Rect(
+                (logicalRect.left * scaleX).toInt(),
+                (logicalRect.top * scaleY).toInt(),
+                (logicalRect.right * scaleX).toInt(),
+                (logicalRect.bottom * scaleY).toInt()
+            )
+        }
+
         fun setExclusionRects(rects: List<Rect>) {
             exclusionRects.clear()
             exclusionRects.addAll(rects)
+
+            val limit = Rect()
+            getGlobalVisibleRect(limit)
+
+            // Scale the bounds to raw hardware pixels
+            val hardwareLimit = scaleRectForEpd(context, limit)
+            val hardwareExclusions = exclusionRects.map { scaleRectForEpd(context, it) }
+
             touchHelper?.let {
-                val limit = Rect()
-                getLocalVisibleRect(limit)
-                it.setLimitRect(limit, exclusionRects)
+                it.setLimitRect(hardwareLimit, hardwareExclusions)
             }
         }
 
@@ -864,10 +889,10 @@ class OnyxCanvasView
             }
             com.alexdremov.notate.util.OnyxSystemHelper
                 .ignoreSystemSideButton(this)
-            val limit = Rect()
-            getLocalVisibleRect(limit)
+
+            setExclusionRects(exclusionRects.toList())
+
             touchHelper?.apply {
-                setLimitRect(limit, exclusionRects)
                 openRawDrawing()
                 setRawDrawingEnabled(true)
                 setRawDrawingRenderEnabled(true)
