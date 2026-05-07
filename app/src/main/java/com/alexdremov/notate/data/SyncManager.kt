@@ -141,15 +141,14 @@ class SyncManager(
         globalSyncSemaphore.withPermit {
             Logger.d("SyncManager", "Starting sync execution for project ID: $projectId")
 
-            val powerManager = context.getSystemService(Context.POWER_SERVICE) as PowerManager
-
+            val powerManager = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
             val wakeLock =
-                powerManager.newWakeLock(
+                powerManager?.newWakeLock(
                     PowerManager.PARTIAL_WAKE_LOCK,
                     "Notate:SyncWakeLock",
                 )
-            val wifiManager = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
-            val wifiLock = wifiManager.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "Notate:SyncWifiLock")
+            val wifiManager = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+            val wifiLock = wifiManager?.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "Notate:SyncWifiLock")
 
             // Helper to update both global and local callback
             val updateProgress: (Int, String) -> Unit = { p, m ->
@@ -158,8 +157,9 @@ class SyncManager(
             }
 
             try {
-                wakeLock.acquire()
-                wifiLock.acquire()
+                // Acquire with a 1-hour timeout as a safety bound against battery drain if release is skipped
+                wakeLock?.acquire(60 * 60 * 1000L)
+                wifiLock?.acquire()
 
                 updateProgress(0, "Initializing sync...")
 
