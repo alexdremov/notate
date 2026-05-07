@@ -61,6 +61,7 @@ class GoogleDriveProvider(
     override suspend fun uploadFile(
         remotePath: String,
         inputStream: InputStream,
+        size: Long,
     ): Boolean =
         withContext(Dispatchers.IO) {
             val service = driveService ?: throw java.io.IOException("Google Drive not authenticated.")
@@ -135,6 +136,17 @@ class GoogleDriveProvider(
             }
 
             service.files().delete(file.id).execute()
+            true
+        }
+
+    override suspend fun testConnection(): Boolean =
+        withContext(Dispatchers.IO) {
+            val service = driveService ?: throw java.io.IOException("Google Drive not authenticated.")
+            service
+                .about()
+                .get()
+                .setFields("user")
+                .execute()
             true
         }
 

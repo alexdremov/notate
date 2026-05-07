@@ -503,6 +503,8 @@ fun MainScreen(
         )
     }
 
+    var refreshStoragesTrigger by remember { mutableStateOf(0) }
+
     if (showRemoteStorages) {
         RemoteStorageListDialog(
             onDismiss = { showRemoteStorages = false },
@@ -510,6 +512,7 @@ fun MainScreen(
                 editingStorage = storage
                 showEditStorage = true
             },
+            refreshTrigger = refreshStoragesTrigger,
         )
     }
 
@@ -533,9 +536,7 @@ fun MainScreen(
                         .savePassword(context, config.id, password)
                 }
                 showEditStorage = false
-                // Force refresh of the list dialog by toggling visibility (optional, but helps if state isn't observed)
-                showRemoteStorages = false
-                showRemoteStorages = true
+                refreshStoragesTrigger++
             },
         )
     }

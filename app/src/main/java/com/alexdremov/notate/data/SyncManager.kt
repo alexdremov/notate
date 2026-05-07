@@ -2,6 +2,8 @@ package com.alexdremov.notate.data
 
 import android.content.Context
 import android.net.Uri
+import android.net.wifi.WifiManager
+import android.os.PowerManager
 import androidx.documentfile.provider.DocumentFile
 import com.alexdremov.notate.export.PdfExporter
 import com.alexdremov.notate.model.InfiniteCanvasModel
@@ -14,6 +16,7 @@ import kotlinx.coroutines.sync.withPermit
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.File
+import java.io.IOException
 import java.io.InputStream
 
 class SyncManager(
@@ -31,6 +34,7 @@ class SyncManager(
         val name: String
         val relativePath: String
         val lastModified: Long
+        val size: Long
 
         fun openInputStream(): InputStream?
 
@@ -45,6 +49,7 @@ class SyncManager(
         override val name: String get() = file.name
         override val relativePath: String get() = file.relativeTo(root).path
         override val lastModified: Long get() = file.lastModified()
+        override val size: Long get() = file.length()
 
         override fun openInputStream() = if (file.exists()) file.inputStream() else null
 
@@ -59,6 +64,7 @@ class SyncManager(
     ) : LocalFile {
         override val name: String get() = file.name ?: ""
         override val lastModified: Long get() = file.lastModified()
+        override val size: Long get() = file.length()
 
         override fun openInputStream() = context.contentResolver.openInputStream(file.uri)
 
@@ -135,6 +141,12 @@ class SyncManager(
         globalSyncSemaphore.withPermit {
             Logger.d("SyncManager", "Starting sync execution for project ID: $projectId")
 
+            val powerManager = context.getSystemService(Context.POWER_SERVICE) as PowerManager
+            @Suppress("DEPRECATION")
+            val wakeLock = powerManager.newWakeLock(PowerManager.SCREEN_DIM_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP, "Notate:SyncWakeLock")
+            val wifiManager = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+            val wifiLock = wifiManager.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "Notate:SyncWifiLock")
+
             // Helper to update both global and local callback
             val updateProgress: (Int, String) -> Unit = { p, m ->
                 _globalSyncProgress.update { it + (projectId to (p to m)) }
@@ -142,6 +154,9 @@ class SyncManager(
             }
 
             try {
+                wakeLock.acquire(10 * 60 * 1000L /*10 minutes*/)
+                wifiLock.acquire()
+                
                 updateProgress(0, "Initializing sync...")
 
                 val config = SyncPreferencesManager.getProjectSyncConfig(context, projectId)
@@ -296,18 +311,17 @@ class SyncManager(
 
                     val cleanRelativePath = localFile.relativePath.replace("\\", "/")
                     val fileState = fileStates[cleanRelativePath]
+                    val remoteEntry = allRemoteFiles.find { it.relativePath.replace("\\", "/") == cleanRelativePath }
+                    val remoteFile = remoteEntry?.file
 
                     // Logic:
                     // - If no state (new file), upload.
                     // - If local modified > stored last local modified, upload.
-                    // - Ignore remote timestamp here; we handle conflicts by preferring local if it changed
+                    // - If the remote file is missing entirely, we must upload it (e.g. storage switch).
 
-                    val shouldUpload = fileState == null || localFile.lastModified > fileState.lastLocalModified
+                    val shouldUpload = fileState == null || localFile.lastModified > fileState.lastLocalModified || remoteFile == null
 
                     if (shouldUpload) {
-                        val remoteEntry = allRemoteFiles.find { it.relativePath.replace("\\", "/") == cleanRelativePath }
-                        val remoteFile = remoteEntry?.file
-
                         Logger.d(
                             "SyncManager",
                             "Uploading ${localFile.name} (Local: ${localFile.lastModified}, LastSyncedLocal: ${fileState?.lastLocalModified})",
@@ -315,8 +329,36 @@ class SyncManager(
                         updateProgress((20 + (currentStep++ * 60 / totalSteps)), "Uploading ${localFile.name}...")
 
                         val remotePath = "${config.remotePath.trimEnd('/')}/$cleanRelativePath"
-                        localFile.openInputStream()?.use { input ->
-                            provider.uploadFile(remotePath, input)
+                        val parentRemotePath = remotePath.substringBeforeLast('/')
+                        try {
+                            provider.createDirectory(parentRemotePath)
+                        } catch (e: Exception) {
+                            Logger.w("SyncManager", "Failed to verify/create parent directory $parentRemotePath", e)
+                        }
+
+                        // Retry loop for actual upload to handle transient "Stream Closed" timeouts
+                        var uploaded = false
+                        var attempts = 0
+                        var lastException: Exception? = null
+
+                        while (attempts < 3 && !uploaded) {
+                            try {
+                                localFile.openInputStream()?.use { input ->
+                                    uploaded = provider.uploadFile(remotePath, input, localFile.size)
+                                }
+                            } catch (e: Exception) {
+                                lastException = e
+                                attempts++
+                                Logger.w("SyncManager", "Upload attempt $attempts failed for ${localFile.name}", e)
+                                if (attempts < 3) {
+                                    delay(1500L * attempts)
+                                }
+                            }
+                        }
+
+                        if (!uploaded) {
+                            Logger.e("SyncManager", "Failed to upload ${localFile.name} after 3 attempts", lastException)
+                            throw IOException("Failed to upload ${localFile.name}", lastException)
                         }
 
                         // Also sync PDF if enabled
@@ -449,6 +491,12 @@ class SyncManager(
                 updateProgress(0, "Sync failed: ${e.message}")
             } finally {
                 _globalSyncProgress.update { it - projectId }
+                try {
+                    if (wakeLock.isHeld) wakeLock.release()
+                    if (wifiLock.isHeld) wifiLock.release()
+                } catch (e: Exception) {
+                    Logger.w("SyncManager", "Failed to release WakeLocks", e)
+                }
             }
         }
     }
@@ -620,8 +668,41 @@ class SyncManager(
                 bitmapScale = scale,
             )
 
-            val pdfInput = ByteArrayInputStream(out.toByteArray())
-            provider.uploadFile(remotePdfPath, pdfInput)
+            // Implement retry loop for PDF upload
+            var uploaded = false
+            var attempts = 0
+            var lastException: Exception? = null
+
+            val bytes = out.toByteArray()
+            val size = bytes.size.toLong()
+
+            while (attempts < 3 && !uploaded) {
+                try {
+                    val pdfInput = ByteArrayInputStream(bytes)
+                    pdfInput.use { input ->
+                        uploaded = provider.uploadFile(remotePdfPath, input, size)
+                    }
+                    if (!uploaded) {
+                        attempts++
+                        lastException = IOException("Upload returned false")
+                        Logger.w("SyncManager", "PDF upload attempt $attempts returned false for ${localFile.name}")
+                        if (attempts < 3) {
+                            delay(1500L * attempts)
+                        }
+                    }
+                } catch (e: Exception) {
+                    lastException = e
+                    attempts++
+                    Logger.w("SyncManager", "PDF upload attempt $attempts failed for ${localFile.name}", e)
+                    if (attempts < 3) {
+                        delay(1500L * attempts)
+                    }
+                }
+            }
+
+            if (!uploaded) {
+                Logger.e("SyncManager", "Failed to upload PDF ${localFile.name} after 3 attempts", lastException)
+            }
         } catch (e: Exception) {
             Logger.e("SyncManager", "Failed to sync PDF for ${localFile.name}", e)
         } finally {
@@ -660,6 +741,11 @@ class SyncManager(
                 scanJavaFilesRecursively(child, root, result)
             }
         } else if (file.extension == "notate") {
+            result.add(JavaFileWrapper(file, root))
+        }
+    }
+}
+ension == "notate") {
             result.add(JavaFileWrapper(file, root))
         }
     }

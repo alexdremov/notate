@@ -185,6 +185,7 @@ dependencies {
     implementation("androidx.security:security-crypto:1.1.0")
     implementation("com.squareup.okhttp3:okhttp:5.3.2")
     implementation("com.squareup.okhttp3:logging-interceptor:5.3.2")
+    implementation("com.github.bitfireAT:dav4jvm:2.2.1")
 
     // Google Drive
     implementation("com.google.android.gms:play-services-auth:21.5.0")

@@ -33,6 +33,7 @@ import com.google.android.gms.auth.api.signin.GoogleSignInOptions
 import com.google.android.gms.common.api.ApiException
 import com.google.android.gms.common.api.Scope
 import com.google.api.services.drive.DriveScopes
+import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -40,9 +41,10 @@ import java.util.*
 fun RemoteStorageListDialog(
     onDismiss: () -> Unit,
     onManageStorage: (RemoteStorageConfig?) -> Unit,
+    refreshTrigger: Int = 0,
 ) {
     val context = LocalContext.current
-    var storages by remember { mutableStateOf(SyncPreferencesManager.getRemoteStorages(context)) }
+    var storages by remember(refreshTrigger) { mutableStateOf(SyncPreferencesManager.getRemoteStorages(context)) }
 
     AlertDialog(
         modifier = Modifier.border(2.dp, Color.Black, RoundedCornerShape(28.dp)),
@@ -97,13 +99,19 @@ fun EditRemoteStorageDialog(
     onDismiss: () -> Unit,
     onConfirm: (RemoteStorageConfig, String) -> Unit,
 ) {
+    val context = LocalContext.current
+
     var name by remember { mutableStateOf(storage?.name ?: "") }
     var type by remember { mutableStateOf(storage?.type ?: RemoteStorageType.WEBDAV) }
     var baseUrl by remember { mutableStateOf(storage?.baseUrl ?: "") }
     var username by remember { mutableStateOf(storage?.username ?: "") }
-    var password by remember { mutableStateOf("") }
+    var password by remember {
+        mutableStateOf(if (storage != null) SyncPreferencesManager.getPassword(context, storage.id) ?: "" else "")
+    }
 
-    val context = LocalContext.current
+    var testStatus by remember { mutableStateOf<String?>(null) }
+    var isTesting by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
 
     // Check for existing signed-in account if in Add mode or if username is empty
     LaunchedEffect(Unit) {
@@ -213,6 +221,62 @@ fun EditRemoteStorageDialog(
                         Text("Authentication required.", style = MaterialTheme.typography.bodySmall, color = Color.Red)
                     }
                 }
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    OutlinedButton(
+                        onClick = {
+                            scope.launch {
+                                isTesting = true
+                                testStatus = "Testing..."
+                                try {
+                                    val config = RemoteStorageConfig("", "", type, baseUrl, username)
+                                    val provider =
+                                        when (type) {
+                                            RemoteStorageType.WEBDAV -> WebDavProvider(config, password)
+                                            RemoteStorageType.GOOGLE_DRIVE -> GoogleDriveProvider(context, config)
+                                        }
+                                    if (provider.testConnection()) {
+                                        testStatus = "Success!"
+                                    } else {
+                                        testStatus = "Connection Failed"
+                                    }
+                                } catch (e: Exception) {
+                                    testStatus = "Error: ${e.message ?: e.javaClass.simpleName}"
+                                } finally {
+                                    isTesting = false
+                                }
+                            }
+                        },
+                        enabled =
+                            !isTesting &&
+                                (
+                                    type == RemoteStorageType.WEBDAV && baseUrl.isNotBlank() ||
+                                        type == RemoteStorageType.GOOGLE_DRIVE && username.isNotBlank()
+                                ),
+                    ) {
+                        if (isTesting) {
+                            CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = Color.Black)
+                            Spacer(modifier = Modifier.width(8.dp))
+                        }
+                        Text("Test Connection")
+                    }
+
+                    testStatus?.let {
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            it,
+                            style = MaterialTheme.typography.bodySmall,
+                            color =
+                                when {
+                                    it.contains("Success") -> Color(0xFF1B5E20)
+                                    it.contains("Testing") -> Color.Gray
+                                    else -> Color.Red
+                                },
+                        )
+                    }
+                }
             }
         },
         confirmButton = {
@@ -245,7 +309,8 @@ fun ProjectSyncConfigDialog(
 ) {
     val context = LocalContext.current
     var syncConfig by remember { mutableStateOf(SyncPreferencesManager.getProjectSyncConfig(context, projectId)) }
-    val storages = SyncPreferencesManager.getRemoteStorages(context)
+    var refreshStoragesTrigger by remember { mutableStateOf(0) }
+    val storages = remember(refreshStoragesTrigger) { SyncPreferencesManager.getRemoteStorages(context) }
 
     var showEditStorage by remember { mutableStateOf(false) }
     var showStorageList by remember { mutableStateOf(false) }
@@ -346,6 +411,7 @@ fun ProjectSyncConfigDialog(
                     showEditStorage = true
                 }
             },
+            refreshTrigger = refreshStoragesTrigger,
         )
     }
 
@@ -365,7 +431,7 @@ fun ProjectSyncConfigDialog(
                 syncConfig = updatedSync
 
                 showEditStorage = false
-                showStorageList = false
+                refreshStoragesTrigger++
             },
         )
     }

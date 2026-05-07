@@ -1,273 +1,286 @@
 package com.alexdremov.notate.data
 
-import android.util.Xml
+import at.bitfire.dav4jvm.DavResource
+import at.bitfire.dav4jvm.Property
+import at.bitfire.dav4jvm.property.GetContentLength
+import at.bitfire.dav4jvm.property.GetLastModified
+import at.bitfire.dav4jvm.property.ResourceType
+import com.alexdremov.notate.util.Logger
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import okhttp3.Credentials
+import okhttp3.HttpUrl
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import okhttp3.RequestBody.Companion.toRequestBody
-import org.xmlpull.v1.XmlPullParser
+import okhttp3.RequestBody
+import okio.BufferedSink
+import java.io.FileNotFoundException
+import java.io.IOException
 import java.io.InputStream
-import java.net.URL
-import java.text.SimpleDateFormat
-import java.util.*
+import java.util.concurrent.TimeUnit
 
 class WebDavProvider(
     private val config: RemoteStorageConfig,
     private val password: String,
 ) : RemoteStorageProvider {
-    private val client = OkHttpClient()
-    private val auth = Credentials.basic(config.username ?: "", password)
+    private val client =
+        OkHttpClient
+            .Builder()
+            .connectTimeout(60, TimeUnit.SECONDS)
+            .readTimeout(120, TimeUnit.SECONDS) // Increased to allow slow uploads
+            .writeTimeout(120, TimeUnit.SECONDS)
+            .followRedirects(false)
+            .followSslRedirects(false)
+            .addInterceptor { chain ->
+                val request =
+                    chain
+                        .request()
+                        .newBuilder()
+                        .header("Authorization", Credentials.basic(config.username ?: "", password))
+                        .build()
+                chain.proceed(request)
+            }.build()
 
-    private fun buildUrl(remotePath: String): String {
-        val base = config.baseUrl?.trimEnd('/') ?: ""
+    private fun getBaseUrl(): HttpUrl {
+        var base = config.baseUrl?.trimEnd('/') ?: ""
+        if (base.isEmpty()) throw IllegalArgumentException("Base URL is empty")
+
+        if (!base.startsWith("http://") && !base.startsWith("https://")) {
+            base = "http://$base"
+        }
+
+        val url = base.toHttpUrlOrNull() ?: throw IllegalArgumentException("Invalid base URL: $base")
+        return if (url.encodedPath.endsWith("/")) url else url.newBuilder().addPathSegment("").build()
+    }
+
+    private fun buildUrl(
+        remotePath: String,
+        isDirectory: Boolean = false,
+    ): HttpUrl {
+        val base = getBaseUrl()
         val path = remotePath.trimStart('/')
-        return "$base/$path"
+        if (path.isEmpty()) return base
+
+        val finalPath = if (isDirectory && !path.endsWith("/")) "$path/" else path
+        return base.resolve(finalPath) ?: throw IllegalArgumentException("Invalid path: $finalPath")
     }
 
-    override suspend fun listFiles(remotePath: String): List<RemoteFile> {
-        val url = buildUrl(remotePath)
-        val body =
-            """
-            <?xml version="1.0" encoding="utf-8" ?>
-            <D:propfind xmlns:D="DAV:">
-                <D:prop>
-                    <D:displayname/>
-                    <D:getlastmodified/>
-                    <D:getcontentlength/>
-                    <D:resourcetype/>
-                </D:prop>
-            </D:propfind>
-            """.trimIndent().toRequestBody("text/xml".toMediaType())
+    override suspend fun listFiles(remotePath: String): List<RemoteFile> =
+        withContext(Dispatchers.IO) {
+            val url = buildUrl(remotePath, isDirectory = true)
+            Logger.d("WebDavProvider", "PROPFIND $url")
+            val resource = DavResource(client, url)
+            val files = mutableListOf<RemoteFile>()
 
-        val request =
-            Request
-                .Builder()
-                .url(url)
-                .addHeader("Authorization", auth)
-                .addHeader("Depth", "1")
-                .method("PROPFIND", body)
-                .build()
+            try {
+                resource.propfind(1) { response, _ ->
+                    val href = response.href
 
-        client.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) {
-                if (response.code == 404) {
-                    throw java.io.FileNotFoundException("Remote path not found: $remotePath")
+                    val requestSegments = url.pathSegments.filter { it.isNotEmpty() }
+                    val responseSegments = href.pathSegments.filter { it.isNotEmpty() }
+
+                    // Skip the parent directory itself
+                    if (requestSegments != responseSegments && responseSegments.isNotEmpty()) {
+                        val name = responseSegments.lastOrNull() ?: ""
+
+                        val lm = response.properties.filterIsInstance<GetLastModified>().firstOrNull()
+                        val lastModified = lm?.lastModified ?: 0L
+
+                        val cl = response.properties.filterIsInstance<GetContentLength>().firstOrNull()
+                        val size = cl?.contentLength ?: 0L
+
+                        val rt = response.properties.filterIsInstance<ResourceType>().firstOrNull()
+                        val isDirectory = rt?.types?.contains(ResourceType.COLLECTION) == true
+
+                        files.add(
+                            RemoteFile(
+                                name = name,
+                                path = href.toString(),
+                                lastModified = lastModified,
+                                size = size,
+                                isDirectory = isDirectory,
+                            ),
+                        )
+                    }
                 }
-                throw java.io.IOException("WebDAV error: ${response.code} ${response.message}")
+            } catch (e: Exception) {
+                val msg = e.message ?: e.toString()
+                if (msg.contains("404")) {
+                    throw FileNotFoundException("Remote path not found: $remotePath")
+                }
+                throw IOException("WebDAV error: $msg", e)
             }
-            return parsePropFindResponse(response.body?.byteStream() ?: return emptyList(), remotePath)
+
+            files
         }
-    }
-
-    private fun parsePropFindResponse(
-        inputStream: InputStream,
-        parentPath: String,
-    ): List<RemoteFile> {
-        val files = mutableListOf<RemoteFile>()
-        val parser = Xml.newPullParser()
-        parser.setInput(inputStream, "UTF-8")
-
-        var eventType = parser.eventType
-        var currentFile: MutableRemoteFile? = null
-        var currentTag: String? = null
-
-        val dateFormat = SimpleDateFormat("EEE, dd MMM yyyy HH:mm:ss zzz", Locale.US)
-
-        while (eventType != XmlPullParser.END_DOCUMENT) {
-            when (eventType) {
-                XmlPullParser.START_TAG -> {
-                    currentTag = parser.name
-                    if (currentTag.endsWith("response")) {
-                        currentFile = MutableRemoteFile()
-                    }
-                }
-
-                XmlPullParser.TEXT -> {
-                    val text = parser.text
-                    currentFile?.let { file ->
-                        when (currentTag?.removePrefix("D:")?.removePrefix("d:")) {
-                            "href" -> {
-                                file.path = text
-                            }
-
-                            "displayname" -> {
-                                file.name = text
-                            }
-
-                            "getlastmodified" -> {
-                                file.lastModified =
-                                    try {
-                                        dateFormat.parse(text)?.time ?: 0L
-                                    } catch (e: Exception) {
-                                        0L
-                                    }
-                            }
-
-                            "getcontentlength" -> {
-                                file.size = text.toLongOrNull() ?: 0L
-                            }
-
-                            "collection" -> {
-                                file.isDirectory = true
-                            }
-                        }
-                    }
-                }
-
-                XmlPullParser.END_TAG -> {
-                    if (parser.name.endsWith("response")) {
-                        currentFile?.let {
-                            // Only add if it's not the parent directory itself
-                            if (it.path != null && !it.path!!.endsWith(parentPath) && !it.path!!.endsWith(parentPath + "/")) {
-                                files.add(it.toRemoteFile())
-                            }
-                        }
-                        currentFile = null
-                    }
-                    currentTag = null
-                }
-            }
-            eventType = parser.next()
-        }
-        return files
-    }
 
     override suspend fun uploadFile(
         remotePath: String,
         inputStream: InputStream,
-    ): Boolean {
-        val url = buildUrl(remotePath)
-        val body =
-            object : okhttp3.RequestBody() {
-                override fun contentType() = "application/octet-stream".toMediaType()
+        size: Long,
+    ): Boolean =
+        withContext(Dispatchers.IO) {
+            val url = buildUrl(remotePath)
+            Logger.d("WebDavProvider", "Starting upload to $url (size: $size)")
 
-                override fun writeTo(sink: okio.BufferedSink) {
-                    inputStream.use { input ->
-                        val buffer = ByteArray(8192)
-                        var read: Int
-                        while (input.read(buffer).also { read = it } != -1) {
-                            sink.write(buffer, 0, read)
+            val body =
+                object : RequestBody() {
+                    override fun contentType() = "application/octet-stream".toMediaType()
+
+                    override fun contentLength(): Long = if (size >= 0) size else super.contentLength()
+
+                    override fun isOneShot(): Boolean = true
+
+                    override fun writeTo(sink: BufferedSink) {
+                        try {
+                            Logger.d("WebDavProvider", "Streaming data for $url")
+                            val startTime = System.currentTimeMillis()
+                            var bytesWritten = 0L
+
+                            val buffer = ByteArray(8192)
+                            var read: Int
+                            while (inputStream.read(buffer).also { read = it } != -1) {
+                                sink.write(buffer, 0, read)
+                                bytesWritten += read
+
+                                // Debug log every 5MB
+                                if (bytesWritten % (5 * 1024 * 1024) < 8192 && bytesWritten > 0) {
+                                    Logger.d("WebDavProvider", "Upload progress: ${bytesWritten / 1024} KB / ${size / 1024} KB")
+                                }
+                            }
+
+                            val duration = System.currentTimeMillis() - startTime
+                            Logger.d("WebDavProvider", "Finished streaming $bytesWritten bytes in $duration ms")
+                        } finally {
+                            // Close the inputStream as soon as we are done reading it.
+                            // This is important for SAF-backed streams (like Google Drive) to release
+                            // underlying resources/locks while we wait for the HTTP response.
+                            try {
+                                inputStream.close()
+                            } catch (e: Exception) {
+                                Logger.w("WebDavProvider", "Error closing inputStream in writeTo", e)
+                            }
                         }
                     }
                 }
-            }
-        val request =
-            Request
-                .Builder()
-                .url(url)
-                .addHeader("Authorization", auth)
-                .put(body)
-                .build()
 
-        client.newCall(request).execute().use { response ->
-            return response.isSuccessful
-        }
-    }
+            val request =
+                Request
+                    .Builder()
+                    .url(url)
+                    .header("Expect", "100-continue") // Prevents OkHttp from stalling if Yandex WebDAV pauses the socket
+                    .put(body)
+                    .build()
 
-    override suspend fun downloadFile(remotePath: String): InputStream? {
-        val url = buildUrl(remotePath)
-        val request =
-            Request
-                .Builder()
-                .url(url)
-                .addHeader("Authorization", auth)
-                .get()
-                .build()
-
-        val response = client.newCall(request).execute()
-        if (!response.isSuccessful) {
-            response.close()
-            return null
-        }
-        // Body will be closed by caller by closing the InputStream
-        return response.body?.byteStream()
-    }
-
-    override suspend fun createDirectory(remotePath: String): Boolean {
-        val parts = remotePath.split('/').filter { it.isNotEmpty() }
-        var currentPath = ""
-        for (part in parts) {
-            currentPath += "/$part"
-            if (!checkDirectoryExists(currentPath)) {
-                val url = buildUrl(currentPath)
-                val request =
-                    Request
-                        .Builder()
-                        .url(url)
-                        .addHeader("Authorization", auth)
-                        .method("MKCOL", null)
-                        .build()
+            try {
                 client.newCall(request).execute().use { response ->
-                    if (!response.isSuccessful && response.code != 405) { // 405 Method Not Allowed often means already exists
-                        return false
+                    Logger.d("WebDavProvider", "Upload response code for $url: ${response.code}")
+                    if (!response.isSuccessful) {
+                        Logger.w("WebDavProvider", "Upload failed with code ${response.code}: ${response.message}")
                     }
+                    response.isSuccessful
+                }
+            } catch (e: Exception) {
+                Logger.e("WebDavProvider", "Exception during upload to $url", e)
+                false
+            }
+        }
+
+    override suspend fun downloadFile(remotePath: String): InputStream? =
+        withContext(Dispatchers.IO) {
+            val url = buildUrl(remotePath)
+            Logger.d("WebDavProvider", "GET $url")
+            val request =
+                Request
+                    .Builder()
+                    .url(url)
+                    .get()
+                    .build()
+
+            try {
+                val response = client.newCall(request).execute()
+                if (!response.isSuccessful) {
+                    Logger.w("WebDavProvider", "Download failed with code ${response.code}: ${response.message}")
+                    response.close()
+                    return@withContext null
+                }
+                // The caller is responsible for closing the returned stream,
+                // which will also close the response body.
+                response.body?.byteStream()
+            } catch (e: Exception) {
+                Logger.e("WebDavProvider", "Exception during download from $url", e)
+                null
+            }
+        }
+
+    override suspend fun createDirectory(remotePath: String): Boolean =
+        withContext(Dispatchers.IO) {
+            val parts = remotePath.split('/').filter { it.isNotEmpty() }
+            var currentPath = ""
+
+            for (part in parts) {
+                currentPath += "$part/"
+                val url = buildUrl(currentPath, isDirectory = true)
+                val resource = DavResource(client, url)
+
+                try {
+                    var exists = false
+                    try {
+                        resource.propfind(0) { _, _ -> exists = true }
+                    } catch (e: Exception) {
+                        exists = false
+                    }
+
+                    if (!exists) {
+                        Logger.d("WebDavProvider", "MKCOL $url")
+                        val request =
+                            Request
+                                .Builder()
+                                .url(url)
+                                .method("MKCOL", null)
+                                .build()
+                        val success =
+                            client.newCall(request).execute().use { response ->
+                                response.isSuccessful || response.code == 405
+                            }
+                        if (!success) return@withContext false
+                    }
+                } catch (e: Exception) {
+                    return@withContext false
                 }
             }
+            true
         }
-        return true
-    }
 
-    private fun checkDirectoryExists(remotePath: String): Boolean {
-        val url = buildUrl(remotePath)
-        val body =
-            """
-            <?xml version="1.0" encoding="utf-8" ?>
-            <D:propfind xmlns:D="DAV:">
-                <D:prop><D:resourcetype/></D:prop>
-            </D:propfind>
-            """.trimIndent().toRequestBody("text/xml".toMediaType())
+    override suspend fun deleteFile(remotePath: String): Boolean =
+        withContext(Dispatchers.IO) {
+            val url = buildUrl(remotePath)
+            Logger.d("WebDavProvider", "DELETE $url")
+            val request =
+                Request
+                    .Builder()
+                    .url(url)
+                    .delete()
+                    .build()
 
-        val request =
-            Request
-                .Builder()
-                .url(url)
-                .addHeader("Authorization", auth)
-                .addHeader("Depth", "0")
-                .method("PROPFIND", body)
-                .build()
-
-        return try {
             client.newCall(request).execute().use { response ->
-                response.isSuccessful
+                response.isSuccessful || response.code == 404
             }
-        } catch (e: Exception) {
-            false
         }
-    }
 
-    override suspend fun deleteFile(remotePath: String): Boolean {
-        val url = buildUrl(remotePath)
-        val request =
-            Request
-                .Builder()
-                .url(url)
-                .addHeader("Authorization", auth)
-                .delete()
-                .build()
-
-        client.newCall(request).execute().use { response ->
-            return response.isSuccessful
+    override suspend fun testConnection(): Boolean =
+        withContext(Dispatchers.IO) {
+            val url = getBaseUrl()
+            Logger.d("WebDavProvider", "Testing connection to $url")
+            val resource = DavResource(client, url)
+            try {
+                resource.propfind(0) { _, _ -> }
+                true
+            } catch (e: Exception) {
+                Logger.e("WebDavProvider", "Connection test failed", e)
+                throw IOException("WebDAV error: ${e.message}", e)
+            }
         }
-    }
-
-    private class MutableRemoteFile {
-        var name: String? = null
-        var path: String? = null
-        var lastModified: Long = 0
-        var size: Long = 0
-        var isDirectory: Boolean = false
-
-        fun toRemoteFile(): RemoteFile {
-            // href is usually a URL-encoded path or full URL
-            val decodedPath = path?.let { java.net.URLDecoder.decode(it, "UTF-8") } ?: ""
-            return RemoteFile(
-                name = name ?: decodedPath.trimEnd('/').substringAfterLast('/').ifEmpty { decodedPath },
-                path = decodedPath,
-                lastModified = lastModified,
-                size = size,
-                isDirectory = isDirectory,
-            )
-        }
-    }
 }

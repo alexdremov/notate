@@ -8,6 +8,7 @@ interface RemoteStorageProvider {
     suspend fun uploadFile(
         remotePath: String,
         inputStream: InputStream,
+        size: Long,
     ): Boolean
 
     suspend fun downloadFile(remotePath: String): InputStream?
@@ -15,6 +16,13 @@ interface RemoteStorageProvider {
     suspend fun createDirectory(remotePath: String): Boolean
 
     suspend fun deleteFile(remotePath: String): Boolean
+
+    /**
+     * Verifies that the storage provider can connect and authenticate.
+     * @return true if connection is successful, false otherwise.
+     * @throws Exception if connection fails with a specific error.
+     */
+    suspend fun testConnection(): Boolean
 }
 
 data class RemoteFile(
