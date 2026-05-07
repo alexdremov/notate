@@ -310,7 +310,7 @@ fun ProjectSyncConfigDialog(
     val context = LocalContext.current
     var syncConfig by remember { mutableStateOf(SyncPreferencesManager.getProjectSyncConfig(context, projectId)) }
     var refreshStoragesTrigger by remember { mutableStateOf(0) }
-    val storages = remember(refreshStoragesTrigger) { SyncPreferencesManager.getRemoteStorages(context) }
+    val storages = SyncPreferencesManager.getRemoteStorages(context)
 
     var showEditStorage by remember { mutableStateOf(false) }
     var showStorageList by remember { mutableStateOf(false) }
