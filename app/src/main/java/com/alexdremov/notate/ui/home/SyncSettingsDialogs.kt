@@ -422,7 +422,11 @@ fun ProjectSyncConfigDialog(
                 val current = SyncPreferencesManager.getRemoteStorages(context).toMutableList()
                 current.add(config)
                 SyncPreferencesManager.saveRemoteStorages(context, current)
-                SyncPreferencesManager.savePassword(context, config.id, password)
+                SyncPreferencesManager.savePassword(
+                    context,
+                    config.id,
+                    if (config.type == RemoteStorageType.WEBDAV) password else "",
+                )
 
                 val updatedSync = (syncConfig ?: ProjectSyncConfig(projectId, "", "")).copy(remoteStorageId = config.id)
                 SyncPreferencesManager.updateProjectSyncConfig(context, updatedSync)
