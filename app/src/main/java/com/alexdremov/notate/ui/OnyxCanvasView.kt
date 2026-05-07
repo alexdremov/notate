@@ -750,12 +750,13 @@ class OnyxCanvasView
             val scaleX = realMetrics.widthPixels / metrics.widthPixels.toFloat()
             val scaleY = realMetrics.heightPixels / metrics.heightPixels.toFloat()
 
-            // Return the hardware-mapped coordinates
+            // Return the hardware-mapped coordinates, rounding outward to avoid shrinking
+            // the limit/exclusion regions after scaling.
             return Rect(
-                (logicalRect.left * scaleX).toInt(),
-                (logicalRect.top * scaleY).toInt(),
-                (logicalRect.right * scaleX).toInt(),
-                (logicalRect.bottom * scaleY).toInt(),
+                kotlin.math.floor(logicalRect.left * scaleX.toDouble()).toInt(),
+                kotlin.math.floor(logicalRect.top * scaleY.toDouble()).toInt(),
+                kotlin.math.ceil(logicalRect.right * scaleX.toDouble()).toInt(),
+                kotlin.math.ceil(logicalRect.bottom * scaleY.toDouble()).toInt(),
             )
         }
 
