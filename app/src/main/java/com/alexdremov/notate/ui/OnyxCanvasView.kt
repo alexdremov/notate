@@ -737,7 +737,10 @@ class OnyxCanvasView
             }
         }
 
-        private fun scaleRectForEpd(context: Context, logicalRect: Rect): Rect {
+        private fun scaleRectForEpd(
+            context: Context,
+            logicalRect: Rect,
+        ): Rect {
             val metrics = context.resources.displayMetrics
             val wm = context.getSystemService(Context.WINDOW_SERVICE) as android.view.WindowManager
             val realMetrics = android.util.DisplayMetrics()
@@ -752,7 +755,7 @@ class OnyxCanvasView
                 (logicalRect.left * scaleX).toInt(),
                 (logicalRect.top * scaleY).toInt(),
                 (logicalRect.right * scaleX).toInt(),
-                (logicalRect.bottom * scaleY).toInt()
+                (logicalRect.bottom * scaleY).toInt(),
             )
         }
 
