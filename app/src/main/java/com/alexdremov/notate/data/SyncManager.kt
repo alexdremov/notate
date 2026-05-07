@@ -143,10 +143,9 @@ class SyncManager(
 
             val powerManager = context.getSystemService(Context.POWER_SERVICE) as PowerManager
 
-            @Suppress("DEPRECATION")
             val wakeLock =
                 powerManager.newWakeLock(
-                    PowerManager.SCREEN_DIM_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP,
+                    PowerManager.PARTIAL_WAKE_LOCK,
                     "Notate:SyncWakeLock",
                 )
             val wifiManager = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
@@ -159,7 +158,7 @@ class SyncManager(
             }
 
             try {
-                wakeLock.acquire(10 * 60 * 1000L /*10 minutes*/)
+                wakeLock.acquire()
                 wifiLock.acquire()
 
                 updateProgress(0, "Initializing sync...")

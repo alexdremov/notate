@@ -1,7 +1,6 @@
 package com.alexdremov.notate.data
 
 import at.bitfire.dav4jvm.DavResource
-import at.bitfire.dav4jvm.Property
 import at.bitfire.dav4jvm.property.GetContentLength
 import at.bitfire.dav4jvm.property.GetLastModified
 import at.bitfire.dav4jvm.property.ResourceType
@@ -44,11 +43,11 @@ class WebDavProvider(
             }.build()
 
     private fun getBaseUrl(): HttpUrl {
-        var base = config.baseUrl?.trimEnd('/') ?: ""
+        val base = config.baseUrl?.trimEnd('/') ?: ""
         if (base.isEmpty()) throw IllegalArgumentException("Base URL is empty")
 
         if (!base.startsWith("http://") && !base.startsWith("https://")) {
-            base = "http://$base"
+            throw IllegalArgumentException("Base URL must include an explicit scheme (http:// or https://)")
         }
 
         val url = base.toHttpUrlOrNull() ?: throw IllegalArgumentException("Invalid base URL: $base")
