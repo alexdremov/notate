@@ -8,9 +8,11 @@ import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.Rect
 import android.graphics.RectF
+import android.hardware.display.DisplayManager
 import android.os.Looper
 import android.util.AttributeSet
 import android.view.Choreographer
+import android.view.Display
 import android.view.MotionEvent
 import android.view.SurfaceHolder
 import android.view.SurfaceView
@@ -737,18 +739,30 @@ class OnyxCanvasView
             }
         }
 
-        private fun scaleRectForEpd(
-            context: Context,
-            logicalRect: Rect,
-        ): Rect {
-            val metrics = context.resources.displayMetrics
-            val wm = context.getSystemService(Context.WINDOW_SERVICE) as android.view.WindowManager
-            val realMetrics = android.util.DisplayMetrics()
-            wm.defaultDisplay.getRealMetrics(realMetrics)
+        private fun getPhysicalDisplaySize(): Pair<Int, Int>? {
+            val displayManager = context.getSystemService(Context.DISPLAY_SERVICE) as? DisplayManager ?: return null
+            val display = displayManager.getDisplay(Display.DEFAULT_DISPLAY) ?: return null
+            val mode = display.mode ?: return null
+            return mode.physicalWidth to mode.physicalHeight
+        }
 
-            // Calculate the scaling ratio caused by Onyx App Optimization / DPI settings
-            val scaleX = realMetrics.widthPixels / metrics.widthPixels.toFloat()
-            val scaleY = realMetrics.heightPixels / metrics.heightPixels.toFloat()
+        private fun scaleRectForEpd(logicalRect: Rect): Rect {
+            val metrics = context.resources.displayMetrics
+            val physicalSize = getPhysicalDisplaySize() ?: return logicalRect
+            val (physicalWidth, physicalHeight) = physicalSize
+            val optionA =
+                physicalWidth / metrics.widthPixels.toFloat() to
+                    physicalHeight / metrics.heightPixels.toFloat()
+            val optionB =
+                physicalHeight / metrics.widthPixels.toFloat() to
+                    physicalWidth / metrics.heightPixels.toFloat()
+            val (scaleX, scaleY) =
+                if (kotlin.math.abs(optionA.first - optionA.second) <= kotlin.math.abs(optionB.first - optionB.second)) {
+                    optionA
+                } else {
+                    optionB
+                }
+            if (scaleX <= 1f && scaleY <= 1f) return logicalRect
 
             // Return the hardware-mapped coordinates, rounding outward to avoid shrinking
             // the limit/exclusion regions after scaling.
@@ -768,8 +782,8 @@ class OnyxCanvasView
             getGlobalVisibleRect(limit)
 
             // Scale the bounds to raw hardware pixels
-            val hardwareLimit = scaleRectForEpd(context, limit)
-            val hardwareExclusions = exclusionRects.map { scaleRectForEpd(context, it) }
+            val hardwareLimit = scaleRectForEpd(limit)
+            val hardwareExclusions = exclusionRects.map { scaleRectForEpd(it) }
 
             touchHelper?.let {
                 it.setLimitRect(hardwareLimit, hardwareExclusions)
