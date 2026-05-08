@@ -10,9 +10,12 @@ on:
 jobs:
   build:
     # Runs if it's a tag push OR if the PR currently has the 'build-apk' label applied
+    # for a same-repository PR where signing secrets and PR write permissions are available
     if: >
       github.event_name == 'push' || 
-      (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'build-apk'))
+      (github.event_name == 'pull_request' &&
+       github.event.pull_request.head.repo.full_name == github.repository &&
+       contains(github.event.pull_request.labels.*.name, 'build-apk'))
     runs-on: ubuntu-latest
     permissions:
       contents: write
