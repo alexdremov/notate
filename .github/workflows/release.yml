@@ -4,13 +4,22 @@ on:
   push:
     tags:
       - 'v*'
-
+  pull_request:
+    types: [labeled, synchronize] # 'synchronize' triggers on new commits
 
 jobs:
   build:
+    # Runs if it's a tag push OR if the PR currently has the 'build-apk' label applied
+    # for a same-repository PR where signing secrets and PR write permissions are available
+    if: >
+      github.event_name == 'push' || 
+      (github.event_name == 'pull_request' &&
+       github.event.pull_request.head.repo.full_name == github.repository &&
+       contains(github.event.pull_request.labels.*.name, 'build-apk'))
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      pull-requests: write # Required to post the comment in the PR history
 
     steps:
     - name: Checkout code
@@ -29,12 +38,10 @@ jobs:
     - name: Decode Keystore
       env:
         KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
-        KEYSTORE_PROPERTIES: ${{ secrets.KEYSTORE_PROPERTIES }}
       run: |
         echo "$KEYSTORE_BASE64" | base64 --decode > release.keystore
 
         # Create keystore.properties
-        # We point to ../release.keystore because this property is read by the :app module
         echo "storeFile=../release.keystore" > keystore.properties
         echo "keyAlias=${{ secrets.KEY_ALIAS }}" >> keystore.properties
         echo "storePassword=${{ secrets.STORE_PASSWORD }}" >> keystore.properties
@@ -43,13 +50,52 @@ jobs:
     - name: Build Release APK
       run: ./gradlew assembleRelease
 
-    - name: Rename APK
-      run: mv app/build/outputs/apk/release/app-release.apk notate-${{ github.ref_name }}.apk
+    - name: Determine APK Name
+      id: apk-name
+      run: |
+        if [ "${{ github.event_name }}" = "pull_request" ]; then
+          echo "filename=notate-pr-${{ github.event.pull_request.number }}.apk" >> $GITHUB_OUTPUT
+        else
+          echo "filename=notate-${{ github.ref_name }}.apk" >> $GITHUB_OUTPUT
+        fi
 
+    - name: Rename APK
+      run: mv app/build/outputs/apk/release/app-release.apk ${{ steps.apk-name.outputs.filename }}
+
+    # ---------------------------------------------------------
+    # PATH A: TAG PUSH -> Create GitHub Release
+    # ---------------------------------------------------------
     - name: Create Release
+      if: github.event_name == 'push'
       uses: softprops/action-gh-release@v1
       with:
-        files: notate-${{ github.ref_name }}.apk
+        files: ${{ steps.apk-name.outputs.filename }}
         draft: true
         prerelease: false
         generate_release_notes: true
+
+    # ---------------------------------------------------------
+    # PATH B: PULL REQUEST -> Upload Artifact & Comment
+    # ---------------------------------------------------------
+    - name: Upload APK as Artifact
+      if: github.event_name == 'pull_request'
+      id: upload-artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: PR-Release-APK-${{ github.event.pull_request.number }}
+        path: ${{ steps.apk-name.outputs.filename }}
+        retention-days: 7
+
+    - name: Comment on PR with Artifact Link
+      if: github.event_name == 'pull_request'
+      uses: actions/github-script@v7
+      env:
+        ARTIFACT_URL: ${{ steps.upload-artifact.outputs.artifact-url }}
+      with:
+        script: |
+          github.rest.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: `✅ **APK Build Successful!**\n\nAn admin triggered a release build for this PR. You can download the generated APK here: [Download APK](${process.env.ARTIFACT_URL})`
+          })

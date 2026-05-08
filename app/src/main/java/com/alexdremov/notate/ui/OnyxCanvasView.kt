@@ -8,6 +8,7 @@ import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.Rect
 import android.graphics.RectF
+import android.hardware.display.DisplayManager
 import android.os.Looper
 import android.util.AttributeSet
 import android.view.Choreographer
@@ -42,6 +43,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.util.LinkedList
+import kotlin.math.abs
 
 class OnyxCanvasView
     @JvmOverloads
@@ -737,13 +739,62 @@ class OnyxCanvasView
             }
         }
 
+        private fun getPhysicalDisplaySize(): Pair<Int, Int>? {
+            val displayManager = context.getSystemService(Context.DISPLAY_SERVICE) as? DisplayManager ?: return null
+            val targetDisplayId = display?.displayId
+            val targetDisplay = targetDisplayId?.let { displayManager.getDisplay(it) }
+            val fallbackDisplay = displayManager.displays.firstOrNull()
+            val activeDisplay = targetDisplay ?: fallbackDisplay ?: return null
+            val mode = activeDisplay.mode ?: return null
+            return mode.physicalWidth to mode.physicalHeight
+        }
+
+        private fun scaleRectForEpd(logicalRect: Rect): Rect {
+            val metrics = context.resources.displayMetrics
+            val physicalSize = getPhysicalDisplaySize() ?: return logicalRect
+            val (physicalWidth, physicalHeight) = physicalSize
+            val normalMapping =
+                physicalWidth / metrics.widthPixels.toFloat() to
+                    physicalHeight / metrics.heightPixels.toFloat()
+            val transposedMapping =
+                physicalHeight / metrics.widthPixels.toFloat() to
+                    physicalWidth / metrics.heightPixels.toFloat()
+            // Pick the axis mapping where X/Y scales are closest. With correct width↔width and
+            // height↔height pairing, both axes should need nearly the same scale factor.
+            val (scaleX, scaleY) =
+                if (abs(normalMapping.first - normalMapping.second) <=
+                    abs(transposedMapping.first - transposedMapping.second)
+                ) {
+                    normalMapping
+                } else {
+                    transposedMapping
+                }
+            // Scales at or below 1 mean no hardware-space expansion is needed.
+            if (scaleX <= 1f && scaleY <= 1f) return logicalRect
+
+            // Return the hardware-mapped coordinates, rounding outward to avoid shrinking
+            // the limit/exclusion regions after scaling.
+            return Rect(
+                kotlin.math.floor(logicalRect.left * scaleX.toDouble()).toInt(),
+                kotlin.math.floor(logicalRect.top * scaleY.toDouble()).toInt(),
+                kotlin.math.ceil(logicalRect.right * scaleX.toDouble()).toInt(),
+                kotlin.math.ceil(logicalRect.bottom * scaleY.toDouble()).toInt(),
+            )
+        }
+
         fun setExclusionRects(rects: List<Rect>) {
             exclusionRects.clear()
             exclusionRects.addAll(rects)
+
+            val limit = Rect()
+            getGlobalVisibleRect(limit)
+
+            // Scale the bounds to raw hardware pixels
+            val hardwareLimit = scaleRectForEpd(limit)
+            val hardwareExclusions = exclusionRects.map { scaleRectForEpd(it) }
+
             touchHelper?.let {
-                val limit = Rect()
-                getLocalVisibleRect(limit)
-                it.setLimitRect(limit, exclusionRects)
+                it.setLimitRect(hardwareLimit, hardwareExclusions)
             }
         }
 
@@ -864,10 +915,10 @@ class OnyxCanvasView
             }
             com.alexdremov.notate.util.OnyxSystemHelper
                 .ignoreSystemSideButton(this)
-            val limit = Rect()
-            getLocalVisibleRect(limit)
+
+            setExclusionRects(exclusionRects.toList())
+
             touchHelper?.apply {
-                setLimitRect(limit, exclusionRects)
                 openRawDrawing()
                 setRawDrawingEnabled(true)
                 setRawDrawingRenderEnabled(true)
