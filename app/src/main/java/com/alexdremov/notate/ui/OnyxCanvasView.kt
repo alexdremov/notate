@@ -12,7 +12,6 @@ import android.hardware.display.DisplayManager
 import android.os.Looper
 import android.util.AttributeSet
 import android.view.Choreographer
-import android.view.Display
 import android.view.MotionEvent
 import android.view.SurfaceHolder
 import android.view.SurfaceView
@@ -44,6 +43,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.util.LinkedList
+import kotlin.math.abs
 
 class OnyxCanvasView
     @JvmOverloads
@@ -741,8 +741,11 @@ class OnyxCanvasView
 
         private fun getPhysicalDisplaySize(): Pair<Int, Int>? {
             val displayManager = context.getSystemService(Context.DISPLAY_SERVICE) as? DisplayManager ?: return null
-            val display = displayManager.getDisplay(Display.DEFAULT_DISPLAY) ?: return null
-            val mode = display.mode ?: return null
+            val targetDisplayId = display?.displayId
+            val targetDisplay = targetDisplayId?.let { displayManager.getDisplay(it) }
+            val fallbackDisplay = displayManager.displays.firstOrNull()
+            val activeDisplay = targetDisplay ?: fallbackDisplay ?: return null
+            val mode = activeDisplay.mode ?: return null
             return mode.physicalWidth to mode.physicalHeight
         }
 
@@ -750,18 +753,23 @@ class OnyxCanvasView
             val metrics = context.resources.displayMetrics
             val physicalSize = getPhysicalDisplaySize() ?: return logicalRect
             val (physicalWidth, physicalHeight) = physicalSize
-            val optionA =
+            val normalMapping =
                 physicalWidth / metrics.widthPixels.toFloat() to
                     physicalHeight / metrics.heightPixels.toFloat()
-            val optionB =
+            val transposedMapping =
                 physicalHeight / metrics.widthPixels.toFloat() to
                     physicalWidth / metrics.heightPixels.toFloat()
+            // Pick the axis mapping where X/Y scales are closest. With correct width↔width and
+            // height↔height pairing, both axes should need nearly the same scale factor.
             val (scaleX, scaleY) =
-                if (kotlin.math.abs(optionA.first - optionA.second) <= kotlin.math.abs(optionB.first - optionB.second)) {
-                    optionA
+                if (abs(normalMapping.first - normalMapping.second) <=
+                    abs(transposedMapping.first - transposedMapping.second)
+                ) {
+                    normalMapping
                 } else {
-                    optionB
+                    transposedMapping
                 }
+            // Scales at or below 1 mean no hardware-space expansion is needed.
             if (scaleX <= 1f && scaleY <= 1f) return logicalRect
 
             // Return the hardware-mapped coordinates, rounding outward to avoid shrinking
