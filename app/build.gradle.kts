@@ -180,6 +180,7 @@ dependencies {
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.9.0")
     testImplementation("androidx.work:work-testing:2.10.0")
     testImplementation("androidx.test:core-ktx:1.6.1")
+    testImplementation("com.squareup.okhttp3:mockwebserver:5.3.2")
 
     // Security & Networking
     implementation("androidx.security:security-crypto:1.1.0")
