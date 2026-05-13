@@ -1,10 +1,12 @@
 package com.alexdremov.notate.data
 
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.runBlocking
 import okhttp3.Credentials
 import okhttp3.OkHttpClient
 import org.junit.After
 import org.junit.Assert.assertArrayEquals
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
@@ -121,13 +123,11 @@ class WebDavProviderIntegrationTest {
         assertNull(provider.downloadFile(remoteFilePath))
         assertTrue(provider.deleteFile(remoteFilePath)) // 404 accepted
 
-        var missingPathThrew = false
-        try {
-            provider.listFiles("sync-root/does-not-exist")
-        } catch (_: FileNotFoundException) {
-            missingPathThrew = true
+        assertThrows(FileNotFoundException::class.java) {
+            runBlocking {
+                provider.listFiles("sync-root/does-not-exist")
+            }
         }
-        assertTrue(missingPathThrew)
     }
 
     private fun createProvider(
@@ -181,9 +181,11 @@ class WebDavProviderIntegrationTest {
                     override fun getAcceptedIssuers(): Array<X509Certificate> = emptyArray()
                 }
 
-            // Use TLSv1.2 explicitly in tests to avoid negotiating deprecated TLS versions
-            // while remaining broadly compatible with container/JDK combinations.
-            val sslContext = SSLContext.getInstance("TLSv1.2")
+            // Prefer TLSv1.3 in tests, falling back to TLSv1.2 for environments where
+            // TLSv1.3 is unavailable.
+            val sslContext =
+                runCatching { SSLContext.getInstance("TLSv1.3") }
+                    .getOrElse { SSLContext.getInstance("TLSv1.2") }
             sslContext.init(null, arrayOf<TrustManager>(trustManager), SecureRandom())
             clientBuilder.sslSocketFactory(sslContext.socketFactory, trustManager)
             // Test-only hostname verifier for localhost/container certificates.
