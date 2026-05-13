@@ -163,7 +163,13 @@ class WebDavProviderIntegrationTest {
                 return MockResponse().setResponseCode(HttpURLConnection.HTTP_NOT_FOUND)
             }
 
-            val depth = depthHeader?.toIntOrNull() ?: 0
+            val depth =
+                when {
+                    depthHeader == null -> 0
+                    depthHeader == "infinity" -> Int.MAX_VALUE
+                    depthHeader.toIntOrNull() != null -> depthHeader.toInt()
+                    else -> return MockResponse().setResponseCode(HttpURLConnection.HTTP_BAD_REQUEST)
+                }
             val responses = mutableListOf(buildResponse(path, directories.contains(path), files[path]?.size?.toLong() ?: 0L))
             if (depth > 0 && directories.contains(path)) {
                 listChildren(path).forEach { child ->
