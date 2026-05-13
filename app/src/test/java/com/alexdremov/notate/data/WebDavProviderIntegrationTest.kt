@@ -100,6 +100,10 @@ class WebDavProviderIntegrationTest {
     }
 
     private class InMemoryWebDavDispatcher : Dispatcher() {
+        private companion object {
+            private const val FIXED_TEST_TIMESTAMP_MILLIS = 1710000000000L
+        }
+
         private val directories = java.util.Collections.newSetFromMap(ConcurrentHashMap<String, Boolean>())
         private val files = ConcurrentHashMap<String, ByteArray>()
         val putExpectHeaders = java.util.Collections.synchronizedList(mutableListOf<String?>())
@@ -218,7 +222,7 @@ class WebDavProviderIntegrationTest {
                 DateTimeFormatter
                     .ofPattern("EEE, dd MMM yyyy HH:mm:ss 'GMT'", Locale.US)
                     .withZone(ZoneOffset.UTC)
-                    .format(Instant.ofEpochMilli(1710000000000L))
+                    .format(Instant.ofEpochMilli(FIXED_TEST_TIMESTAMP_MILLIS))
 
             return if (isDirectory) {
                 """
