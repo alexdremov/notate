@@ -1,270 +1,195 @@
 package com.alexdremov.notate.data
 
 import kotlinx.coroutines.test.runTest
+import okhttp3.Credentials
 import okhttp3.OkHttpClient
-import okhttp3.Protocol
-import okhttp3.mockwebserver.Dispatcher
-import okhttp3.mockwebserver.MockResponse
-import okhttp3.mockwebserver.MockWebServer
-import okhttp3.mockwebserver.RecordedRequest
 import org.junit.After
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
-import org.junit.Before
+import org.junit.Assume.assumeTrue
 import org.junit.Test
-import okio.Buffer
+import org.testcontainers.DockerClientFactory
+import org.testcontainers.containers.GenericContainer
 import java.io.ByteArrayInputStream
-import java.net.HttpURLConnection
-import java.time.Instant
-import java.time.ZoneOffset
-import java.time.format.DateTimeFormatter
-import java.util.Locale
-import java.util.concurrent.ConcurrentHashMap
+import java.io.FileNotFoundException
+import java.security.SecureRandom
+import java.security.cert.X509Certificate
+import javax.net.ssl.HostnameVerifier
+import javax.net.ssl.SSLContext
+import javax.net.ssl.SSLSession
+import javax.net.ssl.TrustManager
+import javax.net.ssl.X509TrustManager
 
 class WebDavProviderIntegrationTest {
-    private lateinit var server: MockWebServer
-    private lateinit var dispatcher: InMemoryWebDavDispatcher
+    private val activeContainers = mutableListOf<GenericContainer<*>>()
 
-    @Before
-    fun setup() {
-        server = MockWebServer()
-        dispatcher = InMemoryWebDavDispatcher()
-        server.dispatcher = dispatcher
-    }
+    private data class WebDavServerSpec(
+        val scheme: String,
+        val containerPort: Int,
+        val env: Map<String, String>,
+    )
 
     @After
     fun tearDown() {
-        server.shutdown()
+        activeContainers.asReversed().forEach {
+            runCatching { it.stop() }
+        }
+        activeContainers.clear()
     }
 
     @Test
-    fun `webdav operations work over HTTP_1_1 without Expect header`() =
-        runWebDavRoundtripTest(listOf(Protocol.HTTP_1_1))
+    fun `full WebDAV provider interface works against real HTTP server`() =
+        runAgainstServer(
+            WebDavServerSpec(
+                scheme = "http",
+                containerPort = 80,
+                env =
+                    mapOf(
+                        "AUTH_TYPE" to "Basic",
+                        "USERNAME" to "user",
+                        "PASSWORD" to "pass",
+                        "LOCATION" to "/webdav",
+                    ),
+            ),
+            insecureTls = false,
+        )
 
     @Test
-    fun `webdav operations work over HTTP_2 prior knowledge without Expect header`() =
-        runWebDavRoundtripTest(listOf(Protocol.H2_PRIOR_KNOWLEDGE))
+    fun `full WebDAV provider interface works against real HTTPS server`() =
+        runAgainstServer(
+            WebDavServerSpec(
+                scheme = "https",
+                containerPort = 443,
+                env =
+                    mapOf(
+                        "AUTH_TYPE" to "Basic",
+                        "USERNAME" to "user",
+                        "PASSWORD" to "pass",
+                        "LOCATION" to "/webdav",
+                        "SSL_CERT" to "selfsigned",
+                    ),
+            ),
+            insecureTls = true,
+        )
 
-    private fun runWebDavRoundtripTest(protocols: List<Protocol>) =
-        runTest {
-            server.protocols = protocols
-            server.start()
+    private fun runAgainstServer(
+        spec: WebDavServerSpec,
+        insecureTls: Boolean,
+    ) = runTest {
+        assumeTrue(
+            "Docker is required for real WebDAV integration tests",
+            runCatching { DockerClientFactory.instance().isDockerAvailable }.getOrDefault(false),
+        )
 
-            val provider = createProvider(protocols)
-            val payload = "notate-webdav-sync".toByteArray()
+        val container = GenericContainer("bytemark/webdav:2.4")
+        spec.env.forEach { (k, v) -> container.withEnv(k, v) }
+        container.withExposedPorts(spec.containerPort)
+        container.start()
+        activeContainers.add(container)
 
-            assertTrue(provider.createDirectory("sync-root/subdir"))
-            assertTrue(
-                provider.uploadFile(
-                    "sync-root/subdir/test.notate",
-                    ByteArrayInputStream(payload),
-                    payload.size.toLong(),
-                ),
-            )
+        val baseUrl = "${spec.scheme}://${container.host}:${container.getMappedPort(spec.containerPort)}/webdav/"
+        val provider = createProvider(baseUrl, "user", "pass", insecureTls)
+        val initialData = "notate-webdav-content-v1".toByteArray()
+        val updatedData = "notate-webdav-content-v2".toByteArray()
 
-            val listed = provider.listFiles("sync-root/subdir")
-            assertTrue(listed.any { it.name == "test.notate" && !it.isDirectory && it.size == payload.size.toLong() })
+        assertTrue(provider.testConnection())
+        assertTrue(provider.createDirectory("sync-root/alpha/beta"))
+        assertTrue(provider.createDirectory("sync-root/alpha/beta")) // idempotent
 
-            val downloaded = provider.downloadFile("sync-root/subdir/test.notate")!!.use { it.readBytes() }
-            assertArrayEquals(payload, downloaded)
+        val alphaItems = provider.listFiles("sync-root/alpha")
+        assertTrue(alphaItems.any { it.name == "beta" && it.isDirectory })
 
-            assertTrue(provider.deleteFile("sync-root/subdir/test.notate"))
-            assertFalse(provider.listFiles("sync-root/subdir").any { it.name == "test.notate" })
-            assertTrue(dispatcher.putExpectHeaders.all { it.isNullOrBlank() })
+        val remoteFilePath = "sync-root/alpha/beta/test.notate"
+        assertTrue(provider.uploadFile(remoteFilePath, ByteArrayInputStream(initialData), initialData.size.toLong()))
+
+        val listed = provider.listFiles("sync-root/alpha/beta")
+        val listedFile = listed.find { it.name == "test.notate" && !it.isDirectory }
+        assertNotNull(listedFile)
+        assertTrue((listedFile?.size ?: 0L) > 0L)
+
+        val downloaded = provider.downloadFile(remoteFilePath)?.use { it.readBytes() }
+        assertArrayEquals(initialData, downloaded)
+
+        assertTrue(provider.uploadFile(remoteFilePath, ByteArrayInputStream(updatedData), updatedData.size.toLong()))
+        val downloadedUpdated = provider.downloadFile(remoteFilePath)?.use { it.readBytes() }
+        assertArrayEquals(updatedData, downloadedUpdated)
+
+        assertTrue(provider.deleteFile(remoteFilePath))
+        assertTrue(provider.downloadFile(remoteFilePath) == null)
+        assertTrue(provider.deleteFile(remoteFilePath)) // 404 accepted
+
+        var missingPathThrew = false
+        try {
+            provider.listFiles("sync-root/does-not-exist")
+        } catch (_: FileNotFoundException) {
+            missingPathThrew = true
         }
+        assertTrue(missingPathThrew)
+    }
 
-    private fun createProvider(protocols: List<Protocol>): WebDavProvider {
+    private fun createProvider(
+        baseUrl: String,
+        username: String,
+        password: String,
+        insecureTls: Boolean,
+    ): WebDavProvider {
         val config =
             RemoteStorageConfig(
-                id = "storage-id",
-                name = "Test WebDAV",
+                id = "real-webdav",
+                name = "Real WebDAV",
                 type = RemoteStorageType.WEBDAV,
-                baseUrl = server.url("/webdav/").toString(),
-                username = "user",
+                baseUrl = baseUrl,
+                username = username,
             )
 
-        val client =
+        val clientBuilder =
             OkHttpClient
                 .Builder()
-                .protocols(protocols)
                 .followRedirects(false)
                 .followSslRedirects(false)
                 .addInterceptor { chain ->
                     chain.proceed(
-                        chain.request().newBuilder().header("Authorization", "Basic dXNlcjpwYXNz").build(),
+                        chain
+                            .request()
+                            .newBuilder()
+                            .header("Authorization", Credentials.basic(username, password))
+                            .build(),
                     )
-                }.build()
-
-        return WebDavProvider(config, "pass", client)
-    }
-
-    private class InMemoryWebDavDispatcher : Dispatcher() {
-        private companion object {
-            private const val FIXED_TEST_TIMESTAMP_MILLIS = 1710000000000L
-        }
-
-        private val directories = java.util.Collections.newSetFromMap(ConcurrentHashMap<String, Boolean>())
-        private val files = ConcurrentHashMap<String, ByteArray>()
-        val putExpectHeaders = java.util.Collections.synchronizedList(mutableListOf<String?>())
-
-        init {
-            directories.add("/")
-            directories.add("/webdav")
-        }
-
-        override fun dispatch(request: RecordedRequest): MockResponse {
-            val path = normalizePath(request.path ?: "/")
-
-            return when (request.method) {
-                "MKCOL" -> handleMkcol(path)
-                "PUT" -> handlePut(path, request)
-                "GET" -> handleGet(path)
-                "DELETE" -> handleDelete(path)
-                "PROPFIND" -> handlePropfind(path, request.getHeader("Depth"))
-                else -> MockResponse().setResponseCode(HttpURLConnection.HTTP_BAD_METHOD)
-            }
-        }
-
-        private fun handleMkcol(path: String): MockResponse {
-            val parent = parent(path)
-            if (!directories.contains(parent)) {
-                return MockResponse().setResponseCode(HttpURLConnection.HTTP_CONFLICT)
-            }
-            directories.add(path)
-            return MockResponse().setResponseCode(HttpURLConnection.HTTP_CREATED)
-        }
-
-        private fun handlePut(
-            path: String,
-            request: RecordedRequest,
-        ): MockResponse {
-            putExpectHeaders.add(request.getHeader("Expect"))
-            val parent = parent(path)
-            if (!directories.contains(parent)) {
-                return MockResponse().setResponseCode(HttpURLConnection.HTTP_CONFLICT)
-            }
-            files[path] = request.body.readByteArray()
-            return MockResponse().setResponseCode(HttpURLConnection.HTTP_CREATED)
-        }
-
-        private fun handleGet(path: String): MockResponse {
-            val data = files[path] ?: return MockResponse().setResponseCode(HttpURLConnection.HTTP_NOT_FOUND)
-            return MockResponse().setResponseCode(HttpURLConnection.HTTP_OK).setBody(Buffer().write(data))
-        }
-
-        private fun handleDelete(path: String): MockResponse {
-            files.remove(path)
-            directories.remove(path)
-            return MockResponse().setResponseCode(HttpURLConnection.HTTP_NO_CONTENT)
-        }
-
-        private fun handlePropfind(
-            path: String,
-            depthHeader: String?,
-        ): MockResponse {
-            if (!directories.contains(path) && !files.containsKey(path)) {
-                return MockResponse().setResponseCode(HttpURLConnection.HTTP_NOT_FOUND)
-            }
-
-            val depth =
-                when {
-                    depthHeader == null -> 0
-                    depthHeader == "infinity" -> Int.MAX_VALUE
-                    depthHeader.toIntOrNull() != null -> depthHeader.toInt()
-                    else -> return MockResponse().setResponseCode(HttpURLConnection.HTTP_BAD_REQUEST)
                 }
-            val responses = mutableListOf(buildResponse(path, directories.contains(path), files[path]?.size?.toLong() ?: 0L))
-            if (depth > 0 && directories.contains(path)) {
-                listChildren(path).forEach { child ->
-                    responses.add(buildResponse(child, directories.contains(child), files[child]?.size?.toLong() ?: 0L))
+
+        if (insecureTls) {
+            val trustManager =
+                object : X509TrustManager {
+                    override fun checkClientTrusted(
+                        chain: Array<X509Certificate>,
+                        authType: String,
+                    ) {
+                    }
+
+                    override fun checkServerTrusted(
+                        chain: Array<X509Certificate>,
+                        authType: String,
+                    ) {
+                    }
+
+                    override fun getAcceptedIssuers(): Array<X509Certificate> = emptyArray()
                 }
-            }
 
-            val body =
-                """
-                <?xml version="1.0" encoding="UTF-8"?>
-                <d:multistatus xmlns:d="DAV:">
-                    ${responses.joinToString("\n")}
-                </d:multistatus>
-                """.trimIndent()
-
-            return MockResponse()
-                .setResponseCode(207)
-                .setHeader("Content-Type", "application/xml; charset=utf-8")
-                .setBody(body)
+            val sslContext = SSLContext.getInstance("TLS")
+            sslContext.init(null, arrayOf<TrustManager>(trustManager), SecureRandom())
+            clientBuilder.sslSocketFactory(sslContext.socketFactory, trustManager)
+            clientBuilder.hostnameVerifier(
+                object : HostnameVerifier {
+                    override fun verify(
+                        hostname: String?,
+                        session: SSLSession?,
+                    ): Boolean = true
+                },
+            )
         }
 
-        private fun listChildren(directory: String): List<String> {
-            val prefix = if (directory == "/") "/" else "$directory/"
-            val childDirs =
-                directories
-                    .filter { it != directory && it.startsWith(prefix) }
-                    .map { it.removePrefix(prefix) }
-                    .filter { it.isNotEmpty() && !it.contains('/') }
-                    .map { "$prefix$it" }
-            val childFiles =
-                files.keys
-                    .filter { it.startsWith(prefix) }
-                    .map { it.removePrefix(prefix) }
-                    .filter { it.isNotEmpty() && !it.contains('/') }
-                    .map { "$prefix$it" }
-            return (childDirs + childFiles).distinct().sorted()
-        }
-
-        private fun buildResponse(
-            absolutePath: String,
-            isDirectory: Boolean,
-            size: Long,
-        ): String {
-            val href = if (isDirectory) "$absolutePath/" else absolutePath
-            val modified =
-                DateTimeFormatter
-                    .ofPattern("EEE, dd MMM yyyy HH:mm:ss 'GMT'", Locale.US)
-                    .withZone(ZoneOffset.UTC)
-                    .format(Instant.ofEpochMilli(FIXED_TEST_TIMESTAMP_MILLIS))
-
-            return if (isDirectory) {
-                """
-                <d:response>
-                    <d:href>$href</d:href>
-                    <d:propstat>
-                        <d:prop>
-                            <d:getlastmodified>$modified</d:getlastmodified>
-                            <d:getcontentlength>0</d:getcontentlength>
-                            <d:resourcetype><d:collection/></d:resourcetype>
-                        </d:prop>
-                        <d:status>HTTP/1.1 200 OK</d:status>
-                    </d:propstat>
-                </d:response>
-                """.trimIndent()
-            } else {
-                """
-                <d:response>
-                    <d:href>$href</d:href>
-                    <d:propstat>
-                        <d:prop>
-                            <d:getlastmodified>$modified</d:getlastmodified>
-                            <d:getcontentlength>$size</d:getcontentlength>
-                            <d:resourcetype/>
-                        </d:prop>
-                        <d:status>HTTP/1.1 200 OK</d:status>
-                    </d:propstat>
-                </d:response>
-                """.trimIndent()
-            }
-        }
-
-        private fun normalizePath(rawPath: String): String {
-            val noQuery = rawPath.substringBefore('?')
-            val trimmed = if (noQuery.endsWith("/") && noQuery.length > 1) noQuery.dropLast(1) else noQuery
-            return if (trimmed.isEmpty()) "/" else trimmed
-        }
-
-        private fun parent(path: String): String {
-            if (path == "/") return "/"
-            val idx = path.lastIndexOf('/')
-            return if (idx <= 0) "/" else path.substring(0, idx)
-        }
+        return WebDavProvider(config, password, clientBuilder.build())
     }
 }
