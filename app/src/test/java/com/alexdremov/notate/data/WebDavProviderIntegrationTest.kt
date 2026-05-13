@@ -7,6 +7,7 @@ import org.junit.After
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
 import org.junit.Test
@@ -117,7 +118,7 @@ class WebDavProviderIntegrationTest {
         assertArrayEquals(updatedData, downloadedUpdated)
 
         assertTrue(provider.deleteFile(remoteFilePath))
-        assertTrue(provider.downloadFile(remoteFilePath) == null)
+        assertNull(provider.downloadFile(remoteFilePath))
         assertTrue(provider.deleteFile(remoteFilePath)) // 404 accepted
 
         var missingPathThrew = false
