@@ -160,6 +160,9 @@ class WebDavProviderIntegrationTest {
                 }
 
         if (insecureTls) {
+            // Test-only trust manager:
+            // this accepts the container's self-signed certificate so we can verify WebDAV
+            // behavior over HTTPS in integration tests. Never use this in production.
             val trustManager =
                 object : X509TrustManager {
                     override fun checkClientTrusted(
@@ -180,6 +183,8 @@ class WebDavProviderIntegrationTest {
             val sslContext = SSLContext.getInstance("TLS")
             sslContext.init(null, arrayOf<TrustManager>(trustManager), SecureRandom())
             clientBuilder.sslSocketFactory(sslContext.socketFactory, trustManager)
+            // Test-only hostname verifier for localhost/container certificates.
+            // This intentionally disables hostname checks for this isolated test setup.
             clientBuilder.hostnameVerifier(
                 object : HostnameVerifier {
                     override fun verify(
