@@ -177,6 +177,9 @@ class WebDavProvider(
                 Request
                     .Builder()
                     .url(url)
+                    // Do not force "Expect: 100-continue":
+                    // some HTTP/2 WebDAV deployments (e.g. behind Nginx) may stall PUT uploads
+                    // when this header is sent unconditionally.
                     .put(body)
                     .build()
 

@@ -180,6 +180,8 @@ class WebDavProviderIntegrationTest {
                     override fun getAcceptedIssuers(): Array<X509Certificate> = emptyArray()
                 }
 
+            // Use TLSv1.2 explicitly in tests to avoid negotiating deprecated TLS versions
+            // while remaining broadly compatible with container/JDK combinations.
             val sslContext = SSLContext.getInstance("TLSv1.2")
             sslContext.init(null, arrayOf<TrustManager>(trustManager), SecureRandom())
             clientBuilder.sslSocketFactory(sslContext.socketFactory, trustManager)
