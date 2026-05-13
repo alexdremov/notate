@@ -23,8 +23,10 @@ import java.util.concurrent.TimeUnit
 class WebDavProvider(
     private val config: RemoteStorageConfig,
     private val password: String,
-    private val client: OkHttpClient = createDefaultClient(config, password),
+    client: OkHttpClient? = null,
 ) : RemoteStorageProvider {
+    private val client: OkHttpClient = client ?: createDefaultClient(config, password)
+
     companion object {
         private fun createDefaultClient(
             config: RemoteStorageConfig,

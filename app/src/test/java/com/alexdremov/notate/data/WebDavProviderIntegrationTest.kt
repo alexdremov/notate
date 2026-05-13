@@ -180,7 +180,7 @@ class WebDavProviderIntegrationTest {
                     override fun getAcceptedIssuers(): Array<X509Certificate> = emptyArray()
                 }
 
-            val sslContext = SSLContext.getInstance("TLS")
+            val sslContext = SSLContext.getInstance("TLSv1.2")
             sslContext.init(null, arrayOf<TrustManager>(trustManager), SecureRandom())
             clientBuilder.sslSocketFactory(sslContext.socketFactory, trustManager)
             // Test-only hostname verifier for localhost/container certificates.
