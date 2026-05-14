@@ -78,6 +78,7 @@ class WebDavProviderIntegrationTest {
                         "PASSWORD" to "pass",
                         "LOCATION" to "/webdav",
                         "SSL_CERT" to "selfsigned",
+                        "SERVER_NAMES" to "localhost",
                     ),
             ),
             insecureTls = true,
@@ -99,13 +100,18 @@ class WebDavProviderIntegrationTest {
         // Wait for the server to be ready and respond to DAV requests.
         // DAV servers should respond to OPTIONS or PROPFIND on the mapped path.
         // We allow 401 as the container is configured with Basic Auth.
-        container.waitingFor(
+        val waitStrategy =
             Wait
                 .forHttp(spec.locationPath)
                 .withMethod("OPTIONS")
                 .allowInsecure()
-                .forStatusCodeMatching { it == 200 || it == 401 || it == 405 },
-        )
+                .forStatusCodeMatching { it == 200 || it == 401 || it == 405 }
+
+        if (spec.scheme == "https") {
+            waitStrategy.usingTls()
+        }
+
+        container.waitingFor(waitStrategy)
 
         container.start()
         activeContainers.add(container)

@@ -71,7 +71,7 @@ android {
             isIncludeAndroidResources = true
             isReturnDefaultValues = true
             all {
-                it.maxHeapSize = "6g"
+                it.maxHeapSize = "2g"
             }
         }
     }
