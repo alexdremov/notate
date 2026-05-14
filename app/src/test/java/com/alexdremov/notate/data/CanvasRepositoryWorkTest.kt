@@ -1,17 +1,17 @@
 package com.alexdremov.notate.data
 
 import android.content.Context
-import androidx.work.Configuration
+import androidx.work.ExistingWorkPolicy
+import androidx.work.OneTimeWorkRequest
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
-import androidx.work.testing.SynchronousExecutor
-import androidx.work.testing.WorkManagerTestInitHelper
 import com.alexdremov.notate.data.io.FileLockManager
-import com.alexdremov.notate.data.worker.SaveWorker
 import com.alexdremov.notate.model.StrokeType
+import com.google.common.util.concurrent.ListenableFuture
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.mockkObject
+import io.mockk.mockkStatic
 import io.mockk.unmockkAll
 import io.mockk.verify
 import kotlinx.coroutines.runBlocking
@@ -31,19 +31,16 @@ class CanvasRepositoryWorkTest {
     private lateinit var context: Context
     private lateinit var repository: CanvasRepository
     private lateinit var testDir: File
+    private lateinit var workManager: WorkManager
 
     @Before
     fun setup() {
         context = RuntimeEnvironment.getApplication()
 
-        val config =
-            Configuration
-                .Builder()
-                .setMinimumLoggingLevel(android.util.Log.DEBUG)
-                .setExecutor(SynchronousExecutor())
-                .build()
-
-        WorkManagerTestInitHelper.initializeTestWorkManager(context, config)
+        // Mock WorkManager to avoid database leaks and heavy initialization
+        workManager = mockk(relaxed = true)
+        mockkStatic(WorkManager::class)
+        every { WorkManager.getInstance(any()) } returns workManager
 
         repository = CanvasRepository(context)
         testDir = File(context.cacheDir, "test_work_canvases")
@@ -79,23 +76,26 @@ class CanvasRepositoryWorkTest {
                 ),
             )
 
+            // Mock the work info return
+            val mockWorkInfo = mockk<WorkInfo>()
+            every { mockWorkInfo.state } returns WorkInfo.State.ENQUEUED
+            val mockFuture = mockk<ListenableFuture<List<WorkInfo>>>()
+            every { mockFuture.get() } returns listOf(mockWorkInfo)
+            every { workManager.getWorkInfosForUniqueWork(any()) } returns mockFuture
+
             // Trigger Save and Close
             repository.saveAndCloseSession(path, session)
 
             // Verify WorkManager request
             val uniqueWorkName = "SaveWorker_${session.sessionDir.name}"
 
-            val workManager = WorkManager.getInstance(context)
-            val workInfos = workManager.getWorkInfosForUniqueWork(uniqueWorkName).get()
-
-            assertFalse("Work request should be enqueued for $uniqueWorkName", workInfos.isEmpty())
-
-            // Since SynchronousExecutor runs immediately, it might be SUCCEEDED
-            val state = workInfos[0].state
-            assertTrue(
-                "State should be ENQUEUED or SUCCEEDED (was $state)",
-                state == WorkInfo.State.ENQUEUED || state == WorkInfo.State.SUCCEEDED,
-            )
+            verify {
+                workManager.enqueueUniqueWork(
+                    eq(uniqueWorkName),
+                    eq(ExistingWorkPolicy.REPLACE),
+                    any<OneTimeWorkRequest>(),
+                )
+            }
 
             // Also verify session is closed
             assertTrue("Session should be closed", session.isClosed())

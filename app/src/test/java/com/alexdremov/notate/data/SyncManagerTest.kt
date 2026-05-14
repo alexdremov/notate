@@ -1,9 +1,15 @@
 package com.alexdremov.notate.data
 
 import android.content.Context
+import androidx.work.WorkManager
+import io.mockk.every
+import io.mockk.mockk
+import io.mockk.mockkStatic
+import io.mockk.unmockkAll
 import kotlinx.coroutines.*
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runTest
+import org.junit.After
 import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Test
@@ -24,6 +30,12 @@ class SyncManagerTest {
     @Before
     fun setup() {
         context = RuntimeEnvironment.getApplication()
+
+        // Mock WorkManager to avoid database leaks and heavy initialization
+        val workManager = mockk<WorkManager>(relaxed = true)
+        mockkStatic(WorkManager::class)
+        every { WorkManager.getInstance(any()) } returns workManager
+
         // We can use a mock repository or just a dummy one since we won't really use it for this test
         canvasRepository = CanvasRepository(context)
 
@@ -38,6 +50,11 @@ class SyncManagerTest {
         SyncPreferencesManager.saveRemoteStorages(context, listOf(storageConfig))
         SyncPreferencesManager.updateProjectSyncConfig(context, syncConfig)
         SyncPreferencesManager.savePassword(context, "storage_id", "password")
+    }
+
+    @After
+    fun tearDown() {
+        unmockkAll()
     }
 
     @Test

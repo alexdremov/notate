@@ -11,9 +11,11 @@ import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
 import org.junit.Test
 import org.testcontainers.DockerClientFactory
+import org.testcontainers.containers.BindMode
 import org.testcontainers.containers.GenericContainer
 import org.testcontainers.containers.wait.strategy.Wait
 import java.io.ByteArrayInputStream
+import java.io.File
 import java.io.FileNotFoundException
 import java.security.SecureRandom
 import java.security.cert.X509Certificate
@@ -28,7 +30,7 @@ class WebDavProviderIntegrationTest {
     private val activeContainers = mutableListOf<GenericContainer<*>>()
 
     companion object {
-        private const val WEBDAV_IMAGE = "bytemark/webdav:2.4"
+        private const val RCLONE_IMAGE = "rclone/rclone:latest"
     }
 
     private data class WebDavServerSpec(
@@ -51,14 +53,12 @@ class WebDavProviderIntegrationTest {
         runAgainstServer(
             WebDavServerSpec(
                 scheme = "http",
-                containerPort = 80,
+                containerPort = 8080,
                 locationPath = "/webdav/",
                 env =
                     mapOf(
-                        "AUTH_TYPE" to "Basic",
                         "USERNAME" to "user",
                         "PASSWORD" to "pass",
-                        "LOCATION" to "/webdav",
                     ),
             ),
             insecureTls = false,
@@ -69,16 +69,12 @@ class WebDavProviderIntegrationTest {
         runAgainstServer(
             WebDavServerSpec(
                 scheme = "https",
-                containerPort = 443,
+                containerPort = 8443,
                 locationPath = "/webdav/",
                 env =
                     mapOf(
-                        "AUTH_TYPE" to "Basic",
                         "USERNAME" to "user",
                         "PASSWORD" to "pass",
-                        "LOCATION" to "/webdav",
-                        "SSL_CERT" to "selfsigned",
-                        "SERVER_NAMES" to "localhost",
                     ),
             ),
             insecureTls = true,
@@ -93,13 +89,46 @@ class WebDavProviderIntegrationTest {
             runCatching { DockerClientFactory.instance().isDockerAvailable }.getOrDefault(false),
         )
 
-        val container = GenericContainer(WEBDAV_IMAGE)
-        spec.env.forEach { (k, v) -> container.withEnv(k, v) }
+        val container = GenericContainer(RCLONE_IMAGE)
+        val rcloneCmd =
+            mutableListOf(
+                "serve",
+                "webdav",
+                "/data",
+                "--addr",
+                "0.0.0.0:${spec.containerPort}",
+                "--user",
+                spec.env["USERNAME"]!!,
+                "--pass",
+                spec.env["PASSWORD"]!!,
+                "--baseurl",
+                spec.locationPath,
+                "-vv",
+            )
+
+        if (spec.scheme == "https") {
+            // Mount certs from the repo root
+            val certFile = File("webdav/cert.pem")
+            val keyFile = File("webdav/key.pem")
+
+            if (certFile.exists() && keyFile.exists()) {
+                container.withFileSystemBind(certFile.absolutePath, "/certs/cert.pem", BindMode.READ_ONLY)
+                container.withFileSystemBind(keyFile.absolutePath, "/certs/key.pem", BindMode.READ_ONLY)
+                rcloneCmd.add("--cert")
+                rcloneCmd.add("/certs/cert.pem")
+                rcloneCmd.add("--key")
+                rcloneCmd.add("/certs/key.pem")
+            } else {
+                // Fallback for environments where files might not be in expected location
+                System.err.println(
+                    "Warning: webdav/cert.pem or key.pem not found. HTTPS test might fail or use internal self-signed if supported.",
+                )
+            }
+        }
+
+        container.withCommand(*rcloneCmd.toTypedArray())
         container.withExposedPorts(spec.containerPort)
 
-        // Wait for the server to be ready and respond to DAV requests.
-        // DAV servers should respond to OPTIONS or PROPFIND on the mapped path.
-        // We allow 401 as the container is configured with Basic Auth.
         val waitStrategy =
             Wait
                 .forHttp(spec.locationPath)
@@ -113,7 +142,13 @@ class WebDavProviderIntegrationTest {
 
         container.waitingFor(waitStrategy)
 
-        container.start()
+        try {
+            container.start()
+        } catch (e: Exception) {
+            System.err.println("Container failed to start for ${spec.scheme}. Logs:")
+            System.err.println(container.logs)
+            throw e
+        }
         activeContainers.add(container)
 
         val baseUrl = "${spec.scheme}://${container.host}:${container.getMappedPort(spec.containerPort)}${spec.locationPath}"
@@ -189,9 +224,6 @@ class WebDavProviderIntegrationTest {
                 }
 
         if (insecureTls) {
-            // Test-only trust manager:
-            // this accepts the container's self-signed certificate so we can verify WebDAV
-            // behavior over HTTPS in integration tests. Never use this in production.
             val trustManager =
                 object : X509TrustManager {
                     override fun checkClientTrusted(
@@ -209,15 +241,11 @@ class WebDavProviderIntegrationTest {
                     override fun getAcceptedIssuers(): Array<X509Certificate> = emptyArray()
                 }
 
-            // Prefer TLSv1.3 in tests, falling back to TLSv1.2 for environments where
-            // TLSv1.3 is unavailable.
             val sslContext =
                 runCatching { SSLContext.getInstance("TLSv1.3") }
                     .getOrElse { SSLContext.getInstance("TLSv1.2") }
             sslContext.init(null, arrayOf<TrustManager>(trustManager), SecureRandom())
             clientBuilder.sslSocketFactory(sslContext.socketFactory, trustManager)
-            // Test-only hostname verifier for localhost/container certificates.
-            // This intentionally disables hostname checks for this isolated test setup.
             clientBuilder.hostnameVerifier(
                 object : HostnameVerifier {
                     override fun verify(
