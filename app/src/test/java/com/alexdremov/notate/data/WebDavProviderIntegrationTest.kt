@@ -12,6 +12,7 @@ import org.junit.Assume.assumeTrue
 import org.junit.Test
 import org.testcontainers.DockerClientFactory
 import org.testcontainers.containers.GenericContainer
+import org.testcontainers.containers.wait.strategy.Wait
 import java.io.ByteArrayInputStream
 import java.io.FileNotFoundException
 import java.security.SecureRandom
@@ -94,6 +95,18 @@ class WebDavProviderIntegrationTest {
         val container = GenericContainer(WEBDAV_IMAGE)
         spec.env.forEach { (k, v) -> container.withEnv(k, v) }
         container.withExposedPorts(spec.containerPort)
+
+        // Wait for the server to be ready and respond to DAV requests.
+        // DAV servers should respond to OPTIONS or PROPFIND on the mapped path.
+        // We allow 401 as the container is configured with Basic Auth.
+        container.waitingFor(
+            Wait
+                .forHttp(spec.locationPath)
+                .withMethod("OPTIONS")
+                .allowInsecure()
+                .forStatusCodeMatching { it == 200 || it == 401 || it == 405 },
+        )
+
         container.start()
         activeContainers.add(container)
 
