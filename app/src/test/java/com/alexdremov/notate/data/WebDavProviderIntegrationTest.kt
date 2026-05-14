@@ -26,6 +26,10 @@ import javax.net.ssl.X509TrustManager
 class WebDavProviderIntegrationTest {
     private val activeContainers = mutableListOf<GenericContainer<*>>()
 
+    companion object {
+        private const val WEBDAV_IMAGE = "bytemark/webdav:2.4"
+    }
+
     private data class WebDavServerSpec(
         val scheme: String,
         val containerPort: Int,
@@ -87,7 +91,7 @@ class WebDavProviderIntegrationTest {
             runCatching { DockerClientFactory.instance().isDockerAvailable }.getOrDefault(false),
         )
 
-        val container = GenericContainer("bytemark/webdav:2.4")
+        val container = GenericContainer(WEBDAV_IMAGE)
         spec.env.forEach { (k, v) -> container.withEnv(k, v) }
         container.withExposedPorts(spec.containerPort)
         container.start()
@@ -126,7 +130,7 @@ class WebDavProviderIntegrationTest {
 
         try {
             provider.listFiles("sync-root/does-not-exist")
-            error("Expected FileNotFoundException was not thrown")
+            error("Expected FileNotFoundException when listing non-existent directory sync-root/does-not-exist")
         } catch (e: FileNotFoundException) {
             // expected
         }
