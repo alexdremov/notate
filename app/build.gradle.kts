@@ -181,6 +181,9 @@ dependencies {
     testImplementation("androidx.work:work-testing:2.10.0")
     testImplementation("androidx.test:core-ktx:1.6.1")
     testImplementation("org.testcontainers:testcontainers:1.20.6")
+    // XmlPullParser provider for JVM unit tests; dav4jvm excludes it from the production
+    // classpath because Android provides it natively, so we add it back for the test scope.
+    testImplementation("org.ogce:xpp3:1.1.6")
 
     // Security & Networking
     implementation("androidx.security:security-crypto:1.1.0")

@@ -1,13 +1,10 @@
 package com.alexdremov.notate.data
 
-import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.runBlocking
 import okhttp3.Credentials
 import okhttp3.OkHttpClient
 import org.junit.After
 import org.junit.Assert.assertArrayEquals
-import org.junit.Assert.assertThrows
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -19,6 +16,7 @@ import java.io.ByteArrayInputStream
 import java.io.FileNotFoundException
 import java.security.SecureRandom
 import java.security.cert.X509Certificate
+import java.util.concurrent.TimeUnit
 import javax.net.ssl.HostnameVerifier
 import javax.net.ssl.SSLContext
 import javax.net.ssl.SSLSession
@@ -31,6 +29,7 @@ class WebDavProviderIntegrationTest {
     private data class WebDavServerSpec(
         val scheme: String,
         val containerPort: Int,
+        val locationPath: String,
         val env: Map<String, String>,
     )
 
@@ -48,6 +47,7 @@ class WebDavProviderIntegrationTest {
             WebDavServerSpec(
                 scheme = "http",
                 containerPort = 80,
+                locationPath = "/webdav/",
                 env =
                     mapOf(
                         "AUTH_TYPE" to "Basic",
@@ -65,6 +65,7 @@ class WebDavProviderIntegrationTest {
             WebDavServerSpec(
                 scheme = "https",
                 containerPort = 443,
+                locationPath = "/webdav/",
                 env =
                     mapOf(
                         "AUTH_TYPE" to "Basic",
@@ -80,7 +81,7 @@ class WebDavProviderIntegrationTest {
     private fun runAgainstServer(
         spec: WebDavServerSpec,
         insecureTls: Boolean,
-    ) = runTest {
+    ) = runBlocking {
         assumeTrue(
             "Docker is required for real WebDAV integration tests",
             runCatching { DockerClientFactory.instance().isDockerAvailable }.getOrDefault(false),
@@ -92,7 +93,7 @@ class WebDavProviderIntegrationTest {
         container.start()
         activeContainers.add(container)
 
-        val baseUrl = "${spec.scheme}://${container.host}:${container.getMappedPort(spec.containerPort)}/webdav/"
+        val baseUrl = "${spec.scheme}://${container.host}:${container.getMappedPort(spec.containerPort)}${spec.locationPath}"
         val provider = createProvider(baseUrl, "user", "pass", insecureTls)
         val initialData = "notate-webdav-content-v1".toByteArray()
         val updatedData = "notate-webdav-content-v2".toByteArray()
@@ -123,10 +124,11 @@ class WebDavProviderIntegrationTest {
         assertNull(provider.downloadFile(remoteFilePath))
         assertTrue(provider.deleteFile(remoteFilePath)) // 404 accepted
 
-        assertThrows(FileNotFoundException::class.java) {
-            runBlocking {
-                provider.listFiles("sync-root/does-not-exist")
-            }
+        try {
+            provider.listFiles("sync-root/does-not-exist")
+            error("Expected FileNotFoundException was not thrown")
+        } catch (e: FileNotFoundException) {
+            // expected
         }
     }
 
@@ -148,6 +150,9 @@ class WebDavProviderIntegrationTest {
         val clientBuilder =
             OkHttpClient
                 .Builder()
+                .connectTimeout(60, TimeUnit.SECONDS)
+                .readTimeout(120, TimeUnit.SECONDS)
+                .writeTimeout(120, TimeUnit.SECONDS)
                 .followRedirects(false)
                 .followSslRedirects(false)
                 .addInterceptor { chain ->
