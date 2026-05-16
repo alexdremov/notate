@@ -115,11 +115,12 @@ class TileCache(
         bitmapPool.clear()
     }
 
-    @Synchronized
     fun obtainBitmap(): Bitmap {
         var bitmap: Bitmap? = null
-        if (bitmapPool.isNotEmpty()) {
-            bitmap = bitmapPool.removeAt(bitmapPool.size - 1)
+        synchronized(this) {
+            if (bitmapPool.isNotEmpty()) {
+                bitmap = bitmapPool.removeAt(bitmapPool.size - 1)
+            }
         }
 
         if (bitmap == null) {
