@@ -25,7 +25,7 @@ import org.robolectric.annotation.Config
 import java.io.File
 
 @RunWith(RobolectricTestRunner::class)
-@Config(manifest = Config.NONE, sdk = [33])
+@Config(manifest = Config.NONE)
 class CanvasRepositoryWorkTest {
     private lateinit var context: Context
     private lateinit var repository: CanvasRepository
@@ -45,7 +45,7 @@ class CanvasRepositoryWorkTest {
         try {
             WorkManagerTestInitHelper.initializeTestWorkManager(context, config)
         } catch (e: Exception) {
-            // Already initialized
+            // Already initialized in this process
         }
 
         repository = CanvasRepository(context)

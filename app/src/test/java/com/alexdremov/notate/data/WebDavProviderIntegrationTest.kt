@@ -33,12 +33,20 @@ class WebDavProviderIntegrationTest {
         private const val RCLONE_IMAGE = "rclone/rclone:latest"
 
         private fun findWebDavResource(filename: String): File? {
-            val paths = listOf(
-                "webdav/$filename",
-                "../webdav/$filename",
-                "../../webdav/$filename"
-            )
-            return paths.map { File(it) }.find { it.exists() }
+            var current: File? = File(System.getProperty("user.dir")).absoluteFile
+            println("Searching for $filename starting from: ${current?.absolutePath}")
+            
+            while (current != null) {
+                val potential = File(current, "webdav/$filename")
+                if (potential.exists()) {
+                    println("Found $filename at ${potential.absolutePath}")
+                    return potential
+                }
+                current = current.parentFile
+            }
+            
+            println("Failed to find $filename in any parent directory.")
+            return null
         }
     }
 
@@ -121,7 +129,7 @@ class WebDavProviderIntegrationTest {
                 rcloneCmd.add("--key")
                 rcloneCmd.add("/certs/key.pem")
             } else {
-                System.err.println("Warning: cert.pem or key.pem not found in expected locations.")
+                System.err.println("Warning: cert.pem or key.pem not found. HTTPS test will likely fail with SSLException.")
             }
         }
 

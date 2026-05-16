@@ -19,7 +19,7 @@ import org.robolectric.annotation.Config
 import java.io.InputStream
 
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [33])
+@Config(sdk = [32])
 class SyncManagerTest {
     private lateinit var context: Context
     private lateinit var canvasRepository: CanvasRepository
