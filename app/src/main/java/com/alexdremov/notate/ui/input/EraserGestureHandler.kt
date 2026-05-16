@@ -38,30 +38,37 @@ class EraserGestureHandler(
         currentPoint: TouchPoint,
         width: Float,
         eraserType: EraserType,
+        scale: Float = 1.0f,
     ) {
         if (eraserType == EraserType.LASSO) return // Lasso handled separately
 
         val lastPoint = strokeBuilder.getLastPoint() ?: return
 
-        val dist =
-            hypot(
-                currentPoint.x - (lastErasedPoint?.x ?: 0f),
-                currentPoint.y - (lastErasedPoint?.y ?: 0f),
-            )
+        // Calculate distance in SCREEN pixels to ensure consistent segmentation
+        val dx = (currentPoint.x - (lastErasedPoint?.x ?: 0f)) * scale
+        val dy = (currentPoint.y - (lastErasedPoint?.y ?: 0f)) * scale
+        val dist = hypot(dx, dy)
 
         if (lastErasedPoint == null || dist > MIN_ERASE_DISTANCE) {
-            val startP = lastErasedPoint ?: lastPoint
-
-            val segmentStroke =
-                strokeBuilder.buildSegment(
-                    startP,
-                    currentPoint,
-                    width,
-                    Color.BLACK,
-                    StrokeType.FINELINER,
-                )
-
-            controller.previewEraser(segmentStroke, eraserType)
+            if (eraserType == EraserType.STANDARD) {
+                // Pass FULL stroke to support overlay rendering
+                val fullStroke = strokeBuilder.build(Color.BLACK, width, StrokeType.FINELINER)
+                if (fullStroke != null) {
+                    controller.previewEraser(fullStroke, eraserType)
+                }
+            } else {
+                // Pass segment for real-time mathematical splitting (e.g. STROKE eraser)
+                val startP = lastErasedPoint ?: lastPoint
+                val segmentStroke =
+                    strokeBuilder.buildSegment(
+                        startP,
+                        currentPoint,
+                        width,
+                        Color.BLACK,
+                        StrokeType.FINELINER,
+                    )
+                controller.previewEraser(segmentStroke, eraserType)
+            }
 
             lastErasedPoint = currentPoint
         }

@@ -120,11 +120,11 @@ class CanvasRenderer(
     }
 
     /**
-     * Updates cached tiles with an erasure stroke.
-     * Renders the erasure path (Clear mode) directly onto the cached bitmaps.
+     * Sets the active eraser stroke for non-destructive real-time preview.
      */
-    fun updateTilesWithErasure(stroke: Stroke) {
-        tileManager.updateTilesWithErasure(stroke)
+    fun setEraserPreview(stroke: Stroke?) {
+        tileManager.activeEraserStroke = stroke
+        invalidate()
     }
 
     /**

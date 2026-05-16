@@ -82,8 +82,8 @@ class PenInputHandler(
             DwellDetector(view.context, strokeBuilder) { pts ->
                 // On Dwell Detected
                 if (!isStrokeInProgress) return@DwellDetector
-                // Do not trigger shape perfection for selection tool
-                if (currentTool.type == ToolType.SELECT) return@DwellDetector
+                // Do not trigger shape perfection for selection or eraser tools
+                if (currentTool.type == ToolType.SELECT || currentTool.type == ToolType.ERASER) return@DwellDetector
 
                 // Shape Perfection Logic (Stylus Dwell)
                 val result = ShapeRecognizer.recognize(pts)
@@ -508,7 +508,17 @@ class PenInputHandler(
                 hasPoints = strokeBuilder.hasPoints()
                 if (hasPoints) {
                     if (isEraser) {
-                        builtEraserStroke = strokeBuilder.build(android.graphics.Color.BLACK, toolSnapshot.width, StrokeType.FINELINER)
+                        val effectiveEraserType =
+                            if (toolSnapshot.type == ToolType.ERASER) {
+                                toolSnapshot.eraserType
+                            } else {
+                                eraserToolSnapshot?.eraserType ?: EraserType.STANDARD
+                            }
+                        
+                        // Standard pixel eraser should be DOCUMENT-CONSTANT (matching other tools).
+                        val finalWidth = toolSnapshot.width
+
+                        builtEraserStroke = strokeBuilder.build(android.graphics.Color.BLACK, finalWidth, StrokeType.FINELINER)
                     } else {
                         builtOriginalStroke = strokeBuilder.build(toolSnapshot.color, toolSnapshot.width, toolSnapshot.strokeType)
                     }
@@ -695,9 +705,9 @@ class PenInputHandler(
             } else if (currentTool.eraserType == EraserType.LASSO) {
                 lassoPath.lineTo(touchPoint.x, touchPoint.y)
             } else {
-                val toolWidth = currentTool.width
+                val worldWidth = currentTool.width
                 val eraserType = currentTool.eraserType
-                scope.launch { eraserHandler.processMove(newPoint, toolWidth, eraserType) }
+                scope.launch { eraserHandler.processMove(newPoint, worldWidth, eraserType, currentScale) }
             }
         }
 

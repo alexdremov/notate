@@ -110,11 +110,10 @@ class CanvasControllerImpl(
         type: EraserType,
     ) {
         if (type == EraserType.STANDARD) {
-            // Real-time visual clearing only. Defer heavy math to commit.
-            eraserMutex.withLock {
-                withContext(Dispatchers.Default) {
-                    renderer.updateTilesWithErasure(stroke)
-                }
+            // Non-destructive real-time preview via overlay.
+            // This is artifact-free and flicker-free.
+            withContext(Dispatchers.Main) {
+                renderer.setEraserPreview(stroke)
             }
         } else {
             val invalidated = withContext(Dispatchers.Default) { model.erase(stroke, type) }
@@ -130,6 +129,11 @@ class CanvasControllerImpl(
         stroke: Stroke,
         type: EraserType,
     ) {
+        // Clear preview overlay immediately to avoid "double-erasure" visual weight
+        withContext(Dispatchers.Main) {
+            renderer.setEraserPreview(null)
+        }
+
         val invalidated = withContext(Dispatchers.Default) { model.erase(stroke, type) }
         
         withContext(Dispatchers.Main) {
@@ -137,8 +141,7 @@ class CanvasControllerImpl(
                 // Redraw vectors to show proper cut caps
                 renderer.refreshTiles(invalidated)
             } else if (type == EraserType.STANDARD) {
-                // User erased empty space, but preview might have punched holes.
-                // Refresh bounds to restore potentially cleared pixels.
+                // User erased empty space. Refresh bounds to ensure consistency.
                 renderer.refreshTiles(stroke.bounds)
             }
             onContentChangedListener?.invoke()
@@ -810,7 +813,7 @@ class CanvasControllerImpl(
             renderer.setHiddenItems(ids)
             // Instant hide optimization for small selections
             if (ids.size < 500) {
-                val items = withContext(Dispatchers.Default) { fetchSelectedItems() }
+                val items: List<CanvasItem> = withContext(Dispatchers.Default) { fetchSelectedItems() }
                 renderer.hideItemsInCache(items)
             }
             renderer.invalidateTiles(bounds)
