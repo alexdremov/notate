@@ -1,11 +1,11 @@
 package com.alexdremov.notate.data
 
 import android.content.Context
+import androidx.test.core.app.ApplicationProvider
+import androidx.work.Configuration
 import androidx.work.WorkManager
-import io.mockk.every
-import io.mockk.mockk
-import io.mockk.mockkStatic
-import io.mockk.unmockkAll
+import androidx.work.testing.SynchronousExecutor
+import androidx.work.testing.WorkManagerTestInitHelper
 import kotlinx.coroutines.*
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runTest
@@ -15,7 +15,6 @@ import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
-import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
 import java.io.InputStream
 
@@ -29,12 +28,20 @@ class SyncManagerTest {
 
     @Before
     fun setup() {
-        context = RuntimeEnvironment.getApplication()
+        context = ApplicationProvider.getApplicationContext()
 
-        // Mock WorkManager to avoid database leaks and heavy initialization
-        val workManager = mockk<WorkManager>(relaxed = true)
-        mockkStatic(WorkManager::class)
-        every { WorkManager.getInstance(any()) } returns workManager
+        val config =
+            Configuration
+                .Builder()
+                .setMinimumLoggingLevel(android.util.Log.DEBUG)
+                .setExecutor(SynchronousExecutor())
+                .build()
+
+        try {
+            WorkManagerTestInitHelper.initializeTestWorkManager(context, config)
+        } catch (e: Exception) {
+            // Already initialized
+        }
 
         // We can use a mock repository or just a dummy one since we won't really use it for this test
         canvasRepository = CanvasRepository(context)
@@ -54,7 +61,7 @@ class SyncManagerTest {
 
     @After
     fun tearDown() {
-        unmockkAll()
+        // No unmockk needed here if we don't mock static
     }
 
     @Test

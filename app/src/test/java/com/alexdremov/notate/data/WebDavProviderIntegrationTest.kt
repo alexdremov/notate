@@ -31,6 +31,15 @@ class WebDavProviderIntegrationTest {
 
     companion object {
         private const val RCLONE_IMAGE = "rclone/rclone:latest"
+
+        private fun findWebDavResource(filename: String): File? {
+            val paths = listOf(
+                "webdav/$filename",
+                "../webdav/$filename",
+                "../../webdav/$filename"
+            )
+            return paths.map { File(it) }.find { it.exists() }
+        }
     }
 
     private data class WebDavServerSpec(
@@ -90,28 +99,21 @@ class WebDavProviderIntegrationTest {
         )
 
         val container = GenericContainer(RCLONE_IMAGE)
-        val rcloneCmd =
-            mutableListOf(
-                "serve",
-                "webdav",
-                "/data",
-                "--addr",
-                "0.0.0.0:${spec.containerPort}",
-                "--user",
-                spec.env["USERNAME"]!!,
-                "--pass",
-                spec.env["PASSWORD"]!!,
-                "--baseurl",
-                spec.locationPath,
-                "-vv",
-            )
+        val rcloneCmd = mutableListOf(
+            "serve", "webdav", "/data",
+            "--addr", "0.0.0.0:${spec.containerPort}",
+            "--user", spec.env["USERNAME"]!!,
+            "--pass", spec.env["PASSWORD"]!!,
+            "--baseurl", spec.locationPath,
+            "-vv"
+        )
 
         if (spec.scheme == "https") {
             // Mount certs from the repo root
-            val certFile = File("webdav/cert.pem")
-            val keyFile = File("webdav/key.pem")
-
-            if (certFile.exists() && keyFile.exists()) {
+            val certFile = findWebDavResource("cert.pem")
+            val keyFile = findWebDavResource("key.pem")
+            
+            if (certFile != null && keyFile != null) {
                 container.withFileSystemBind(certFile.absolutePath, "/certs/cert.pem", BindMode.READ_ONLY)
                 container.withFileSystemBind(keyFile.absolutePath, "/certs/key.pem", BindMode.READ_ONLY)
                 rcloneCmd.add("--cert")
@@ -119,27 +121,23 @@ class WebDavProviderIntegrationTest {
                 rcloneCmd.add("--key")
                 rcloneCmd.add("/certs/key.pem")
             } else {
-                // Fallback for environments where files might not be in expected location
-                System.err.println(
-                    "Warning: webdav/cert.pem or key.pem not found. HTTPS test might fail or use internal self-signed if supported.",
-                )
+                System.err.println("Warning: cert.pem or key.pem not found in expected locations.")
             }
         }
 
         container.withCommand(*rcloneCmd.toTypedArray())
         container.withExposedPorts(spec.containerPort)
 
-        val waitStrategy =
-            Wait
-                .forHttp(spec.locationPath)
-                .withMethod("OPTIONS")
-                .allowInsecure()
-                .forStatusCodeMatching { it == 200 || it == 401 || it == 405 }
-
+        val waitStrategy = Wait
+            .forHttp(spec.locationPath)
+            .withMethod("OPTIONS")
+            .allowInsecure()
+            .forStatusCodeMatching { it == 200 || it == 401 || it == 405 }
+        
         if (spec.scheme == "https") {
             waitStrategy.usingTls()
         }
-
+        
         container.waitingFor(waitStrategy)
 
         try {

@@ -868,6 +868,7 @@ class OnyxCanvasView
             getLocalVisibleRect(limit)
             touchHelper?.apply {
                 setLimitRect(limit, exclusionRects)
+
                 openRawDrawing()
                 setRawDrawingEnabled(true)
                 setRawDrawingRenderEnabled(true)
