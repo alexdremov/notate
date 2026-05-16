@@ -182,26 +182,37 @@ class InfiniteCanvasModel {
             regions.forEach { region ->
                 region.quadtree?.retrieve(candidates, searchBounds)
             }
+            
+            // Deduplicate candidates as items spanning multiple regions will appear multiple times
+            val uniqueCandidates = candidates.distinctBy { it.order }
 
-            if (candidates.isEmpty()) return@withLock null
+            if (uniqueCandidates.isEmpty()) return@withLock null
+
+            // Pre-simplify eraser stroke to drastically reduce O(N*M) geometry checks
+            val optimizedEraser = if (eraserStroke.points.size > 20 && type != EraserType.LASSO) {
+                val simplified = StrokeGeometry.simplifyPoints(eraserStroke.points, 2.0f)
+                eraserStroke.copy(points = simplified)
+            } else {
+                eraserStroke
+            }
 
             when (type) {
                 EraserType.STROKE -> {
-                    candidates.forEach { item ->
-                        if (item is Stroke && RectF.intersects(item.bounds, eraserStroke.bounds) &&
-                            StrokeGeometry.strokeIntersects(item, eraserStroke)
+                    uniqueCandidates.forEach { item ->
+                        if (item is Stroke && RectF.intersects(item.bounds, optimizedEraser.bounds) &&
+                            StrokeGeometry.strokeIntersects(item, optimizedEraser)
                         ) {
                             toRemove.add(item)
-                        } else if (item is CanvasImage && RectF.intersects(item.bounds, eraserStroke.bounds) &&
-                            item.bounds.contains(eraserStroke.bounds.centerX(), eraserStroke.bounds.centerY())
+                        } else if (item is CanvasImage && RectF.intersects(item.bounds, optimizedEraser.bounds) &&
+                            item.bounds.contains(optimizedEraser.bounds.centerX(), optimizedEraser.bounds.centerY())
                         ) {
                             toRemove.add(item)
-                        } else if (item is TextItem && RectF.intersects(item.bounds, eraserStroke.bounds) &&
-                            item.bounds.contains(eraserStroke.bounds.centerX(), eraserStroke.bounds.centerY())
+                        } else if (item is TextItem && RectF.intersects(item.bounds, optimizedEraser.bounds) &&
+                            item.bounds.contains(optimizedEraser.bounds.centerX(), optimizedEraser.bounds.centerY())
                         ) {
                             toRemove.add(item)
-                        } else if (item is LinkItem && RectF.intersects(item.bounds, eraserStroke.bounds) &&
-                            item.bounds.contains(eraserStroke.bounds.centerX(), eraserStroke.bounds.centerY())
+                        } else if (item is LinkItem && RectF.intersects(item.bounds, optimizedEraser.bounds) &&
+                            item.bounds.contains(optimizedEraser.bounds.centerX(), optimizedEraser.bounds.centerY())
                         ) {
                             toRemove.add(item)
                         }
@@ -209,19 +220,23 @@ class InfiniteCanvasModel {
                 }
 
                 EraserType.LASSO -> {
-                    candidates.forEach { item ->
+                    val simplifiedLasso = StrokeGeometry.simplifyPoints(eraserStroke.points, 3.0f)
+                    uniqueCandidates.forEach { item ->
                         if (!eraserStroke.bounds.contains(item.bounds)) return@forEach
+                        
                         val isContained =
-                            if (item is Stroke) {
+                            if (StrokeGeometry.isRectFullyInPolygon(item.bounds, simplifiedLasso)) {
+                                true
+                            } else if (item is Stroke) {
                                 item.points.all { p ->
-                                    StrokeGeometry.isPointInPolygon(p.x, p.y, eraserStroke.points)
+                                    StrokeGeometry.isPointInPolygon(p.x, p.y, simplifiedLasso)
                                 }
                             } else {
                                 val b = item.bounds
-                                StrokeGeometry.isPointInPolygon(b.left, b.top, eraserStroke.points) &&
-                                    StrokeGeometry.isPointInPolygon(b.right, b.top, eraserStroke.points) &&
-                                    StrokeGeometry.isPointInPolygon(b.right, b.bottom, eraserStroke.points) &&
-                                    StrokeGeometry.isPointInPolygon(b.left, b.bottom, eraserStroke.points)
+                                StrokeGeometry.isPointInPolygon(b.left, b.top, simplifiedLasso) &&
+                                    StrokeGeometry.isPointInPolygon(b.right, b.top, simplifiedLasso) &&
+                                    StrokeGeometry.isPointInPolygon(b.right, b.bottom, simplifiedLasso) &&
+                                    StrokeGeometry.isPointInPolygon(b.left, b.bottom, simplifiedLasso)
                             }
 
                         if (isContained) {
@@ -231,9 +246,9 @@ class InfiniteCanvasModel {
                 }
 
                 EraserType.STANDARD -> {
-                    candidates.filterIsInstance<Stroke>().forEach { target ->
-                        if (RectF.intersects(target.bounds, eraserStroke.bounds)) {
-                            val newParts = StrokeGeometry.splitStroke(target, eraserStroke)
+                    uniqueCandidates.filterIsInstance<Stroke>().forEach { target ->
+                        if (RectF.intersects(target.bounds, optimizedEraser.bounds)) {
+                            val newParts = StrokeGeometry.splitStroke(target, optimizedEraser)
                             if (newParts.size != 1 || newParts[0] !== target) {
                                 pendingReplacements.add(target to newParts)
                             }

@@ -103,16 +103,25 @@ class CanvasControllerImpl(
         }
     }
 
+    private val eraserMutex = Mutex()
+
     override suspend fun previewEraser(
         stroke: Stroke,
         type: EraserType,
     ) {
-        val invalidated = model.erase(stroke, type)
-        withContext(Dispatchers.Main) {
-            if (type == EraserType.STANDARD) {
-                renderer.updateTilesWithErasure(stroke)
-            } else if (invalidated != null) {
-                renderer.refreshTiles(invalidated)
+        if (type == EraserType.STANDARD) {
+            // Real-time visual clearing only. Defer heavy math to commit.
+            eraserMutex.withLock {
+                withContext(Dispatchers.Default) {
+                    renderer.updateTilesWithErasure(stroke)
+                }
+            }
+        } else {
+            val invalidated = withContext(Dispatchers.Default) { model.erase(stroke, type) }
+            if (invalidated != null) {
+                withContext(Dispatchers.Main) {
+                    renderer.refreshTiles(invalidated)
+                }
             }
         }
     }
@@ -121,12 +130,16 @@ class CanvasControllerImpl(
         stroke: Stroke,
         type: EraserType,
     ) {
-        val invalidated = model.erase(stroke, type)
+        val invalidated = withContext(Dispatchers.Default) { model.erase(stroke, type) }
+        
         withContext(Dispatchers.Main) {
-            if (type == EraserType.STANDARD) {
-                renderer.updateTilesWithErasure(stroke)
-            } else if (invalidated != null) {
+            if (invalidated != null) {
+                // Redraw vectors to show proper cut caps
                 renderer.refreshTiles(invalidated)
+            } else if (type == EraserType.STANDARD) {
+                // User erased empty space, but preview might have punched holes.
+                // Refresh bounds to restore potentially cleared pixels.
+                renderer.refreshTiles(stroke.bounds)
             }
             onContentChangedListener?.invoke()
         }

@@ -474,10 +474,10 @@ object StrokeGeometry {
 
                     if (isPointErased(p)) {
                         modificationHappened = true
-                        if (currentPoints.isNotEmpty()) {
+                        if (currentPoints.size >= 2) {
                             newStrokes.add(createSubStroke(target, currentPoints))
-                            currentPoints.clear()
                         }
+                        currentPoints.clear()
                     } else {
                         currentPoints.add(p)
                     }
@@ -527,13 +527,8 @@ object StrokeGeometry {
         val path = Path()
         path.moveTo(points[0].x, points[0].y)
         for (i in 1 until points.size) {
-            val p1 = points[i - 1]
-            val p2 = points[i]
-            val cx = (p1.x + p2.x) / 2
-            val cy = (p1.y + p2.y) / 2
-            path.quadTo(p1.x, p1.y, cx, cy)
+            path.lineTo(points[i].x, points[i].y)
         }
-        path.lineTo(points.last().x, points.last().y)
 
         val bounds = computeStrokeBounds(path, original.width, original.style)
 

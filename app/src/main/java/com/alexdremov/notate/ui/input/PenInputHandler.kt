@@ -531,9 +531,7 @@ class PenInputHandler(
 
                         builtEraserStroke?.let { s ->
                             controller.commitEraser(s, effectiveEraserType)
-                            if (effectiveEraserType == EraserType.LASSO) {
-                                refreshHandler.post { performRefresh(true) }
-                            }
+                            refreshHandler.post { performRefresh(true) }
                         }
                     } else {
                         val originalStroke = builtOriginalStroke
