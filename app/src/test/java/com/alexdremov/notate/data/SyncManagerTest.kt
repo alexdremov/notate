@@ -1,25 +1,20 @@
 package com.alexdremov.notate.data
 
 import android.content.Context
-import androidx.test.core.app.ApplicationProvider
-import androidx.work.Configuration
-import androidx.work.WorkManager
-import androidx.work.testing.SynchronousExecutor
-import androidx.work.testing.WorkManagerTestInitHelper
 import kotlinx.coroutines.*
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runTest
-import org.junit.After
 import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
 import java.io.InputStream
 
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [32])
+@Config(sdk = [33])
 class SyncManagerTest {
     private lateinit var context: Context
     private lateinit var canvasRepository: CanvasRepository
@@ -28,21 +23,7 @@ class SyncManagerTest {
 
     @Before
     fun setup() {
-        context = ApplicationProvider.getApplicationContext()
-
-        val config =
-            Configuration
-                .Builder()
-                .setMinimumLoggingLevel(android.util.Log.DEBUG)
-                .setExecutor(SynchronousExecutor())
-                .build()
-
-        try {
-            WorkManagerTestInitHelper.initializeTestWorkManager(context, config)
-        } catch (e: Exception) {
-            // Already initialized
-        }
-
+        context = RuntimeEnvironment.getApplication()
         // We can use a mock repository or just a dummy one since we won't really use it for this test
         canvasRepository = CanvasRepository(context)
 
@@ -57,11 +38,6 @@ class SyncManagerTest {
         SyncPreferencesManager.saveRemoteStorages(context, listOf(storageConfig))
         SyncPreferencesManager.updateProjectSyncConfig(context, syncConfig)
         SyncPreferencesManager.savePassword(context, "storage_id", "password")
-    }
-
-    @After
-    fun tearDown() {
-        // No unmockk needed here if we don't mock static
     }
 
     @Test

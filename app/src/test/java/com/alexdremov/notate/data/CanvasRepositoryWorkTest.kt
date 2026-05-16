@@ -1,13 +1,13 @@
 package com.alexdremov.notate.data
 
 import android.content.Context
-import androidx.test.core.app.ApplicationProvider
 import androidx.work.Configuration
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import androidx.work.testing.SynchronousExecutor
 import androidx.work.testing.WorkManagerTestInitHelper
 import com.alexdremov.notate.data.io.FileLockManager
+import com.alexdremov.notate.data.worker.SaveWorker
 import com.alexdremov.notate.model.StrokeType
 import io.mockk.every
 import io.mockk.mockk
@@ -21,11 +21,12 @@ import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
 import java.io.File
 
 @RunWith(RobolectricTestRunner::class)
-@Config(manifest = Config.NONE)
+@Config(manifest = Config.NONE, sdk = [33])
 class CanvasRepositoryWorkTest {
     private lateinit var context: Context
     private lateinit var repository: CanvasRepository
@@ -33,7 +34,7 @@ class CanvasRepositoryWorkTest {
 
     @Before
     fun setup() {
-        context = ApplicationProvider.getApplicationContext()
+        context = RuntimeEnvironment.getApplication()
 
         val config =
             Configuration
@@ -42,11 +43,7 @@ class CanvasRepositoryWorkTest {
                 .setExecutor(SynchronousExecutor())
                 .build()
 
-        try {
-            WorkManagerTestInitHelper.initializeTestWorkManager(context, config)
-        } catch (e: Exception) {
-            // Already initialized in this process
-        }
+        WorkManagerTestInitHelper.initializeTestWorkManager(context, config)
 
         repository = CanvasRepository(context)
         testDir = File(context.cacheDir, "test_work_canvases")
