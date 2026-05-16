@@ -10,7 +10,7 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:text="Export Format"
-        android:textSize="14sp"
+        android:textSize="@dimen/text_size_medium"
         android:textColor="#000000"
         android:textAllCaps="true"
         android:textStyle="bold"
@@ -27,7 +27,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:text="Bitmap (Raster)"
-            android:textSize="16sp"
+            android:textSize="@dimen/text_size_body"
             android:textStyle="bold"
             android:padding="8dp"
             android:checked="true" />
@@ -36,7 +36,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:text="Recommended for complex brushes (Charcoal, Pencil)."
-            android:textSize="12sp"
+            android:textSize="@dimen/text_size_small"
             android:textColor="#444444"
             android:layout_marginStart="32dp"
             android:layout_marginBottom="8dp" />
@@ -46,7 +46,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:text="Vector"
-            android:textSize="16sp"
+            android:textSize="@dimen/text_size_body"
             android:textStyle="bold"
             android:padding="8dp" />
 
@@ -54,7 +54,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:text="Best for Fountain Pen. Small file size, infinite zoom."
-            android:textSize="12sp"
+            android:textSize="@dimen/text_size_small"
             android:textColor="#444444"
             android:layout_marginStart="32dp"
             android:layout_marginBottom="16dp" />

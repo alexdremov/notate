@@ -11,7 +11,7 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:text="Insert Link"
-        android:textSize="18sp"
+        android:textSize="@dimen/text_size_title"
         android:textStyle="bold"
         android:textColor="@android:color/black"
         android:gravity="center"
@@ -22,7 +22,7 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:text="Link Name"
-        android:textSize="14sp"
+        android:textSize="@dimen/text_size_medium"
         android:textStyle="bold"
         android:textColor="@android:color/black"
         android:layout_marginBottom="4dp" />
@@ -33,7 +33,7 @@
         android:layout_height="wrap_content"
         android:background="@drawable/bg_popup_plain"
         android:padding="12dp"
-        android:textSize="16sp"
+        android:textSize="@dimen/text_size_body"
         android:hint="Enter link name"
         android:inputType="textCapSentences"
         android:layout_marginBottom="16dp" />
@@ -51,7 +51,7 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="Note"
-            android:textSize="14sp"
+            android:textSize="@dimen/text_size_medium"
             android:textStyle="bold"
             android:layout_weight="1"
             android:checked="true" />
@@ -62,7 +62,7 @@
             android:layout_height="wrap_content"
             android:text="URL"
             android:textStyle="bold"
-            android:textSize="14sp"
+            android:textSize="@dimen/text_size_medium"
             android:layout_weight="1" />
 
         <RadioButton
@@ -71,7 +71,7 @@
             android:layout_height="wrap_content"
             android:text="File"
             android:textStyle="bold"
-            android:textSize="14sp"
+            android:textSize="@dimen/text_size_medium"
             android:layout_weight="1" />
     </RadioGroup>
 
@@ -80,7 +80,7 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:text="Target"
-        android:textSize="14sp"
+        android:textSize="@dimen/text_size_medium"
         android:textStyle="bold"
         android:textColor="@android:color/black"
         android:layout_marginBottom="4dp" />
@@ -98,7 +98,7 @@
             android:layout_weight="1"
             android:background="@drawable/bg_popup_plain"
             android:padding="12dp"
-            android:textSize="16sp"
+            android:textSize="@dimen/text_size_body"
             android:hint="Select a note..."
             android:enabled="false"
             android:textStyle="bold"

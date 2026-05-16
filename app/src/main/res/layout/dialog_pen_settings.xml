@@ -36,7 +36,7 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="Pen Style"
-                    android:textSize="18sp"
+                    android:textSize="@dimen/text_size_title"
                     android:textStyle="bold"
                     android:textColor="#000000" />
 
@@ -85,21 +85,21 @@
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
                             android:text="Standard Eraser"
-                            android:textSize="16sp"/>
+                            android:textSize="@dimen/text_size_body"/>
 
                         <RadioButton
                             android:id="@+id/rbEraserStroke"
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
                             android:text="Stroke Eraser"
-                            android:textSize="16sp"/>
+                            android:textSize="@dimen/text_size_body"/>
 
                         <RadioButton
                             android:id="@+id/rbEraserLasso"
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
                             android:text="Lasso Eraser"
-                            android:textSize="16sp"/>
+                            android:textSize="@dimen/text_size_body"/>
 
                     </RadioGroup>
                 </FrameLayout>
@@ -122,7 +122,7 @@
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:text="Thickness"
-                        android:textSize="14sp"
+                        android:textSize="@dimen/text_size_medium"
                         android:textStyle="bold"
                         android:textColor="#000000" />
 
@@ -132,7 +132,7 @@
                         android:layout_height="wrap_content"
                         android:layout_alignParentEnd="true"
                         android:text="0.5 mm"
-                        android:textSize="14sp"
+                        android:textSize="@dimen/text_size_medium"
                         android:textStyle="bold"
                         android:textColor="#000000" />
                 </RelativeLayout>
@@ -166,7 +166,7 @@
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:text="Color"
-                        android:textSize="14sp"
+                        android:textSize="@dimen/text_size_medium"
                         android:textStyle="bold"
                         android:textColor="#000000" />
 
@@ -176,7 +176,7 @@
                         android:layout_height="wrap_content"
                         android:layout_alignParentEnd="true"
                         android:text="Black"
-                        android:textSize="14sp"
+                        android:textSize="@dimen/text_size_medium"
                         android:textStyle="bold"
                         android:textColor="#000000" />
                 </RelativeLayout>
@@ -230,7 +230,7 @@
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:text="Select Color"
-                        android:textSize="18sp"
+                        android:textSize="@dimen/text_size_title"
                         android:textStyle="bold"
                         android:layout_marginStart="16dp"
                         android:textColor="#000000"/>
@@ -240,7 +240,7 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="Presets"
-                    android:textSize="14sp"
+                    android:textSize="@dimen/text_size_medium"
                     android:textStyle="bold"
                     android:textColor="#000000"
                     android:layout_marginTop="20dp"/>
@@ -302,7 +302,7 @@
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:text="Custom Color"
-                        android:textSize="18sp"
+                        android:textSize="@dimen/text_size_title"
                         android:textStyle="bold"
                         android:layout_toEndOf="@id/btnBackFromCustom"
                         android:layout_marginStart="16dp"
@@ -324,7 +324,7 @@
                     android:layout_height="wrap_content"
                     android:text="Dark Blue"
                     android:gravity="center"
-                    android:textSize="14sp"
+                    android:textSize="@dimen/text_size_medium"
                     android:textStyle="bold"
                     android:textColor="#000000"
                     android:layout_marginBottom="8dp"/>
@@ -339,7 +339,7 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="Brightness"
-                    android:textSize="12sp"
+                    android:textSize="@dimen/text_size_small"
                     android:textStyle="bold"
                     android:textColor="#000000"
                     android:layout_marginTop="16dp"/>
@@ -354,7 +354,7 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="Transparency"
-                    android:textSize="12sp"
+                    android:textSize="@dimen/text_size_small"
                     android:textStyle="bold"
                     android:textColor="#000000"
                     android:layout_marginTop="12dp"/>
@@ -377,3 +377,4 @@
 
     </ViewFlipper>
 </com.google.android.material.card.MaterialCardView>
+

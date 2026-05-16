@@ -7,4 +7,12 @@
     <dimen name="ui_spacing_small">8dp</dimen>
     <dimen name="ui_spacing_medium">16dp</dimen>
     <dimen name="ui_spacing_large">24dp</dimen>
+
+    <!-- Text sizes -->
+    <dimen name="text_size_micro">14sp</dimen>
+    <dimen name="text_size_small">16sp</dimen>
+    <dimen name="text_size_medium">18sp</dimen>
+    <dimen name="text_size_body">20sp</dimen>
+    <dimen name="text_size_title">24sp</dimen>
+    <dimen name="text_size_header">26sp</dimen>
 </resources>

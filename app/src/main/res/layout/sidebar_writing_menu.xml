@@ -22,7 +22,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:text="Scribble to Erase"
-                android:textSize="16sp"
+                android:textSize="@dimen/text_size_body"
                 android:textStyle="bold"
                 android:textColor="#000000" />
 
@@ -30,7 +30,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:text="Rapidly scribble over strokes to delete them."
-                android:textSize="12sp"
+                android:textSize="@dimen/text_size_small"
                 android:textColor="#444444"
                 android:layout_marginTop="2dp" />
 
@@ -68,7 +68,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:text="Angle Snapping"
-                android:textSize="16sp"
+                android:textSize="@dimen/text_size_body"
                 android:textStyle="bold"
                 android:textColor="#000000" />
 
@@ -76,7 +76,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:text="Snap rotation to 0°, 90°, 180°."
-                android:textSize="12sp"
+                android:textSize="@dimen/text_size_small"
                 android:textColor="#444444"
                 android:layout_marginTop="2dp" />
 
@@ -107,7 +107,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:text="Axis Snapping"
-                android:textSize="16sp"
+                android:textSize="@dimen/text_size_body"
                 android:textStyle="bold"
                 android:textColor="#000000" />
 
@@ -115,7 +115,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:text="Snap elements movement to horizontal or vertical axes."
-                android:textSize="12sp"
+                android:textSize="@dimen/text_size_small"
                 android:textColor="#444444"
                 android:layout_marginTop="2dp" />
 
@@ -151,7 +151,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:text="Shape Perfection"
-                android:textSize="16sp"
+                android:textSize="@dimen/text_size_body"
                 android:textStyle="bold"
                 android:textColor="#000000" />
 
@@ -160,7 +160,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:text="Hold stylus to convert drawing to shape."
-                android:textSize="12sp"
+                android:textSize="@dimen/text_size_small"
                 android:textColor="#444444"
                 android:layout_marginTop="2dp" />
 
@@ -196,7 +196,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:text="Toolbar Auto-Collapse"
-            android:textSize="16sp"
+            android:textSize="@dimen/text_size_body"
             android:textStyle="bold"
             android:textColor="#000000" />
 
@@ -205,7 +205,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:text="Collapse after 3.0s of inactivity."
-            android:textSize="12sp"
+            android:textSize="@dimen/text_size_small"
             android:textColor="#444444"
             android:layout_marginTop="2dp" />
 

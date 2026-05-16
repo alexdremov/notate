@@ -10,7 +10,7 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:text="Debug Options"
-        android:textSize="14sp"
+        android:textSize="@dimen/text_size_medium"
         android:textColor="#000000"
         android:textAllCaps="true"
         android:textStyle="bold"
@@ -34,7 +34,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:text="Simple Renderer"
-                android:textSize="16sp"
+                android:textSize="@dimen/text_size_body"
                 android:textStyle="bold"
                 android:textColor="#000000" />
 
@@ -42,7 +42,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:text="Use simpler rendering logic."
-                android:textSize="12sp"
+                android:textSize="@dimen/text_size_small"
                 android:textColor="#444444"
                 android:layout_marginTop="2dp" />
         </LinearLayout>
@@ -71,7 +71,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:text="Show RAM Usage"
-                android:textSize="16sp"
+                android:textSize="@dimen/text_size_body"
                 android:textStyle="bold"
                 android:textColor="#000000" />
 
@@ -79,7 +79,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:text="Display memory usage overlay."
-                android:textSize="12sp"
+                android:textSize="@dimen/text_size_small"
                 android:textColor="#444444"
                 android:layout_marginTop="2dp" />
         </LinearLayout>
@@ -108,7 +108,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:text="Show Tiles"
-                android:textSize="16sp"
+                android:textSize="@dimen/text_size_body"
                 android:textStyle="bold"
                 android:textColor="#000000" />
 
@@ -116,7 +116,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:text="Visualize tile boundaries."
-                android:textSize="12sp"
+                android:textSize="@dimen/text_size_small"
                 android:textColor="#444444"
                 android:layout_marginTop="2dp" />
         </LinearLayout>
@@ -145,7 +145,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:text="Show Regions"
-                android:textSize="16sp"
+                android:textSize="@dimen/text_size_body"
                 android:textStyle="bold"
                 android:textColor="#000000" />
 
@@ -153,7 +153,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:text="Visualize region boundaries."
-                android:textSize="12sp"
+                android:textSize="@dimen/text_size_small"
                 android:textColor="#444444"
                 android:layout_marginTop="2dp" />
         </LinearLayout>
@@ -182,7 +182,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:text="Show Bounding Box"
-                android:textSize="16sp"
+                android:textSize="@dimen/text_size_body"
                 android:textStyle="bold"
                 android:textColor="#000000" />
 
@@ -190,7 +190,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:text="Draw bounding boxes around elements."
-                android:textSize="12sp"
+                android:textSize="@dimen/text_size_small"
                 android:textColor="#444444"
                 android:layout_marginTop="2dp" />
         </LinearLayout>
@@ -219,7 +219,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:text="Enable Profiling"
-                android:textSize="16sp"
+                android:textSize="@dimen/text_size_body"
                 android:textStyle="bold"
                 android:textColor="#000000" />
 
@@ -227,7 +227,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:text="Turn on performance profiling."
-                android:textSize="12sp"
+                android:textSize="@dimen/text_size_small"
                 android:textColor="#444444"
                 android:layout_marginTop="2dp" />
         </LinearLayout>
@@ -256,7 +256,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:text="Force Log Display"
-                android:textSize="16sp"
+                android:textSize="@dimen/text_size_body"
                 android:textStyle="bold"
                 android:textColor="#000000" />
 
@@ -264,7 +264,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:text="Show all logs of level:"
-                android:textSize="12sp"
+                android:textSize="@dimen/text_size_small"
                 android:textColor="#444444"
                 android:layout_marginTop="2dp" />
         </LinearLayout>
@@ -305,7 +305,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:text="Generate Patterns"
-                android:textSize="16sp"
+                android:textSize="@dimen/text_size_body"
                 android:textStyle="bold"
                 android:textColor="#000000" />
 
@@ -313,7 +313,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:text="Procedurally generate strokes."
-                android:textSize="12sp"
+                android:textSize="@dimen/text_size_small"
                 android:textColor="#444444"
                 android:layout_marginTop="2dp" />
         </LinearLayout>
