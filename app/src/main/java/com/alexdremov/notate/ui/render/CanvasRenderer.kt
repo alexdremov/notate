@@ -5,6 +5,8 @@ import android.graphics.Color
 import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.RectF
+import android.text.StaticLayout
+import android.text.TextPaint
 import com.alexdremov.notate.config.CanvasConfig
 import com.alexdremov.notate.data.CanvasType
 import com.alexdremov.notate.model.InfiniteCanvasModel
@@ -20,7 +22,7 @@ import kotlinx.coroutines.CoroutineScope
  */
 class CanvasRenderer(
     private val model: InfiniteCanvasModel,
-    private val context: android.content.Context,
+    val context: android.content.Context,
     scope: CoroutineScope,
     private val onTileReady: () -> Unit,
 ) {
@@ -143,6 +145,63 @@ class CanvasRenderer(
         visibleRect: RectF,
     ) {
         tileManager.forceRefreshVisibleTiles(visibleRect, scale)
+    }
+
+    private val ocrDebugTextPaint =
+        TextPaint().apply {
+            color = Color.BLACK
+            alpha = 128 // Semi-transparent black for better E-Ink compatibility
+            style = Paint.Style.FILL
+            isAntiAlias = true
+        }
+
+    private val ocrDebugBoxPaint =
+        Paint().apply {
+            color = Color.RED
+            alpha = 200
+            style = Paint.Style.STROKE
+            strokeWidth = 4f
+        }
+
+    fun renderOcrDebugLayer(
+        canvas: Canvas,
+        visibleRect: RectF,
+    ) {
+        val rm = model.getRegionManager() ?: return
+        val regionIds = rm.getRegionIdsInRect(visibleRect)
+
+        for (id in regionIds) {
+            val region = rm.getRegionReadOnly(id) ?: continue
+            for (ocr in region.recognizedTexts) {
+                val ocrRect = RectF(ocr.x, ocr.y, ocr.x + ocr.width, ocr.y + ocr.height)
+                com.alexdremov.notate.util.Logger
+                    .d("OCRDebug", "Found OCR text: ${ocr.text} at $ocrRect, visibleRect=$visibleRect")
+                if (RectF.intersects(ocrRect, visibleRect)) {
+                    com.alexdremov.notate.util.Logger
+                        .d("OCRDebug", "Drawing OCR text: ${ocr.text}")
+                    canvas.drawRect(ocrRect, ocrDebugBoxPaint)
+
+                    val textWidth = ocr.width.coerceAtLeast(10f)
+                    val lines = ocr.text.split('\n')
+                    val lineCount = lines.size.coerceAtLeast(1)
+                    ocrDebugTextPaint.textSize = (ocr.height / lineCount).coerceIn(12f, 72f)
+
+                    val builder =
+                        StaticLayout.Builder
+                            .obtain(ocr.text, 0, ocr.text.length, ocrDebugTextPaint, textWidth.toInt())
+                            .setAlignment(android.text.Layout.Alignment.ALIGN_NORMAL)
+                            .setLineSpacing(0f, 1.2f)
+                            .setIncludePad(false)
+
+                    val staticLayout = builder.build()
+
+                    canvas.save()
+                    canvas.translate(ocr.x, ocr.y)
+                    staticLayout.draw(canvas)
+                    canvas.restore()
+                }
+            }
+        }
     }
 
     /**

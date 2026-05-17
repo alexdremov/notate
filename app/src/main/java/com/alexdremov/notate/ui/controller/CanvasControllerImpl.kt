@@ -8,6 +8,9 @@ import android.net.Uri
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
+import com.alexdremov.notate.data.HandwritingRecognitionCoordinator
+import com.alexdremov.notate.data.HandwritingRecognitionManager
+import com.alexdremov.notate.data.PreferencesManager
 import com.alexdremov.notate.model.CanvasImage
 import com.alexdremov.notate.model.CanvasItem
 import com.alexdremov.notate.model.EraserType
@@ -42,6 +45,21 @@ class CanvasControllerImpl(
     private var onContentChangedListener: (() -> Unit)? = null
     private var progressCallback: ((Boolean, String?, Int) -> Unit)? = null
 
+    // OCR Components
+    private val recognitionManager = HandwritingRecognitionManager(context)
+    private val recognitionCoordinator =
+        HandwritingRecognitionCoordinator(
+            model,
+            recognitionManager,
+            isEnabledProvider = { PreferencesManager.isOcrEnabled(context) },
+            onOcrUpdated = { bounds ->
+                uiHandler.post {
+                    renderer.invalidate()
+                    onContentChangedListener?.invoke()
+                }
+            },
+        )
+
     // Mutex to prevent concurrent destructive operations (commit, paste, delete)
     private val operationMutex = Mutex()
 
@@ -51,6 +69,16 @@ class CanvasControllerImpl(
 
     override fun setProgressCallback(callback: (isVisible: Boolean, message: String?, progress: Int) -> Unit) {
         this.progressCallback = callback
+    }
+
+    override suspend fun downloadOcrModel(
+        lang: String,
+        onProgress: (Boolean) -> Unit,
+    ): Boolean = recognitionManager.ensureModelDownloaded(lang, onProgress)
+
+    override fun close() {
+        recognitionCoordinator.stop()
+        recognitionManager.close()
     }
 
     override fun setViewportController(controller: ViewportController) {
@@ -134,7 +162,24 @@ class CanvasControllerImpl(
             renderer.setEraserPreview(null)
         }
 
-        val invalidated = withContext(Dispatchers.Default) { model.erase(stroke, type) }
+        val invalidated =
+            withContext(Dispatchers.Default) {
+                model.removeRecognizedTextInRect(stroke.bounds)
+                model.erase(stroke, type)
+            }
+
+        // Trigger re-recognition for strokes left near the erased area
+        if (invalidated != null) {
+            val expandedBounds = RectF(stroke.bounds).apply { inset(-100f, -50f) }
+            val remainingStrokes =
+                model
+                    .queryItems(expandedBounds)
+                    .filterIsInstance<Stroke>()
+                    .filter { it.style != com.alexdremov.notate.model.StrokeType.DASH }
+            if (remainingStrokes.isNotEmpty()) {
+                recognitionCoordinator.triggerManualRecognition(remainingStrokes)
+            }
+        }
 
         withContext(Dispatchers.Main) {
             if (invalidated != null) {
@@ -312,7 +357,19 @@ class CanvasControllerImpl(
                 updatePinnedRegions()
 
                 withContext(Dispatchers.Default) {
+                    model.removeRecognizedTextInRect(bounds)
                     model.deleteItemsByIds(bounds, ids, context.cacheDir)
+                }
+
+                // Trigger re-recognition for strokes left near the deleted area
+                val expandedBounds = RectF(bounds).apply { inset(-100f, -50f) }
+                val remainingStrokes =
+                    model
+                        .queryItems(expandedBounds)
+                        .filterIsInstance<Stroke>()
+                        .filter { it.style != com.alexdremov.notate.model.StrokeType.DASH }
+                if (remainingStrokes.isNotEmpty()) {
+                    recognitionCoordinator.triggerManualRecognition(remainingStrokes)
                 }
 
                 withContext(Dispatchers.Main) {
@@ -1181,10 +1238,17 @@ class CanvasControllerImpl(
 
             val committedItems =
                 withContext(Dispatchers.IO) {
+                    model.removeRecognizedTextInRect(originalBounds)
                     model.replaceItems(originalItems, newItems)
                 }
 
             endBatchSession()
+
+            // Trigger re-recognition for moved strokes
+            val movedStrokes = committedItems.filterIsInstance<Stroke>().filter { it.style != com.alexdremov.notate.model.StrokeType.DASH }
+            if (movedStrokes.isNotEmpty()) {
+                recognitionCoordinator.triggerManualRecognition(movedStrokes)
+            }
 
             // ALWAYS LIFTED STRATEGY:
             // Clear old selection state and re-select new items.

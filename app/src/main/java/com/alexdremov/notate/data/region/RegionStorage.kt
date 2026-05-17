@@ -131,7 +131,16 @@ class RegionStorage(
             }
         }
 
-        val proto = RegionProto(data.id.x, data.id.y, strokeData, imageData, textData, linkData)
+        val proto =
+            RegionProto(
+                data.id.x,
+                data.id.y,
+                strokeData,
+                imageData,
+                textData,
+                linkData,
+                data.recognizedTexts,
+            )
         val file = getRegionFile(data.id)
 
         return try {

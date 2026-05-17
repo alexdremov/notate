@@ -1,6 +1,7 @@
 package com.alexdremov.notate.data.region
 
 import android.graphics.RectF
+import com.alexdremov.notate.data.RecognizedTextData
 import com.alexdremov.notate.model.CanvasItem
 import com.alexdremov.notate.model.Stroke
 import com.alexdremov.notate.util.Quadtree
@@ -32,6 +33,7 @@ data class RegionId(
 data class RegionData(
     val id: RegionId,
     val items: MutableList<CanvasItem> = ArrayList(),
+    val recognizedTexts: MutableList<RecognizedTextData> = ArrayList(),
     @Volatile var isDirty: Boolean = false,
 ) {
     @Transient
@@ -89,6 +91,7 @@ data class RegionData(
             }
         }
         items.clear()
+        recognizedTexts.clear()
         quadtree?.clear()
         quadtree = null
     }

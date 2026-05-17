@@ -163,6 +163,14 @@ class InfiniteCanvasModel {
 
     suspend fun addStroke(stroke: Stroke): Stroke? = addItem(stroke) as? Stroke
 
+    suspend fun addRecognizedText(textData: com.alexdremov.notate.data.RecognizedTextData) {
+        regionManager?.addRecognizedText(textData)
+    }
+
+    suspend fun removeRecognizedTextInRect(rect: RectF) {
+        regionManager?.removeRecognizedTextInRect(rect)
+    }
+
     suspend fun erase(
         eraserStroke: Stroke,
         type: EraserType,

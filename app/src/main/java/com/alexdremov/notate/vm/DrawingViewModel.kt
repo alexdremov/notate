@@ -4,6 +4,7 @@ import android.app.Application
 import android.graphics.Color
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.viewModelScope
 import com.alexdremov.notate.data.PreferencesManager
 import com.alexdremov.notate.model.ActionType
 import com.alexdremov.notate.model.PenTool
@@ -87,6 +88,21 @@ class DrawingViewModel
         private val _isPenPopupOpen = MutableStateFlow(false)
         val isPenPopupOpen: StateFlow<Boolean> = _isPenPopupOpen.asStateFlow()
 
+        private val _isOcrEnabled = MutableStateFlow(false)
+        val isOcrEnabled: StateFlow<Boolean> = _isOcrEnabled.asStateFlow()
+
+        private val _ocrLanguage = MutableStateFlow("en-US")
+        val ocrLanguage: StateFlow<String> = _ocrLanguage.asStateFlow()
+
+        private val _isOcrDownloading = MutableStateFlow(false)
+        val isOcrDownloading: StateFlow<Boolean> = _isOcrDownloading.asStateFlow()
+
+        private var controllerProvider: (() -> com.alexdremov.notate.ui.controller.CanvasController?)? = null
+
+        fun setControllerProvider(provider: () -> com.alexdremov.notate.ui.controller.CanvasController?) {
+            this.controllerProvider = provider
+        }
+
         private val _isToolbarDragging = MutableStateFlow(false)
         val isToolbarDragging: StateFlow<Boolean> = _isToolbarDragging.asStateFlow()
 
@@ -95,6 +111,8 @@ class DrawingViewModel
             _isCollapsibleToolbar.value = PreferencesManager.isCollapsibleToolbarEnabled(getApplication())
             _toolbarCollapseTimeout.value = PreferencesManager.getToolbarCollapseTimeout(getApplication())
             _isFixedPageCenterHorizontal.value = PreferencesManager.isFixedPageCenterHorizontalEnabled(getApplication())
+            _isOcrEnabled.value = PreferencesManager.isOcrEnabled(getApplication())
+            _ocrLanguage.value = PreferencesManager.getOcrLanguage(getApplication())
         }
 
         suspend fun loadCanvasSession(path: String) {
@@ -279,6 +297,33 @@ class DrawingViewModel
 
         fun setPenPopupOpen(isOpen: Boolean) {
             _isPenPopupOpen.value = isOpen
+        }
+
+        fun setOcrEnabled(enabled: Boolean) {
+            _isOcrEnabled.value = enabled
+            PreferencesManager.setOcrEnabled(getApplication(), enabled)
+            if (enabled) {
+                triggerModelDownload()
+            }
+        }
+
+        fun setOcrLanguage(lang: String) {
+            _ocrLanguage.value = lang
+            PreferencesManager.setOcrLanguage(getApplication(), lang)
+            if (_isOcrEnabled.value) {
+                triggerModelDownload()
+            }
+        }
+
+        private fun triggerModelDownload() {
+            val lang = _ocrLanguage.value
+            viewModelScope.launch {
+                controllerProvider?.invoke()?.let { controller ->
+                    controller.downloadOcrModel(lang) { downloading ->
+                        _isOcrDownloading.value = downloading
+                    }
+                }
+            }
         }
 
         fun selectTool(id: String) {

@@ -10,6 +10,7 @@ import android.graphics.pdf.PdfDocument
 import android.net.Uri
 import com.alexdremov.notate.config.CanvasConfig
 import com.alexdremov.notate.data.CanvasType
+import com.alexdremov.notate.data.RecognizedTextData
 import com.alexdremov.notate.model.BackgroundStyle
 import com.alexdremov.notate.model.CanvasImage
 import com.alexdremov.notate.model.CanvasItem
@@ -233,6 +234,13 @@ object PdfExporter {
                         }
                     }
 
+                    // Render Recognized Text (OCR)
+                    for (ocr in region.recognizedTexts) {
+                        if (RectF.intersects(RectF(ocr.x, ocr.y, ocr.x + ocr.width, ocr.y + ocr.height), bounds)) {
+                            renderRecognizedTextToPdf(contentStream, ocr, bounds, height)
+                        }
+                    }
+
                     processedRegions++
                     if (processedRegions % 5 == 0 || processedRegions == totalRegions) {
                         val progress = 20 + ((processedRegions.toFloat() / totalRegions) * 70).toInt()
@@ -252,6 +260,47 @@ object PdfExporter {
             throw e
         } finally {
             document.close()
+        }
+    }
+
+    private fun renderRecognizedTextToPdf(
+        stream: PDPageContentStream,
+        item: RecognizedTextData,
+        bounds: RectF,
+        pageHeight: Float,
+    ) {
+        val pdfX = item.x - bounds.left
+        val pdfY = pageHeight - (item.y - bounds.top)
+
+        var textStarted = false
+        try {
+            stream.beginText()
+            textStarted = true
+            stream.setRenderingMode(RenderingMode.NEITHER)
+
+            val font = PDType1Font.HELVETICA
+            // Heuristic font size based on height
+            val fontSize = item.height.coerceIn(8f, 24f)
+            stream.setFont(font, fontSize)
+
+            // PDF text origin is bottom-left. RecognizedTextData x,y is top-left.
+            stream.newLineAtOffset(pdfX, pdfY - fontSize)
+
+            // Clean text for PDF compatibility
+            val safeText = item.text.filter { it.code in 32..126 || it.code in 160..255 }
+            if (safeText.isNotEmpty()) {
+                stream.showText(safeText)
+            }
+        } catch (e: Exception) {
+            Logger.w("PdfExporter", "Failed to add recognized text layer: ${e.message}")
+        } finally {
+            if (textStarted) {
+                try {
+                    stream.endText()
+                } catch (e: Exception) {
+                    Logger.e("PdfExporter", "Error ending recognized text block", e)
+                }
+            }
         }
     }
 
