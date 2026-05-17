@@ -74,15 +74,15 @@ class CanvasControllerImplTest {
         }
 
     @Test
-    fun `previewEraser with standard type updates renderer with erasure`() =
+    fun `previewEraser with standard type updates renderer with preview`() =
         runTest {
             val stroke = createTestStroke(1L, RectF(0f, 0f, 10f, 10f))
 
             controller.previewEraser(stroke, EraserType.STANDARD)
             testDispatcher.scheduler.advanceUntilIdle()
 
-            coVerify { model.erase(stroke, EraserType.STANDARD) }
-            coVerify { renderer.updateTilesWithErasure(stroke) }
+            verify { renderer.setEraserPreview(stroke) }
+            coVerify(exactly = 0) { model.erase(any(), any()) }
         }
 
     @Test
