@@ -159,6 +159,8 @@ interface CanvasController {
         onProgress: (Boolean) -> Unit,
     ): Boolean
 
+    suspend fun recognizeAll()
+
     fun close()
 }
 

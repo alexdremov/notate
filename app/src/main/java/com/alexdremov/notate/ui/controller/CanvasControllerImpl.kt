@@ -76,6 +76,10 @@ class CanvasControllerImpl(
         onProgress: (Boolean) -> Unit,
     ): Boolean = recognitionManager.ensureModelDownloaded(lang, onProgress)
 
+    override suspend fun recognizeAll() {
+        recognitionCoordinator.sweepUnrecognizedStrokes()
+    }
+
     override fun close() {
         recognitionCoordinator.stop()
         recognitionManager.close()
@@ -175,7 +179,10 @@ class CanvasControllerImpl(
                 model
                     .queryItems(expandedBounds)
                     .filterIsInstance<Stroke>()
-                    .filter { it.style != com.alexdremov.notate.model.StrokeType.DASH }
+                    .filter {
+                        it.style != com.alexdremov.notate.model.StrokeType.DASH &&
+                            it.style != com.alexdremov.notate.model.StrokeType.HIGHLIGHTER
+                    }
             if (remainingStrokes.isNotEmpty()) {
                 recognitionCoordinator.triggerManualRecognition(remainingStrokes)
             }
@@ -367,7 +374,10 @@ class CanvasControllerImpl(
                     model
                         .queryItems(expandedBounds)
                         .filterIsInstance<Stroke>()
-                        .filter { it.style != com.alexdremov.notate.model.StrokeType.DASH }
+                        .filter {
+                            it.style != com.alexdremov.notate.model.StrokeType.DASH &&
+                                it.style != com.alexdremov.notate.model.StrokeType.HIGHLIGHTER
+                        }
                 if (remainingStrokes.isNotEmpty()) {
                     recognitionCoordinator.triggerManualRecognition(remainingStrokes)
                 }
@@ -1245,7 +1255,11 @@ class CanvasControllerImpl(
             endBatchSession()
 
             // Trigger re-recognition for moved strokes
-            val movedStrokes = committedItems.filterIsInstance<Stroke>().filter { it.style != com.alexdremov.notate.model.StrokeType.DASH }
+            val movedStrokes =
+                committedItems.filterIsInstance<Stroke>().filter {
+                    it.style != com.alexdremov.notate.model.StrokeType.DASH &&
+                        it.style != com.alexdremov.notate.model.StrokeType.HIGHLIGHTER
+                }
             if (movedStrokes.isNotEmpty()) {
                 recognitionCoordinator.triggerManualRecognition(movedStrokes)
             }

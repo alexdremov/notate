@@ -410,18 +410,23 @@ class SettingsSidebarController(
                 (context as? com.alexdremov.notate.CanvasActivity)
                     ?.findViewById<com.alexdremov.notate.ui.OnyxCanvasView>(
                         R.id.canvasView,
-                    )?.getController()
-                    ?.let { controller ->
-                        (controller as? com.alexdremov.notate.ui.controller.CanvasControllerImpl)?.let { impl ->
-                            // Force redraw
-                            val method = impl.javaClass.getDeclaredMethod("onContentChangedListener")
-                            // Wait, we can't easily access renderer. Let's just use the view.
-                        }
-                    }
+                    )?.getRenderer()
+                    ?.invalidate()
+            }
+        }
+
+        debugView.findViewById<Switch>(R.id.switch_debug_show_lines).apply {
+            isChecked =
+                com.alexdremov.notate.data.PreferencesManager
+                    .isDebugShowLinesEnabled(context)
+            setOnCheckedChangeListener { _, isChecked ->
+                com.alexdremov.notate.data.PreferencesManager
+                    .setDebugShowLinesEnabled(context, isChecked)
                 (context as? com.alexdremov.notate.CanvasActivity)
                     ?.findViewById<com.alexdremov.notate.ui.OnyxCanvasView>(
                         R.id.canvasView,
-                    )?.invalidate()
+                    )?.getRenderer()
+                    ?.invalidate()
             }
         }
 
@@ -533,6 +538,7 @@ class SettingsSidebarController(
                                 state = OcrSettingsState(isOcrEnabled, ocrLanguage, isOcrDownloading),
                                 onOcrEnabledChange = { viewModel.setOcrEnabled(it) },
                                 onOcrLanguageChange = { viewModel.setOcrLanguage(it) },
+                                onRecognizeAgain = { viewModel.recognizeAll() },
                             )
                         }
                     }

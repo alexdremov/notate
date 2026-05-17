@@ -169,7 +169,6 @@ dependencies {
 
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
-    implementation(kotlin("stdlib-jdk8"))
 
     // Testing
     testImplementation("junit:junit:4.13.2")
@@ -200,7 +199,7 @@ dependencies {
     implementation("com.google.apis:google-api-services-drive:v3-rev20251210-2.0.0")
 
     // ML Kit Handwriting Recognition
-    implementation("com.google.mlkit:digital-ink-recognition:18.1.0")
+    implementation("com.google.mlkit:digital-ink-recognition:19.0.0")
 
     // Markwon (Markdown Rendering & Editing)
     implementation("io.noties.markwon:core:4.6.2")

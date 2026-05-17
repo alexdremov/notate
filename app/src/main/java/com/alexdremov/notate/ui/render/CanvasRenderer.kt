@@ -174,11 +174,7 @@ class CanvasRenderer(
             val region = rm.getRegionReadOnly(id) ?: continue
             for (ocr in region.recognizedTexts) {
                 val ocrRect = RectF(ocr.x, ocr.y, ocr.x + ocr.width, ocr.y + ocr.height)
-                com.alexdremov.notate.util.Logger
-                    .d("OCRDebug", "Found OCR text: ${ocr.text} at $ocrRect, visibleRect=$visibleRect")
                 if (RectF.intersects(ocrRect, visibleRect)) {
-                    com.alexdremov.notate.util.Logger
-                        .d("OCRDebug", "Drawing OCR text: ${ocr.text}")
                     canvas.drawRect(ocrRect, ocrDebugBoxPaint)
 
                     val textWidth = ocr.width.coerceAtLeast(10f)
@@ -199,6 +195,55 @@ class CanvasRenderer(
                     canvas.translate(ocr.x, ocr.y)
                     staticLayout.draw(canvas)
                     canvas.restore()
+                }
+            }
+        }
+    }
+
+    private val linesDebugPaint =
+        Paint().apply {
+            color = Color.GREEN
+            alpha = 128
+            style = Paint.Style.STROKE
+            strokeWidth = 3f
+        }
+
+    fun renderLinesDebugLayer(
+        canvas: Canvas,
+        visibleRect: RectF,
+    ) {
+        val rm = model.getRegionManager() ?: return
+        val regionIds = rm.getRegionIdsInRect(visibleRect)
+
+        val strokesInView = mutableListOf<Stroke>()
+        for (id in regionIds) {
+            val region = rm.getRegionReadOnly(id) ?: continue
+            region.items.forEach { if (it is Stroke && it.style != com.alexdremov.notate.model.StrokeType.DASH) strokesInView.add(it) }
+        }
+
+        if (strokesInView.isEmpty()) return
+
+        // Perform clustering and line segmentation on the fly for visualization
+        val clusters =
+            com.alexdremov.notate.data.StrokeClusteringManager
+                .clusterStrokes(strokesInView)
+        for (cluster in clusters) {
+            val lines =
+                com.alexdremov.notate.data.StrokeClusteringManager
+                    .segmentIntoLines(cluster)
+            for (line in lines) {
+                val lineBounds = RectF()
+                var first = true
+                for (s in line) {
+                    if (first) {
+                        lineBounds.set(s.bounds)
+                        first = false
+                    } else {
+                        lineBounds.union(s.bounds)
+                    }
+                }
+                if (!lineBounds.isEmpty) {
+                    canvas.drawRect(lineBounds, linesDebugPaint)
                 }
             }
         }

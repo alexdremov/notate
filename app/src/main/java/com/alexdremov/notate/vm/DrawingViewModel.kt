@@ -315,6 +315,12 @@ class DrawingViewModel
             }
         }
 
+        fun recognizeAll() {
+            viewModelScope.launch {
+                controllerProvider?.invoke()?.recognizeAll()
+            }
+        }
+
         private fun triggerModelDownload() {
             val lang = _ocrLanguage.value
             viewModelScope.launch {

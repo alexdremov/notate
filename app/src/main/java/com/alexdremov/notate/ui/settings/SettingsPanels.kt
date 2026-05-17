@@ -238,6 +238,7 @@ fun OcrSettingsPanel(
     state: OcrSettingsState,
     onOcrEnabledChange: (Boolean) -> Unit,
     onOcrLanguageChange: (String) -> Unit,
+    onRecognizeAgain: () -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
         SettingsToggle(
@@ -250,6 +251,18 @@ fun OcrSettingsPanel(
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+
+        if (state.ocrEnabled) {
+            androidx.compose.material3.Button(
+                onClick = onRecognizeAgain,
+                modifier =
+                    androidx.compose.ui.Modifier
+                        .fillMaxWidth(),
+                enabled = !state.isDownloading,
+            ) {
+                Text("Recognize All Again")
+            }
+        }
 
         if (state.isDownloading) {
             Column(Modifier.fillMaxWidth().padding(top = 8.dp)) {
