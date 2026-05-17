@@ -43,6 +43,7 @@ class CanvasRepository(
         val savedPath: String,
         val newLastModified: Long,
         val newSize: Long,
+        val isConflict: Boolean = false,
     )
 
     private val sessionsDir: File by lazy {
@@ -632,6 +633,7 @@ class CanvasRepository(
                         }
                     }
 
+                    val isConflict = targetPath != path
                     atomicStorage.pack(session.sessionDir, targetPath)
 
                     val savedFile = File(targetPath)
@@ -648,7 +650,7 @@ class CanvasRepository(
                         Logger.e("CanvasRepository", "Failed to update origin_info.txt after save", e)
                     }
 
-                    SaveResult(targetPath, newLastModified, newSize)
+                    SaveResult(targetPath, newLastModified, newSize, isConflict)
                 }
             } catch (e: Exception) {
                 Logger.e("CanvasRepository", "Failed to save session", e, showToUser = true)

@@ -11,8 +11,10 @@ import com.alexdremov.notate.model.ToolType
 import com.alexdremov.notate.model.ToolbarItem
 import com.alexdremov.notate.util.Logger
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.withLock
@@ -26,6 +28,16 @@ class DrawingViewModel
             com.alexdremov.notate.data
                 .CanvasRepository(application),
     ) : AndroidViewModel(application) {
+        sealed class SaveEvent {
+            data class Conflict(
+                val originalPath: String,
+                val conflictPath: String,
+            ) : SaveEvent()
+        }
+
+        private val _saveEvents = MutableSharedFlow<SaveEvent>()
+        val saveEvents = _saveEvents.asSharedFlow()
+
         // Session State
         private val _currentSession = MutableStateFlow<com.alexdremov.notate.data.CanvasSession?>(null)
         val currentSession: StateFlow<com.alexdremov.notate.data.CanvasSession?> = _currentSession.asStateFlow()
@@ -139,6 +151,11 @@ class DrawingViewModel
                         val result = canvasRepository.saveCanvasSession(path, session, commitToZip = commit)
                         // Update origin timestamps in-place
                         session.updateOrigin(result.newLastModified, result.newSize)
+
+                        if (result.isConflict) {
+                            Logger.w("DrawingViewModel", "Conflict detected! Saved as copy: ${result.savedPath}")
+                            _saveEvents.emit(SaveEvent.Conflict(path, result.savedPath))
+                        }
 
                         if (commit) {
                             Logger.i("DrawingViewModel", "Full Save complete: ${result.savedPath}")

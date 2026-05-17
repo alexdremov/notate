@@ -602,7 +602,7 @@ class PenInputHandler(
                                         segmentPath.moveTo(newTouchPoints[0].x, newTouchPoints[0].y)
                                         for (i in 1 until newTouchPoints.size) {
                                             segmentPath.lineTo(
-                                                newTouchPoints[i].size,
+                                                newTouchPoints[i].x,
                                                 newTouchPoints[i].y,
                                             )
                                         }

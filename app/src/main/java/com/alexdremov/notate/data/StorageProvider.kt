@@ -80,6 +80,45 @@ internal object StorageUtils {
             "$originalName Copy"
         }
 
+    fun getOriginInfo(
+        context: Context,
+        path: String,
+    ): Pair<Long, Long> {
+        if (path.startsWith("content://")) {
+            val uri = android.net.Uri.parse(path)
+            return try {
+                context.contentResolver
+                    .query(
+                        uri,
+                        arrayOf(
+                            android.provider.DocumentsContract.Document.COLUMN_LAST_MODIFIED,
+                            android.provider.OpenableColumns.SIZE,
+                        ),
+                        null,
+                        null,
+                        null,
+                    )?.use { cursor ->
+                        if (cursor.moveToFirst()) {
+                            val lastMod = cursor.getLong(0)
+                            val size = cursor.getLong(1)
+                            Pair(lastMod, size)
+                        } else {
+                            Pair(0L, 0L)
+                        }
+                    } ?: Pair(0L, 0L)
+            } catch (e: Exception) {
+                Pair(0L, 0L)
+            }
+        } else {
+            val file = File(path)
+            return if (file.exists()) {
+                Pair(file.lastModified(), file.length())
+            } else {
+                Pair(0L, 0L)
+            }
+        }
+    }
+
     fun injectUuidIntoJson(
         inputStream: InputStream,
         outputStream: OutputStream,
