@@ -6,11 +6,13 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.*
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.Surface
+import androidx.compose.material3.*
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.ComposeView
@@ -70,6 +72,10 @@ class SettingsSidebarController(
             showWritingMenu()
         }
 
+        mainMenuView.findViewById<View>(R.id.menu_item_document).setOnClickListener {
+            showDocumentMenu()
+        }
+
         mainMenuView.findViewById<View>(R.id.menu_item_export).setOnClickListener {
             showExportMenu()
         }
@@ -81,6 +87,60 @@ class SettingsSidebarController(
         mainMenuView.findViewById<View>(R.id.menu_item_debug).setOnClickListener {
             showDebugMenu()
         }
+    }
+
+    private fun showDocumentMenu() {
+        contentFrame.removeAllViews()
+
+        tvTitle.text = "Document"
+        btnBack.visibility = View.VISIBLE
+
+        val composeView =
+            ComposeView(context).apply {
+                setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed)
+                setContent {
+                    NotateTheme {
+                        Surface(color = Color.White) {
+                            Column(
+                                modifier = Modifier.padding(16.dp),
+                            ) {
+                                val isFixedPage by viewModel.isFixedPageMode.collectAsState()
+                                val isCentered by viewModel.isFixedPageCenterHorizontal.collectAsState()
+
+                                androidx.compose.material3.Text(
+                                    text = "Scrolling",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    modifier = Modifier.padding(bottom = 8.dp),
+                                )
+
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        androidx.compose.material3.Text(
+                                            text = "Force horizontal centering",
+                                            style = MaterialTheme.typography.bodyLarge,
+                                        )
+                                        androidx.compose.material3.Text(
+                                            text = "Restricts horizontal scrolling in fixed-page mode",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = Color.Gray,
+                                        )
+                                    }
+                                    androidx.compose.material3.Switch(
+                                        checked = isCentered,
+                                        onCheckedChange = { viewModel.setFixedPageCenterHorizontal(it) },
+                                        enabled = isFixedPage,
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+        contentFrame.addView(composeView)
     }
 
     private fun showWritingMenu() {

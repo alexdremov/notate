@@ -41,6 +41,11 @@ class ViewportInteractor(
     private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop
     private val POST_STROKE_SETTLING_MS = 150L // Ignore touch right after pen release to prevent jitter
 
+    // Document Centering
+    private var isFixedPageCenterHorizontal = false
+    private var canvasWidth = 0f
+    private var viewWidth = 0
+
     // Scale Detector
     private val scaleDetector =
         ScaleGestureDetector(
@@ -115,7 +120,13 @@ class ViewportInteractor(
                         filteredDx = filteredDx * SMOOTHING_FACTOR + rawDx * (1 - SMOOTHING_FACTOR)
                         filteredDy = filteredDy * SMOOTHING_FACTOR + rawDy * (1 - SMOOTHING_FACTOR)
 
-                        matrix.postTranslate(filteredDx, filteredDy)
+                        val dx = if (isFixedPageCenterHorizontal) 0f else filteredDx
+                        matrix.postTranslate(dx, filteredDy)
+
+                        if (isFixedPageCenterHorizontal) {
+                            enforceCentering()
+                        }
+
                         com.alexdremov.notate.util.PerformanceProfiler.trace("ViewportInteractor.invalidateCallback") {
                             invalidateCallback()
                         }
@@ -153,11 +164,31 @@ class ViewportInteractor(
             }
 
             matrix.postScale(scaleFactor, scaleFactor, detector.focusX, detector.focusY)
+
+            if (isFixedPageCenterHorizontal) {
+                enforceCentering()
+            }
+
             com.alexdremov.notate.util.PerformanceProfiler.trace("ViewportInteractor.invalidateCallback") {
                 invalidateCallback()
             }
             onScaleChanged()
         }
+    }
+
+    private fun enforceCentering() {
+        if (viewWidth <= 0 || canvasWidth <= 0f) return
+
+        // Calculate current translation
+        val values = FloatArray(9)
+        matrix.getValues(values)
+        val currentTx = values[Matrix.MTRANS_X]
+
+        // Target TX = (viewWidth - canvasWidth * currentScale) / 2
+        val targetTx = (viewWidth - canvasWidth * currentScale) / 2f
+        val deltaX = targetTx - currentTx
+
+        matrix.postTranslate(deltaX, 0f)
     }
 
     private fun updateFocusPoint(event: MotionEvent) {
@@ -209,9 +240,36 @@ class ViewportInteractor(
 
     fun setScale(scale: Float) {
         currentScale = scale
+        if (isFixedPageCenterHorizontal) {
+            enforceCentering()
+        }
     }
 
     fun isInteracting() = isPanning || isInteracting
 
     fun isBusy() = isPanning || hasPerformedScale
+
+    fun setFixedPageCenterHorizontal(enabled: Boolean) {
+        isFixedPageCenterHorizontal = enabled
+        if (enabled) {
+            enforceCentering()
+            invalidateCallback()
+        }
+    }
+
+    fun setCanvasWidth(width: Float) {
+        canvasWidth = width
+        if (isFixedPageCenterHorizontal) {
+            enforceCentering()
+            invalidateCallback()
+        }
+    }
+
+    fun setViewWidth(width: Int) {
+        viewWidth = width
+        if (isFixedPageCenterHorizontal) {
+            enforceCentering()
+            invalidateCallback()
+        }
+    }
 }

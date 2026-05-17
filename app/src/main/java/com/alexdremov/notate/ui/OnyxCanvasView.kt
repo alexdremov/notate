@@ -221,6 +221,16 @@ class OnyxCanvasView
             }
         }
 
+        override fun onSizeChanged(
+            w: Int,
+            h: Int,
+            oldw: Int,
+            oldh: Int,
+        ) {
+            super.onSizeChanged(w, h, oldw, oldh)
+            viewportInteractor.setViewWidth(w)
+        }
+
         private fun setupGestureDetectors() {
             gestureDetector =
                 android.view.GestureDetector(
@@ -688,10 +698,15 @@ class OnyxCanvasView
             matrix.postScale(data.zoomLevel, data.zoomLevel)
             matrix.postTranslate(data.offsetX, data.offsetY)
             viewportInteractor.setScale(data.zoomLevel)
+            viewportInteractor.setCanvasWidth(data.pageWidth)
 
             canvasRenderer.updateLayoutStrategy()
             canvasRenderer.clearTiles()
             drawContent()
+        }
+
+        fun setFixedPageCenterHorizontal(enabled: Boolean) {
+            viewportInteractor.setFixedPageCenterHorizontal(enabled)
         }
 
         fun setTool(tool: PenTool) {

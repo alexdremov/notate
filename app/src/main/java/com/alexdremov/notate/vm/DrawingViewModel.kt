@@ -60,6 +60,9 @@ class DrawingViewModel
         private val _isFixedPageMode = MutableStateFlow(false)
         val isFixedPageMode: StateFlow<Boolean> = _isFixedPageMode.asStateFlow()
 
+        private val _isFixedPageCenterHorizontal = MutableStateFlow(true)
+        val isFixedPageCenterHorizontal: StateFlow<Boolean> = _isFixedPageCenterHorizontal.asStateFlow()
+
         private val _isCollapsibleToolbar = MutableStateFlow(false)
         val isCollapsibleToolbar: StateFlow<Boolean> = _isCollapsibleToolbar.asStateFlow()
 
@@ -79,6 +82,7 @@ class DrawingViewModel
             loadTools()
             _isCollapsibleToolbar.value = PreferencesManager.isCollapsibleToolbarEnabled(getApplication())
             _toolbarCollapseTimeout.value = PreferencesManager.getToolbarCollapseTimeout(getApplication())
+            _isFixedPageCenterHorizontal.value = PreferencesManager.isFixedPageCenterHorizontalEnabled(getApplication())
         }
 
         suspend fun loadCanvasSession(path: String) {
@@ -213,6 +217,11 @@ class DrawingViewModel
 
         fun setFixedPageMode(isFixed: Boolean) {
             _isFixedPageMode.value = isFixed
+        }
+
+        fun setFixedPageCenterHorizontal(enabled: Boolean) {
+            _isFixedPageCenterHorizontal.value = enabled
+            PreferencesManager.setFixedPageCenterHorizontalEnabled(getApplication(), enabled)
         }
 
         fun setEditMode(enabled: Boolean) {

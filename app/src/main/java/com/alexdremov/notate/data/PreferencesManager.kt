@@ -58,6 +58,7 @@ object PreferencesManager {
     private const val KEY_MIN_LOG_LEVEL = "min_log_level_to_show"
     private const val KEY_PDF_EXPORT_SCALE = "pdf_export_scale"
     private const val KEY_SYNC_PDF_TYPE = "sync_pdf_type"
+    private const val KEY_FIXED_PAGE_CENTER_HORIZONTAL = "fixed_page_center_horizontal"
 
     // Debug Preferences
     private const val KEY_DEBUG_USE_SIMPLE_RENDERER = "debug_use_simple_renderer"
@@ -105,6 +106,15 @@ object PreferencesManager {
         type: String,
     ) {
         getPrefs(context).edit().putString(KEY_SYNC_PDF_TYPE, type).apply()
+    }
+
+    fun isFixedPageCenterHorizontalEnabled(context: Context): Boolean = getPrefs(context).getBoolean(KEY_FIXED_PAGE_CENTER_HORIZONTAL, true)
+
+    fun setFixedPageCenterHorizontalEnabled(
+        context: Context,
+        enabled: Boolean,
+    ) {
+        getPrefs(context).edit().putBoolean(KEY_FIXED_PAGE_CENTER_HORIZONTAL, enabled).apply()
     }
 
     fun getMinLogLevel(context: Context): Int = getPrefs(context).getInt(KEY_MIN_LOG_LEVEL, 4) // Default to NONE (4)

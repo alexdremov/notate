@@ -569,6 +569,11 @@ class CanvasActivity : AppCompatActivity() {
                         binding.toolbarContainer.isDragEnabled = !isEdit
                     }
                 }
+                launch {
+                    viewModel.isFixedPageCenterHorizontal.collect { enabled ->
+                        binding.canvasView.setFixedPageCenterHorizontal(enabled)
+                    }
+                }
 
                 // Session Observation
                 launch {
