@@ -269,27 +269,44 @@ object PdfExporter {
         bounds: RectF,
         pageHeight: Float,
     ) {
-        val pdfX = item.x - bounds.left
-        val pdfY = pageHeight - (item.y - bounds.top)
+        val lines = item.text.split('\n')
+        val lineCount = lines.size.coerceAtLeast(1)
+
+        val totalWidth = item.width
+        val totalHeight = item.height
+        val fontSize = (totalHeight / lineCount).coerceAtLeast(1f)
+
+        val font = PDType1Font.HELVETICA
 
         var textStarted = false
         try {
             stream.beginText()
             textStarted = true
             stream.setRenderingMode(RenderingMode.NEITHER)
-
-            val font = PDType1Font.HELVETICA
-            // Heuristic font size based on height
-            val fontSize = item.height.coerceIn(8f, 24f)
             stream.setFont(font, fontSize)
 
-            // PDF text origin is bottom-left. RecognizedTextData x,y is top-left.
-            stream.newLineAtOffset(pdfX, pdfY - fontSize)
+            for (i in lines.indices) {
+                val lineText = lines[i].filter { it.code in 32..126 || it.code in 160..255 }
+                if (lineText.isEmpty()) continue
 
-            // Clean text for PDF compatibility
-            val safeText = item.text.filter { it.code in 32..126 || it.code in 160..255 }
-            if (safeText.isNotEmpty()) {
-                stream.showText(safeText)
+                val linePdfX = item.x - bounds.left
+                // PDF coordinates are bottom-up. Baseline of line 'i' is:
+                // pageHeight - topOffset - (i + 1) * fontSize
+                val linePdfY = pageHeight - (item.y - bounds.top) - (i + 1) * fontSize
+
+                // stringWidth is in 1/1000 units of the font size
+                val naturalWidth = font.getStringWidth(lineText) / 1000f * fontSize
+
+                if (naturalWidth > 0) {
+                    val hScale = totalWidth / naturalWidth
+                    // Apply horizontal scaling and absolute translation
+                    stream.setTextMatrix(Matrix(hScale, 0f, 0f, 1f, linePdfX, linePdfY))
+                } else {
+                    // Absolute translation without scaling
+                    stream.setTextMatrix(Matrix(1f, 0f, 0f, 1f, linePdfX, linePdfY))
+                }
+
+                stream.showText(lineText)
             }
         } catch (e: Exception) {
             Logger.w("PdfExporter", "Failed to add recognized text layer: ${e.message}")
