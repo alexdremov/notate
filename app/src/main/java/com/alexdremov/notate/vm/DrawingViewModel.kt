@@ -217,6 +217,9 @@ class DrawingViewModel
 
         fun setFixedPageMode(isFixed: Boolean) {
             _isFixedPageMode.value = isFixed
+            if (!isFixed) {
+                _isFixedPageCenterHorizontal.value = false
+            }
         }
 
         fun setFixedPageCenterHorizontal(enabled: Boolean) {

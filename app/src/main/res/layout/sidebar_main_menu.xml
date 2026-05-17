@@ -173,12 +173,11 @@
     </LinearLayout>
 
     <View
+        android:id="@+id/divider_document"
         android:layout_width="match_parent"
         android:layout_height="@dimen/ui_stroke_standard"
         android:background="#000000"
         android:layout_marginStart="56dp" />
-
-    <!-- Export Item -->
     <LinearLayout
         android:id="@+id/menu_item_export"
         android:layout_width="match_parent"

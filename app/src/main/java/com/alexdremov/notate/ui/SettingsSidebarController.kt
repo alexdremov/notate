@@ -72,8 +72,17 @@ class SettingsSidebarController(
             showWritingMenu()
         }
 
-        mainMenuView.findViewById<View>(R.id.menu_item_document).setOnClickListener {
-            showDocumentMenu()
+        val docMenuItem = mainMenuView.findViewById<View>(R.id.menu_item_document)
+        val docDivider = mainMenuView.findViewById<View>(R.id.divider_document)
+        if (isFixedPageMode()) {
+            docMenuItem.visibility = View.VISIBLE
+            docDivider?.visibility = View.VISIBLE
+            docMenuItem.setOnClickListener {
+                showDocumentMenu()
+            }
+        } else {
+            docMenuItem.visibility = View.GONE
+            docDivider?.visibility = View.GONE
         }
 
         mainMenuView.findViewById<View>(R.id.menu_item_export).setOnClickListener {
