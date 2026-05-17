@@ -138,6 +138,7 @@ class CanvasRepository(
                         // Check if we can resume this session (crash recovery / persistence)
                         val manifestFile = File(sessionDir, "manifest.bin")
                         val sourcePathFile = File(sessionDir, "source_path.txt")
+                        val originInfoFile = File(sessionDir, "origin_info.txt")
 
                         if (manifestFile.exists()) {
                             val storedPath = if (sourcePathFile.exists()) sourcePathFile.readText().trim() else ""
@@ -157,26 +158,57 @@ class CanvasRepository(
                                     }
                                 }
 
-                                // Check timestamps to ensure the session cache isn't older than the file
+                                // Check timestamps to ensure the session cache matches the file on disk
                                 if (originFile != null && originFile.exists()) {
-                                    val manifestTime = manifestFile.lastModified()
-                                    Logger.d(
-                                        "CanvasRepository",
-                                        "Checking Recovery: ManifestTime=${formatTime(
-                                            manifestTime,
-                                        )} vs OriginTime=${formatTime(originLastModified)}",
-                                    )
-
-                                    if (manifestTime > originLastModified) {
-                                        Logger.i("CanvasRepository", "Resuming existing session (Cache is newer than file)")
-                                        sessionValid = true
-                                    } else {
-                                        Logger.i("CanvasRepository", "Existing session stale. Reloading from file. (Manifest <= Origin)")
+                                    var expectedTime = -1L
+                                    var expectedSize = -1L
+                                    if (originInfoFile.exists()) {
+                                        try {
+                                            val lines = originInfoFile.readLines()
+                                            if (lines.size >= 2) {
+                                                expectedTime = lines[0].toLongOrNull() ?: -1L
+                                                expectedSize = lines[1].toLongOrNull() ?: -1L
+                                            }
+                                        } catch (e: Exception) {
+                                            Logger.e("CanvasRepository", "Failed to read origin_info.txt", e)
+                                        }
                                     }
-                                } else {
-                                    // Remote file - assume valid if path matches
-                                    Logger.i("CanvasRepository", "Resuming existing session (Remote file or origin missing)")
+
+                                    val manifestTime = manifestFile.lastModified()
+                                    val originMatches = (originLastModified == expectedTime && originSize == expectedSize)
+
+                                    if (originMatches) {
+                                        if (manifestTime >= originLastModified) {
+                                            Logger.i("CanvasRepository", "Resuming existing session (File matches cache origin)")
+                                            sessionValid = true
+                                        } else {
+                                            Logger.i("CanvasRepository", "Existing session stale (Manifest older than Origin). Reloading.")
+                                            sessionValid = false
+                                        }
+                                    } else {
+                                        // Origin mismatch! (File was replaced, modified externally, or we have no record)
+
+                                        if (expectedTime == -1L && manifestTime > originLastModified) {
+                                            // Legacy cache (no origin_info.txt). We trust it IF it's newer than the file.
+                                            Logger.i("CanvasRepository", "Resuming existing session (Legacy cache, newer than file)")
+                                            sessionValid = true
+                                        } else {
+                                            // Known mismatch or manifest is older. Must reload.
+                                            Logger.w(
+                                                "CanvasRepository",
+                                                "Cache origin mismatch or stale! (File was replaced or modified externally). Reloading from file.",
+                                            )
+                                            sessionValid = false
+                                        }
+                                    }
+                                } else if (originFile == null) {
+                                    // Remote file (content://) - assume valid if path matches
+                                    Logger.i("CanvasRepository", "Resuming existing session (Remote file or content URI)")
                                     sessionValid = true
+                                } else {
+                                    // Local file that does NOT exist
+                                    Logger.w("CanvasRepository", "Local file missing but cache exists. Treating as invalid.")
+                                    sessionValid = false
                                 }
                             } else {
                                 Logger.w("CanvasRepository", "Session path mismatch: stored='$storedPath' vs requested='$path'")
@@ -197,6 +229,11 @@ class CanvasRepository(
                         }
                         sessionDir.mkdirs()
                         File(sessionDir, "source_path.txt").writeText(path)
+                        try {
+                            File(sessionDir, "origin_info.txt").writeText("$originLastModified\n$originSize")
+                        } catch (e: Exception) {
+                            Logger.e("CanvasRepository", "Failed to write origin_info.txt", e)
+                        }
 
                         val inputStream = openInputStream(path)
                         if (inputStream == null) {
@@ -603,6 +640,13 @@ class CanvasRepository(
 
                     // Update session origin to match what we just wrote
                     session.updateOrigin(newLastModified, newSize)
+
+                    // Update persisted origin info for next session open
+                    try {
+                        File(session.sessionDir, "origin_info.txt").writeText("$newLastModified\n$newSize")
+                    } catch (e: Exception) {
+                        Logger.e("CanvasRepository", "Failed to update origin_info.txt after save", e)
+                    }
 
                     SaveResult(targetPath, newLastModified, newSize)
                 }
