@@ -50,13 +50,14 @@ class SaveWorker(
             atomicStorage.pack(sessionDir, targetPath)
 
             // Update origin info for next session open to prevent reload/stale detection
-            if (!targetPath.startsWith("content://")) {
-                val savedFile = File(targetPath)
-                try {
-                    File(sessionDir, "origin_info.txt").writeText("${savedFile.lastModified()}\n${savedFile.length()}")
-                } catch (e: Exception) {
-                    Logger.e("SaveWorker", "Failed to update origin_info.txt after background save", e)
+            try {
+                val (newTime, newSize) = com.alexdremov.notate.data.StorageUtils.getOriginInfo(applicationContext, targetPath)
+                if (newTime > 0 || newSize > 0) {
+                    File(sessionDir, "origin_info.txt").writeText("$newTime\n$newSize")
+                    Logger.d("SaveWorker", "Updated origin_info.txt: $newTime, $newSize")
                 }
+            } catch (e: Exception) {
+                Logger.e("SaveWorker", "Failed to update origin_info.txt after background save", e)
             }
 
             Logger.i("SaveWorker", "Background save completed successfully")

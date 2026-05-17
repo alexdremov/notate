@@ -575,6 +575,24 @@ class CanvasActivity : AppCompatActivity() {
                     }
                 }
 
+                launch {
+                    viewModel.saveEvents.collect { event ->
+                        when (event) {
+                            is DrawingViewModel.SaveEvent.Conflict -> {
+                                val fileName = event.conflictPath.substringAfterLast('/')
+                                Logger.w("CanvasActivity", "External change detected! Saved as copy: $fileName")
+                                binding.errorBanner.show(
+                                    Logger.UserEvent(
+                                        message = "External modification detected. Saved as copy:\n$fileName",
+                                        level = Logger.Level.WARNING
+                                    ),
+                                    duration = 8000L
+                                )
+                            }
+                        }
+                    }
+                }
+
                 // Session Observation
                 launch {
                     viewModel.currentSession.collect { session ->
