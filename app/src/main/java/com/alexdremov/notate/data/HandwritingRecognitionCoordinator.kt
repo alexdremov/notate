@@ -101,32 +101,30 @@ class HandwritingRecognitionCoordinator(
             if (strokesInRegion.isEmpty()) continue
 
             // 2. Perform algorithmic line detection on ALL strokes in the region
-            // This establishes the "ground truth" for how strokes SHOULD be grouped.
             val highLevelClusters = StrokeClusteringManager.clusterStrokes(strokesInRegion)
             val detectedLines = highLevelClusters.flatMap { StrokeClusteringManager.segmentIntoLines(it) }
 
             // 3. Build a fast lookup for existing OCR blocks by their stroke sets
-            // We use a Set<Long> of strokeOrders as the stable identity of an OCR block.
             val existingOcrByStrokes = region.recognizedTexts.associateBy { it.strokeOrders.toSet() }
 
-            val unrecognizedLines = ArrayList<List<Stroke>>()
+            val strokesToReRecognize = HashSet<Stroke>()
 
             for (line in detectedLines) {
                 val lineStrokeOrders = line.map { it.strokeOrder }.toSet()
 
                 // INVARIANT CHECK: Does an OCR block exist that matches this exact line?
                 if (!existingOcrByStrokes.containsKey(lineStrokeOrders)) {
-                    // If not, this line is either new, modified, or fragmented.
-                    unrecognizedLines.add(line)
+                    strokesToReRecognize.addAll(line)
                 }
             }
 
-            if (unrecognizedLines.isNotEmpty()) {
-                Logger.d("OCRCoordinator", "Sweep found ${unrecognizedLines.size} lines in region $rId violating OCR invariant.")
-                for (line in unrecognizedLines) {
-                    processStrokesInternal(line)
-                    delay(200)
-                }
+            if (strokesToReRecognize.isNotEmpty()) {
+                Logger.d(
+                    "OCRCoordinator",
+                    "Sweep found ${strokesToReRecognize.size} strokes in region $rId violating OCR invariant. Processing batch...",
+                )
+                processStrokesInternal(strokesToReRecognize.toList())
+                delay(1000) // Yield more during heavy background processing
             }
         }
     }
@@ -144,54 +142,60 @@ class HandwritingRecognitionCoordinator(
     private suspend fun processStrokesInternal(initialStrokes: List<Stroke>) {
         if (initialStrokes.isEmpty()) return
 
-        // 1. Recursive spatial expansion to find all connected strokes and intersecting OCR blocks
+        // 1. Recursive spatial expansion to find the entire connected component
+        // of strokes and intersecting OCR blocks.
         val fullClusterSet = HashSet<Stroke>(initialStrokes)
-        val expandedSearchArea = RectF()
+        val totalInvalidateArea = RectF()
         initialStrokes.forEach {
-            if (expandedSearchArea.isEmpty) {
-                expandedSearchArea.set(
+            if (totalInvalidateArea.isEmpty) {
+                totalInvalidateArea.set(
                     it.bounds,
                 )
             } else {
-                expandedSearchArea.union(it.bounds)
+                totalInvalidateArea.union(it.bounds)
             }
         }
-        expandedSearchArea.inset(-150f, -100f)
 
-        // Identify all existing OCR blocks that intersect our current search area
         val intersectingOcrStrokeOrders = HashSet<Long>()
-        val totalInvalidateArea = RectF(expandedSearchArea)
+        var areaChanged = true
 
-        model.getRegionManager()?.getRegionIdsInRect(expandedSearchArea)?.forEach { rId ->
-            val region = model.getRegionManager()?.getRegionReadOnly(rId)
-            region?.recognizedTexts?.forEach { ocr ->
-                val ocrRect = RectF(ocr.x, ocr.y, ocr.x + ocr.width, ocr.y + ocr.height)
-                if (RectF.intersects(ocrRect, expandedSearchArea)) {
-                    intersectingOcrStrokeOrders.addAll(ocr.strokeOrders)
-                    totalInvalidateArea.union(ocrRect)
+        // Loop until no more strokes or OCR blocks are found in the expanded vicinity
+        while (areaChanged) {
+            areaChanged = false
+            val searchArea = RectF(totalInvalidateArea).apply { inset(-150f, -100f) }
+
+            // A. Find all intersecting OCR blocks and "gobble" their strokes
+            model.getRegionManager()?.getRegionIdsInRect(searchArea)?.forEach { rId ->
+                val region = model.getRegionManager()?.getRegionReadOnly(rId)
+                region?.recognizedTexts?.forEach { ocr ->
+                    val ocrRect = RectF(ocr.x, ocr.y, ocr.x + ocr.width, ocr.y + ocr.height)
+                    if (RectF.intersects(ocrRect, searchArea)) {
+                        if (intersectingOcrStrokeOrders.addAll(ocr.strokeOrders)) {
+                            totalInvalidateArea.union(ocrRect)
+                            areaChanged = true
+                        }
+                    }
+                }
+            }
+
+            // B. Find all strokes in the search area (recognized or not) to ensure complete lines
+            model.getRegionManager()?.visitItemsInRect(searchArea) { item ->
+                if (item is Stroke && item.style != StrokeType.DASH && item.style != StrokeType.HIGHLIGHTER) {
+                    if (fullClusterSet.add(item)) {
+                        totalInvalidateArea.union(item.bounds)
+                        areaChanged = true
+                    }
                 }
             }
         }
 
-        // Lock regions affected by the expanded area
+        // Lock regions affected by the final expanded area
         val affectedRegions = model.getRegionManager()?.getRegionIdsInRect(totalInvalidateArea) ?: emptyList()
         synchronized(processingRegions) {
             processingRegions.addAll(affectedRegions)
         }
 
         try {
-            // Find ALL strokes in the final expanded area (including those from intersected OCR blocks)
-            model.getRegionManager()?.visitItemsInRect(totalInvalidateArea) { item ->
-                if (item is Stroke && item.style != StrokeType.DASH && item.style != StrokeType.HIGHLIGHTER) {
-                    // Include if spatially inside OR part of an invalidated OCR block
-                    if (RectF.intersects(totalInvalidateArea, item.bounds) ||
-                        intersectingOcrStrokeOrders.contains(item.strokeOrder)
-                    ) {
-                        fullClusterSet.add(item)
-                    }
-                }
-            }
-
             // 2. High-level Clustering (Group into paragraphs/sections)
             val clusters = StrokeClusteringManager.clusterStrokes(fullClusterSet.toList())
 

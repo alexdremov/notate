@@ -208,14 +208,54 @@ object StrokeClusteringManager {
             mergedLines.add(currentLineItems.toMutableList())
         }
 
-        // 4. Final Sort: Restore to Temporal Sequence
-        return mergedLines
-            .sortedBy { lineStrokes -> lineStrokes.map { it.stroke.bounds.centerY() }.average() }
-            .map { lineStrokes ->
-                restoreNaturalOrder(
-                    lineStrokes.sortedBy { it.originalIndex }.map { it.stroke },
-                )
+        // 4. Final Pass: Horizontal Splitting
+        // Prevents extremely long mega-lines on infinite canvas by splitting at large horizontal gaps.
+        val finalResultLines = mutableListOf<List<Stroke>>()
+
+        for (lineIndexedStrokes in mergedLines) {
+            val sortedStrokes = lineIndexedStrokes.sortedBy { it.stroke.bounds.left }
+            if (sortedStrokes.isEmpty()) continue
+
+            // Refined sub-line logic
+            val subLines = mutableListOf<MutableList<IndexedStroke>>()
+            var activeSubLine = mutableListOf<IndexedStroke>()
+            subLines.add(activeSubLine)
+
+            for (i in sortedStrokes.indices) {
+                val current = sortedStrokes[i]
+                if (i == 0) {
+                    activeSubLine.add(current)
+                    continue
+                }
+
+                val prev = sortedStrokes[i - 1]
+                val gap = current.stroke.bounds.left - prev.stroke.bounds.right
+
+                // Threshold: If the horizontal gap is > 4.5x the median line height,
+                // it's likely a separate logical block on the same vertical plane.
+                val horizontalGapThreshold = medianHeight * 4.5f
+
+                if (gap > horizontalGapThreshold) {
+                    activeSubLine = mutableListOf<IndexedStroke>()
+                    subLines.add(activeSubLine)
+                }
+                activeSubLine.add(current)
             }
+
+            for (subLine in subLines) {
+                if (subLine.isNotEmpty()) {
+                    finalResultLines.add(
+                        restoreNaturalOrder(
+                            subLine.sortedBy { it.originalIndex }.map { it.stroke },
+                        ),
+                    )
+                }
+            }
+        }
+
+        // 5. Final Sort: Restore to Top-to-Bottom sequence
+        return finalResultLines
+            .sortedBy { lineStrokes -> lineStrokes.map { it.bounds.centerY() }.average() }
     }
 
     /**

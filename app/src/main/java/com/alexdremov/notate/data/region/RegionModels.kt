@@ -7,6 +7,7 @@ import com.alexdremov.notate.model.Stroke
 import com.alexdremov.notate.util.Quadtree
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.Transient
+import java.util.concurrent.CopyOnWriteArrayList
 
 @Serializable
 data class RegionId(
@@ -32,8 +33,8 @@ data class RegionId(
 
 data class RegionData(
     val id: RegionId,
-    val items: MutableList<CanvasItem> = ArrayList(),
-    val recognizedTexts: MutableList<RecognizedTextData> = ArrayList(),
+    val items: MutableList<CanvasItem> = CopyOnWriteArrayList(),
+    val recognizedTexts: MutableList<RecognizedTextData> = CopyOnWriteArrayList(),
     @Volatile var isDirty: Boolean = false,
 ) {
     @Transient

@@ -325,13 +325,19 @@ class RegionManager(
     private suspend fun loadRegionFromDisk(id: RegionId): RegionData {
         try {
             var region = storage.loadRegion(id)
-            if (region != null && region.items !is CopyOnWriteArrayList) {
-                region = region.copy(items = CopyOnWriteArrayList(region.items))
+            if (region != null) {
+                // Ensure thread-safe implementations
+                if (region.items !is CopyOnWriteArrayList) {
+                    region = region.copy(items = CopyOnWriteArrayList(region.items))
+                }
+                if (region.recognizedTexts !is CopyOnWriteArrayList) {
+                    region = region.copy(recognizedTexts = CopyOnWriteArrayList(region.recognizedTexts))
+                }
                 region.rebuildQuadtree(regionSize)
             }
             if (region == null) {
                 stateLock.write { removeRegionIndex(id) }
-                region = RegionData(id, CopyOnWriteArrayList())
+                region = RegionData(id)
             }
             stateLock.write {
                 val existing = regionCache.get(id) ?: overflowRegions[id]
