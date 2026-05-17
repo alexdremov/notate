@@ -95,14 +95,20 @@ class CanvasRepository(
                 val existingSession = activeSessions[sessionName]
                 if (existingSession != null && !existingSession.isClosed()) {
                     // VERIFY ORIGIN even for cached session!
-                    val originMatches = (existingSession.originLastModified == initialOriginTime && existingSession.originSize == initialOriginSize)
-                    
+                    val originMatches = (
+                        existingSession.originLastModified == initialOriginTime &&
+                            existingSession.originSize == initialOriginSize
+                    )
+
                     if (originMatches) {
                         val newCount = existingSession.retain()
                         Logger.i("CanvasRepository", "Attaching to active in-memory session. Clients: $newCount")
                         return@withContext existingSession
                     } else {
-                        Logger.w("CanvasRepository", "Active in-memory session is stale (Origin mismatch: ${existingSession.originLastModified} vs $initialOriginTime). Closing and reloading.")
+                        Logger.w(
+                            "CanvasRepository",
+                            "Active in-memory session is stale (Origin mismatch: ${existingSession.originLastModified} vs $initialOriginTime). Closing and reloading.",
+                        )
                         activeSessions.remove(sessionName)
                         existingSession.close()
                     }
@@ -197,28 +203,44 @@ class CanvasRepository(
                                     }
                                 } else {
                                     // Origin mismatch! (File was replaced, modified externally, or we have no record)
-                                    
+
                                     // Stronger verification: Check UUID in the file on disk if it exists
                                     val diskMeta = StorageUtils.extractMetadata(path, { openInputStream(path) }, originSize)
                                     val diskUuid = diskMeta?.uuid
-                                    
-                                    val cachedMetaBytes = try { manifestFile.readBytes() } catch (e: Exception) { null }
-                                    val cachedUuid = cachedMetaBytes?.let {
+
+                                    val cachedMetaBytes =
                                         try {
-                                            ProtoBuf.decodeFromByteArray(CanvasData.serializer(), it).uuid
-                                        } catch (e: Exception) { null }
-                                    }
+                                            manifestFile.readBytes()
+                                        } catch (e: Exception) {
+                                            null
+                                        }
+                                    val cachedUuid =
+                                        cachedMetaBytes?.let {
+                                            try {
+                                                ProtoBuf.decodeFromByteArray(CanvasData.serializer(), it).uuid
+                                            } catch (e: Exception) {
+                                                null
+                                            }
+                                        }
 
                                     if (diskUuid != null && cachedUuid != null && diskUuid == cachedUuid) {
-                                        Logger.i("CanvasRepository", "Origin mismatch by time/size but UUID matches! Trusting UUID for resume.")
+                                        Logger.i(
+                                            "CanvasRepository",
+                                            "Origin mismatch by time/size but UUID matches! Trusting UUID for resume.",
+                                        )
                                         sessionValid = true
                                         // Update origin info so we don't have to check UUID again next time
                                         try {
                                             originInfoFile.writeText("$originLastModified\n$originSize")
-                                        } catch (e: Exception) { /* ignore */ }
+                                        } catch (e: Exception) {
+                                            // ignore
+                                        }
                                     } else if (expectedTime == -1L && manifestTime >= originLastModified) {
                                         // Legacy cache (no origin_info.txt) or crash recovery. We trust it IF it's newer or equal.
-                                        Logger.i("CanvasRepository", "Resuming existing session (Legacy cache/crash recovery, newer or equal to file)")
+                                        Logger.i(
+                                            "CanvasRepository",
+                                            "Resuming existing session (Legacy cache/crash recovery, newer or equal to file)",
+                                        )
                                         sessionValid = true
                                     } else {
                                         Logger.w(

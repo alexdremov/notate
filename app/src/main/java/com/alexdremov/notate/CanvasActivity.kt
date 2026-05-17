@@ -584,9 +584,9 @@ class CanvasActivity : AppCompatActivity() {
                                 binding.errorBanner.show(
                                     Logger.UserEvent(
                                         message = "External modification detected. Saved as copy:\n$fileName",
-                                        level = Logger.Level.WARNING
+                                        level = Logger.Level.WARNING,
                                     ),
-                                    duration = 8000L
+                                    duration = 8000L,
                                 )
                             }
                         }

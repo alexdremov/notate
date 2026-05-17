@@ -39,7 +39,7 @@ class CanvasRepositoryZombieReproductionTest {
             val uuid1 = "original-uuid"
             session1.updateMetadata(session1.metadata.copy(uuid = uuid1))
             repository.saveCanvasSession(path, session1)
-            
+
             // KEEP session1 open (don't release) to keep it in activeSessions
 
             // 2. Delete the file externally (simulating user action)
@@ -53,16 +53,16 @@ class CanvasRepositoryZombieReproductionTest {
             newSession.updateMetadata(newSession.metadata.copy(uuid = uuid2))
             repository.saveCanvasSession(path, newSession)
             repository.releaseCanvasSession(newSession)
-            
+
             assertTrue(file.exists())
 
             // 4. Now attempt to "Open" the document again.
             // If the bug exists, it might return session1 because it's still in activeSessions!
             val session3 = repository.openCanvasSession(path)!!
-            
+
             assertNotEquals("Should NOT have returned session1", uuid1, session3.metadata.uuid)
             assertEquals("Should have returned the newly created session2 content", uuid2, session3.metadata.uuid)
-            
+
             repository.releaseCanvasSession(session1)
             repository.releaseCanvasSession(session3)
         }
@@ -78,32 +78,32 @@ class CanvasRepositoryZombieReproductionTest {
             val uuid1 = "uuid-1"
             session1.updateMetadata(session1.metadata.copy(uuid = uuid1))
             repository.saveCanvasSession(path, session1)
-            
+
             val info1 = file.lastModified() to file.length()
             repository.releaseCanvasSession(session1)
 
             // 2. Delete and recreate with SAME timestamp and size (hypothetically)
             file.delete()
-            
+
             // Recreate with different UUID but FORCE same timestamp/size if possible
             // Actually, we'll just test if UUID check catches it when we DON'T sleep.
             val session2 = repository.openCanvasSession(path)!!
             val uuid2 = "uuid-2"
             session2.updateMetadata(session2.metadata.copy(uuid = uuid2))
             repository.saveCanvasSession(path, session2)
-            
+
             // Force same timestamp as doc 1
             file.setLastModified(info1.first)
             // If size is also same (likely for empty/small docs), timestamp+size check fails!
-            
+
             repository.releaseCanvasSession(session2)
 
             // 3. Open session 3. It has same path, time, size as session 1.
             // But session 1 is in disk cache.
             val session3 = repository.openCanvasSession(path)!!
-            
+
             assertEquals("Should have detected change via UUID even if metadata matches", uuid2, session3.metadata.uuid)
-            
+
             repository.releaseCanvasSession(session3)
         }
 }
