@@ -356,7 +356,7 @@ class PenInputHandler(
         } else if (currentTool.type != ToolType.SELECT) {
             // Standard Pen Start: Ensure Eraser Channel is DEAD
             // We skip this for SELECT because LASSO select uses the eraser channel for hardware dashed line.
-            Device.currentDevice().setEraserRawDrawingEnabled(false)
+            Device.currentDevice().setEraserRawDrawingEnabled(false, TouchHelper.STROKE_STYLE_DASH)
         }
 
         val worldPts = mapPoint(touchPoint.x, touchPoint.y)
@@ -600,7 +600,7 @@ class PenInputHandler(
                                     val segmentPath = Path()
                                     if (newTouchPoints.isNotEmpty()) {
                                         segmentPath.moveTo(newTouchPoints[0].x, newTouchPoints[0].y)
-                                        for (i in 1 until newTouchPoints.size) segmentPath.lineTo(newTouchPoints[i].x, newTouchPoints[i].y)
+                                        for (i in 1 until newTouchPoints.size) segmentPath.lineTo(newTouchPoints[i].size, newTouchPoints[i].y)
                                     }
                                     val perfectedStroke =
                                         com.alexdremov.notate.model.Stroke(
@@ -705,6 +705,7 @@ class PenInputHandler(
             } else if (currentTool.eraserType == EraserType.LASSO) {
                 lassoPath.lineTo(touchPoint.x, touchPoint.y)
             } else {
+                // Eraser Width should be DOCUMENT-CONSTANT (matching pens).
                 val worldWidth = currentTool.width
                 val eraserType = currentTool.eraserType
                 scope.launch { eraserHandler.processMove(newPoint, worldWidth, eraserType, currentScale) }

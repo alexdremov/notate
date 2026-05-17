@@ -440,8 +440,7 @@ class TileManager(
             cancelStaleJobs(validKeys)
 
             validKeys.forEach { key ->
-                val isVisible = (startCol <= key.col) && (key.col <= endCol) && (startRow <= key.row) && (key.row <= endRow)
-                drawOrQueueTile(canvas, key.col, key.row, key.level, worldTileSize, isVisible, currentVersion, scale)
+                drawOrQueueTile(canvas, key.col, key.row, key.level, worldTileSize, false, currentVersion, scale)
             }
 
             if (CanvasConfig.DEBUG_SHOW_REGIONS) {

@@ -34,7 +34,7 @@ object PenToolConfigurator {
                     // Lasso Eraser -> HW Dash
                     if (currentTool.eraserType == EraserType.LASSO) {
                         setRawDrawingRenderEnabled(true)
-                        Device.currentDevice().setEraserRawDrawingEnabled(true)
+                        Device.currentDevice().setEraserRawDrawingEnabled(true, TouchHelper.STROKE_STYLE_DASH)
                         setStrokeStyle(TouchHelper.STROKE_STYLE_DASH)
                         setStrokeColor(android.graphics.Color.BLACK)
                         setStrokeWidth(5.0f)
@@ -42,7 +42,7 @@ object PenToolConfigurator {
                     } else {
                         // Stroke/Standard Eraser -> SW Cursor
                         setRawDrawingRenderEnabled(false)
-                        Device.currentDevice().setEraserRawDrawingEnabled(false)
+                        Device.currentDevice().setEraserRawDrawingEnabled(false, TouchHelper.STROKE_STYLE_DASH)
                     }
                 }
 
@@ -50,7 +50,7 @@ object PenToolConfigurator {
                     if (currentTool.selectionType == SelectionType.LASSO) {
                         // Lasso Select -> HW Dash
                         setRawDrawingRenderEnabled(true)
-                        Device.currentDevice().setEraserRawDrawingEnabled(true)
+                        Device.currentDevice().setEraserRawDrawingEnabled(true, TouchHelper.STROKE_STYLE_DASH)
                         setStrokeStyle(TouchHelper.STROKE_STYLE_DASH)
                         setStrokeColor(android.graphics.Color.BLACK)
                         setStrokeWidth(2.0f)
@@ -58,14 +58,14 @@ object PenToolConfigurator {
                     } else {
                         // Rect Select -> SW Cursor
                         setRawDrawingRenderEnabled(false)
-                        Device.currentDevice().setEraserRawDrawingEnabled(false)
+                        Device.currentDevice().setEraserRawDrawingEnabled(false, TouchHelper.STROKE_STYLE_DASH)
                     }
                 }
 
                 ToolType.TEXT -> {
                     // Text Tool -> No raw drawing, software cursor or tap detection only
                     setRawDrawingRenderEnabled(false)
-                    Device.currentDevice().setEraserRawDrawingEnabled(false)
+                    Device.currentDevice().setEraserRawDrawingEnabled(false, TouchHelper.STROKE_STYLE_DASH)
                 }
 
                 ToolType.PEN -> {
@@ -78,7 +78,7 @@ object PenToolConfigurator {
                     setRawDrawingRenderEnabled(enableHardware)
 
                     // Ensure eraser channel is off for pen
-                    Device.currentDevice().setEraserRawDrawingEnabled(false)
+                    Device.currentDevice().setEraserRawDrawingEnabled(false, TouchHelper.STROKE_STYLE_DASH)
                 }
             }
         }
