@@ -49,6 +49,12 @@ object PreferencesManager {
     private const val KEY_TAGS = "defined_tags"
     private const val KEY_SORT_OPTION = "browser_sort_option"
     private const val KEY_SCRIBBLE_TO_ERASE = "scribble_to_erase"
+    private const val KEY_PALM_REJECTION = "palm_rejection_enabled"
+    private const val KEY_DISTRACTION_FREE = "distraction_free_enabled"
+    private const val KEY_OPEN_DAILY_ON_START = "open_daily_on_start"
+    private const val KEY_FAVORITES = "favorite_notes"
+    private const val KEY_RECENTS = "recent_notes"
+    private const val MAX_RECENTS = 12
     private const val KEY_SHAPE_PERFECTION_ENABLED = "shape_perfection_enabled"
     private const val KEY_SHAPE_PERFECTION_DELAY = "shape_perfection_delay"
     private const val KEY_ANGLE_SNAPPING = "angle_snapping_enabled"
@@ -189,6 +195,68 @@ object PreferencesManager {
         enabled: Boolean,
     ) {
         getPrefs(context).edit().putBoolean(KEY_SCRIBBLE_TO_ERASE, enabled).apply()
+    }
+
+    fun isPalmRejectionEnabled(context: Context): Boolean = getPrefs(context).getBoolean(KEY_PALM_REJECTION, false)
+
+    fun setPalmRejectionEnabled(
+        context: Context,
+        enabled: Boolean,
+    ) {
+        getPrefs(context).edit().putBoolean(KEY_PALM_REJECTION, enabled).apply()
+    }
+
+    fun isDistractionFreeEnabled(context: Context): Boolean = getPrefs(context).getBoolean(KEY_DISTRACTION_FREE, false)
+
+    fun setDistractionFreeEnabled(
+        context: Context,
+        enabled: Boolean,
+    ) {
+        getPrefs(context).edit().putBoolean(KEY_DISTRACTION_FREE, enabled).apply()
+    }
+
+    fun isOpenDailyOnStartEnabled(context: Context): Boolean = getPrefs(context).getBoolean(KEY_OPEN_DAILY_ON_START, false)
+
+    fun setOpenDailyOnStartEnabled(
+        context: Context,
+        enabled: Boolean,
+    ) {
+        getPrefs(context).edit().putBoolean(KEY_OPEN_DAILY_ON_START, enabled).apply()
+    }
+
+    fun getFavorites(context: Context): Set<String> = getPrefs(context).getStringSet(KEY_FAVORITES, emptySet())?.toSet() ?: emptySet()
+
+    fun isFavorite(
+        context: Context,
+        key: String,
+    ): Boolean = getFavorites(context).contains(key)
+
+    fun setFavorite(
+        context: Context,
+        key: String,
+        favorite: Boolean,
+    ) {
+        val updated = HashSet(getFavorites(context))
+        if (favorite) updated.add(key) else updated.remove(key)
+        getPrefs(context).edit().putStringSet(KEY_FAVORITES, updated).apply()
+    }
+
+    fun getRecents(context: Context): List<String> {
+        val data = getPrefs(context).getString(KEY_RECENTS, null)
+        if (data.isNullOrEmpty()) return emptyList()
+        return data.split("\n").filter { it.isNotEmpty() }
+    }
+
+    fun addRecent(
+        context: Context,
+        key: String,
+    ) {
+        if (key.isEmpty()) return
+        val current = getRecents(context).toMutableList()
+        current.remove(key)
+        current.add(0, key)
+        val capped = current.take(MAX_RECENTS)
+        getPrefs(context).edit().putString(KEY_RECENTS, capped.joinToString("\n")).apply()
     }
 
     fun isCollapsibleToolbarEnabled(context: Context): Boolean = getPrefs(context).getBoolean(KEY_COLLAPSIBLE_TOOLBAR, false)

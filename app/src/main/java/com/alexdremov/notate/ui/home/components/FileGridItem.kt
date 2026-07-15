@@ -12,6 +12,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -41,6 +42,7 @@ fun FileGridItem(
     onClick: () -> Unit,
     onLongClick: () -> Unit,
     enabled: Boolean = true,
+    isFavorite: Boolean = false,
 ) {
     Card(
         modifier =
@@ -138,6 +140,25 @@ fun FileGridItem(
                             contentDescription = "Syncing",
                             tint = if (item.syncStatus == SyncStatus.SYNCING) Color(0xFF007AFF) else Color.Gray,
                             modifier = Modifier.fillMaxSize().rotate(angle),
+                        )
+                    }
+                }
+
+                if (isFavorite) {
+                    Box(
+                        modifier =
+                            Modifier
+                                .align(Alignment.TopStart)
+                                .padding(8.dp)
+                                .size(24.dp)
+                                .background(Color.White.copy(alpha = 0.8f), androidx.compose.foundation.shape.CircleShape)
+                                .padding(2.dp),
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Star,
+                            contentDescription = "Favorite",
+                            tint = Color(0xFFFFB300),
+                            modifier = Modifier.fillMaxSize(),
                         )
                     }
                 }

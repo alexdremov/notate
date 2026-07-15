@@ -56,6 +56,7 @@ import com.alexdremov.notate.ui.settings.InterfaceSettingsPanel
 import com.alexdremov.notate.ui.settings.InterfaceSettingsState
 import com.alexdremov.notate.ui.settings.PdfSettingsPanel
 import com.alexdremov.notate.ui.settings.PdfSettingsState
+import com.alexdremov.notate.ui.settings.SettingsToggle
 
 @Composable
 fun SettingsDialog(
@@ -147,12 +148,17 @@ fun SettingsDialog(
                         var angleSnapping by remember { mutableStateOf(PreferencesManager.isAngleSnappingEnabled(context)) }
                         var axisLocking by remember { mutableStateOf(PreferencesManager.isAxisLockingEnabled(context)) }
                         var shapeDelay by remember { mutableFloatStateOf(PreferencesManager.getShapePerfectionDelay(context).toFloat()) }
+                        var palmRejection by remember { mutableStateOf(PreferencesManager.isPalmRejectionEnabled(context)) }
 
                         InputSettingsPanel(
-                            state = InputSettingsState(scribbleEnabled, shapeEnabled, angleSnapping, axisLocking, shapeDelay),
+                            state = InputSettingsState(scribbleEnabled, shapeEnabled, angleSnapping, axisLocking, shapeDelay, palmRejection),
                             onScribbleChange = {
                                 scribbleEnabled = it
                                 PreferencesManager.setScribbleToEraseEnabled(context, it)
+                            },
+                            onPalmRejectionChange = {
+                                palmRejection = it
+                                PreferencesManager.setPalmRejectionEnabled(context, it)
                             },
                             onShapeChange = {
                                 shapeEnabled = it
@@ -175,6 +181,7 @@ fun SettingsDialog(
 
                     SettingsScreen.INTERFACE -> {
                         var collapsibleToolbar by remember { mutableStateOf(PreferencesManager.isCollapsibleToolbarEnabled(context)) }
+                        var openDailyOnStart by remember { mutableStateOf(PreferencesManager.isOpenDailyOnStartEnabled(context)) }
                         var collapseTimeout by remember {
                             mutableFloatStateOf(
                                 PreferencesManager.getToolbarCollapseTimeout(context).toFloat(),
@@ -190,6 +197,16 @@ fun SettingsDialog(
                             onTimeoutChange = { collapseTimeout = it },
                             onTimeoutFinished = {
                                 PreferencesManager.setToolbarCollapseTimeout(context, collapseTimeout.toLong())
+                            },
+                        )
+
+                        HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                        SettingsToggle(
+                            title = "Open daily note on startup",
+                            checked = openDailyOnStart,
+                            onCheckedChange = {
+                                openDailyOnStart = it
+                                PreferencesManager.setOpenDailyOnStartEnabled(context, it)
                             },
                         )
                     }

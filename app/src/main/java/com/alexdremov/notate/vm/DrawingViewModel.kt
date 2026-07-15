@@ -78,6 +78,9 @@ class DrawingViewModel
         private val _isCollapsibleToolbar = MutableStateFlow(false)
         val isCollapsibleToolbar: StateFlow<Boolean> = _isCollapsibleToolbar.asStateFlow()
 
+        private val _isDistractionFree = MutableStateFlow(false)
+        val isDistractionFree: StateFlow<Boolean> = _isDistractionFree.asStateFlow()
+
         private val _isToolbarCollapsed = MutableStateFlow(false)
         val isToolbarCollapsed: StateFlow<Boolean> = _isToolbarCollapsed.asStateFlow()
 
@@ -95,6 +98,7 @@ class DrawingViewModel
             _isCollapsibleToolbar.value = PreferencesManager.isCollapsibleToolbarEnabled(getApplication())
             _toolbarCollapseTimeout.value = PreferencesManager.getToolbarCollapseTimeout(getApplication())
             _isFixedPageCenterHorizontal.value = PreferencesManager.isFixedPageCenterHorizontalEnabled(getApplication())
+            _isDistractionFree.value = PreferencesManager.isDistractionFreeEnabled(getApplication())
         }
 
         suspend fun loadCanvasSession(path: String) {
@@ -266,6 +270,15 @@ class DrawingViewModel
 
         fun setToolbarCollapsed(collapsed: Boolean) {
             _isToolbarCollapsed.value = collapsed
+        }
+
+        fun setDistractionFree(enabled: Boolean) {
+            _isDistractionFree.value = enabled
+            PreferencesManager.setDistractionFreeEnabled(getApplication(), enabled)
+        }
+
+        fun toggleDistractionFree() {
+            setDistractionFree(!_isDistractionFree.value)
         }
 
         fun setToolbarDragging(dragging: Boolean) {

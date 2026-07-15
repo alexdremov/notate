@@ -27,6 +27,7 @@ data class InputSettingsState(
     val angleSnapping: Boolean,
     val axisLocking: Boolean,
     val shapeDelay: Float,
+    val palmRejection: Boolean,
 )
 
 data class InterfaceSettingsState(
@@ -38,6 +39,7 @@ data class InterfaceSettingsState(
 fun InputSettingsPanel(
     state: InputSettingsState,
     onScribbleChange: (Boolean) -> Unit,
+    onPalmRejectionChange: (Boolean) -> Unit,
     onShapeChange: (Boolean) -> Unit,
     onAngleChange: (Boolean) -> Unit,
     onAxisChange: (Boolean) -> Unit,
@@ -49,6 +51,13 @@ fun InputSettingsPanel(
             title = "Scribble to Erase",
             checked = state.scribbleEnabled,
             onCheckedChange = onScribbleChange,
+        )
+        HorizontalDivider()
+
+        SettingsToggle(
+            title = "Palm Rejection (stylus only)",
+            checked = state.palmRejection,
+            onCheckedChange = onPalmRejectionChange,
         )
         HorizontalDivider()
 

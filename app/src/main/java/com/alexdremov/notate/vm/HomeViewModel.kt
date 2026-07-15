@@ -72,6 +72,12 @@ class HomeViewModel(
     private val _savingPaths = MutableStateFlow<Set<String>>(emptySet())
     val savingPaths: StateFlow<Set<String>> = _savingPaths.asStateFlow()
 
+    private val _favorites = MutableStateFlow<Set<String>>(emptySet())
+    val favorites: StateFlow<Set<String>> = _favorites.asStateFlow()
+
+    private val _recents = MutableStateFlow<List<CanvasItem>>(emptyList())
+    val recents: StateFlow<List<CanvasItem>> = _recents.asStateFlow()
+
     init {
         loadProjects()
         loadTags()
@@ -79,6 +85,46 @@ class HomeViewModel(
         startIndexing()
         observeSaveStatus()
         observeGlobalSync()
+        loadFavorites()
+    }
+
+    private fun loadFavorites() {
+        _favorites.value = PreferencesManager.getFavorites(getApplication())
+    }
+
+    fun toggleFavorite(item: FileSystemItem) {
+        if (item !is CanvasItem) return
+        val key = item.uuid ?: item.path
+        val newFav = !_favorites.value.contains(key)
+        _favorites.value = if (newFav) _favorites.value + key else _favorites.value - key
+        PreferencesManager.setFavorite(getApplication(), key, newFav)
+    }
+
+    private fun loadRecents() {
+        val repo = repository
+        val path = _currentPath.value
+        val atRoot = repo != null && (path == null || path == repo.getRootPath())
+        if (repo == null || !atRoot) {
+            _recents.value = emptyList()
+            return
+        }
+        viewModelScope.launch {
+            val resolved =
+                withContext(Dispatchers.IO) {
+                    val keys = PreferencesManager.getRecents(getApplication())
+                    if (keys.isEmpty()) return@withContext emptyList<CanvasItem>()
+                    val indexed =
+                        try {
+                            repo.getAllIndexedFiles()
+                        } catch (e: Exception) {
+                            emptyList<CanvasItem>()
+                        }
+                    val byUuid = indexed.mapNotNull { c -> c.uuid?.let { it to c } }.toMap()
+                    val byPath = indexed.associateBy { it.path }
+                    keys.mapNotNull { key -> byUuid[key] ?: byPath[key] }
+                }
+            _recents.value = resolved
+        }
     }
 
     private fun observeSaveStatus() {
@@ -519,6 +565,7 @@ class HomeViewModel(
         _currentPath.value = path
         updateTitle()
         updateBreadcrumbs()
+        loadRecents()
         viewModelScope.launch {
             val items =
                 withContext(Dispatchers.IO) {
@@ -741,6 +788,7 @@ class HomeViewModel(
     }
 
     fun refresh() {
+        loadFavorites()
         val repo = repository
         val tag = _selectedTag.value
 

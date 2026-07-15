@@ -27,7 +27,10 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.repeatOnLifecycle
 import com.alexdremov.notate.CanvasActivity
+import androidx.lifecycle.lifecycleScope
 import com.alexdremov.notate.data.CanvasItem
+import com.alexdremov.notate.data.DailyNotesManager
+import com.alexdremov.notate.data.PreferencesManager
 import com.alexdremov.notate.data.ProjectItem
 import com.alexdremov.notate.data.RemoteStorageType
 import com.alexdremov.notate.data.SortOption
@@ -42,6 +45,10 @@ import kotlinx.coroutines.launch
 class MainActivity : ComponentActivity() {
     private val viewModel: HomeViewModel by viewModels()
 
+    companion object {
+        private var didAutoOpenDaily = false
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -50,6 +57,23 @@ class MainActivity : ComponentActivity() {
 
         // Handle incoming intent (e.g. from File Manager)
         handleIntent(intent)
+
+        if (savedInstanceState == null &&
+            !didAutoOpenDaily &&
+            PreferencesManager.isOpenDailyOnStartEnabled(this)
+        ) {
+            didAutoOpenDaily = true
+            lifecycleScope.launch {
+                val path = DailyNotesManager.openOrCreateTodayNote(this@MainActivity)
+                if (path != null) {
+                    startActivity(
+                        Intent(this@MainActivity, CanvasActivity::class.java).apply {
+                            putExtra("CANVAS_PATH", path)
+                        },
+                    )
+                }
+            }
+        }
 
         setContent {
             NotateTheme {
@@ -115,8 +139,11 @@ fun MainScreen(
     val selectedTag by viewModel.selectedTag.collectAsState()
     val sortOption by viewModel.sortOption.collectAsState()
     val savingPaths by viewModel.savingPaths.collectAsState()
+    val favorites by viewModel.favorites.collectAsState()
+    val recents by viewModel.recents.collectAsState()
 
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
     val lifecycleOwner = LocalLifecycleOwner.current
     val activity = androidx.activity.compose.LocalActivity.current as? ComponentActivity
@@ -213,6 +240,20 @@ fun MainScreen(
                 onAddProject = { showNameDialog = DialogType.ADD_PROJECT },
                 onManageTags = { showNameDialog = DialogType.MANAGE_TAGS },
                 onSettingsClick = { showSettingsDialog = true },
+                onTodayClick = {
+                    scope.launch {
+                        val path = DailyNotesManager.openOrCreateTodayNote(context)
+                        if (path != null) {
+                            context.startActivity(
+                                Intent(context, CanvasActivity::class.java).apply {
+                                    putExtra("CANVAS_PATH", path)
+                                },
+                            )
+                        } else {
+                            snackbarHostState.showSnackbar("Add a project first to use Daily Notes")
+                        }
+                    }
+                },
             )
         }
 
@@ -320,6 +361,7 @@ fun MainScreen(
                                     if (isPickerMode && onFilePicked != null) {
                                         onFilePicked(item)
                                     } else {
+                                        PreferencesManager.addRecent(context, item.uuid ?: item.path)
                                         val intent =
                                             Intent(context, CanvasActivity::class.java).apply {
                                                 putExtra("CANVAS_PATH", item.path)
@@ -333,6 +375,9 @@ fun MainScreen(
                         onItemRename = { item, newName -> if (!isPickerMode) viewModel.renameItem(item, newName) },
                         onItemDuplicate = { item -> if (!isPickerMode) viewModel.duplicateItem(item) },
                         onSetFileTags = { item, newTags -> if (!isPickerMode) viewModel.setFileTags(item, newTags) },
+                        favorites = favorites,
+                        recents = recents,
+                        onToggleFavorite = { if (!isPickerMode) viewModel.toggleFavorite(it) },
                     )
                 }
 

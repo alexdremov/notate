@@ -4,6 +4,7 @@ package com.alexdremov.notate.ui.home
 
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
@@ -13,9 +14,12 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.items as recentItems
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.FilterChip
@@ -59,6 +63,9 @@ fun FileBrowserScreen(
     onItemRename: (FileSystemItem, String) -> Unit,
     onItemDuplicate: (FileSystemItem) -> Unit,
     onSetFileTags: (FileSystemItem, List<String>) -> Unit = { _, _ -> },
+    favorites: Set<String> = emptySet(),
+    recents: List<CanvasItem> = emptyList(),
+    onToggleFavorite: (FileSystemItem) -> Unit = {},
 ) {
     var itemToDelete by remember { mutableStateOf<FileSystemItem?>(null) }
     var managingItemPath by remember { mutableStateOf<String?>(null) }
@@ -70,6 +77,31 @@ fun FileBrowserScreen(
             onItemClick = onBreadcrumbClick,
             modifier = Modifier.fillMaxWidth(),
         )
+
+        val atRoot = breadcrumbs.size <= 1
+        if (recents.isNotEmpty() && atRoot) {
+            Text(
+                text = "Recent",
+                style = MaterialTheme.typography.titleSmall,
+                modifier = Modifier.padding(start = 16.dp, top = 8.dp),
+            )
+            LazyRow(
+                contentPadding = PaddingValues(horizontal = 8.dp),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                recentItems(recents) { recent ->
+                    Box(modifier = Modifier.width(160.dp)) {
+                        FileGridItem(
+                            item = recent,
+                            isFavorite = favorites.contains(recent.uuid ?: recent.path),
+                            onClick = { onItemClick(recent) },
+                            onLongClick = { if (!isReadOnly) managingItemPath = recent.path },
+                        )
+                    }
+                }
+            }
+            HorizontalDivider()
+        }
 
         if (items.isEmpty()) {
             EmptyState("Folder is empty.\nCreate a folder or canvas.")
@@ -90,6 +122,7 @@ fun FileBrowserScreen(
                     FileGridItem(
                         item = it,
                         enabled = isEnabled,
+                        isFavorite = it is CanvasItem && favorites.contains(it.uuid ?: it.path),
                         onClick = { onItemClick(it) },
                         onLongClick = {
                             if (isEnabled && !isReadOnly) managingItemPath = it.path
@@ -101,7 +134,7 @@ fun FileBrowserScreen(
     }
 
     // Context Menu / Options Dialog
-    val currentItem = if (managingItemPath != null) items.find { it.path == managingItemPath } else null
+    val currentItem = if (managingItemPath != null) (items + recents).find { it.path == managingItemPath } else null
 
     if (currentItem != null) {
         AlertDialog(
@@ -148,6 +181,20 @@ fun FileBrowserScreen(
                         modifier = Modifier.fillMaxWidth(),
                     ) {
                         Text("Delete", color = Color.Red)
+                    }
+
+                    if (currentItem is CanvasItem) {
+                        val isFav = favorites.contains(currentItem.uuid ?: currentItem.path)
+                        Spacer(modifier = Modifier.height(8.dp))
+                        OutlinedButton(
+                            onClick = {
+                                onToggleFavorite(currentItem)
+                                managingItemPath = null
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text(if (isFav) "★ Unfavorite" else "☆ Favorite", color = Color.Black)
+                        }
                     }
 
                     if (currentItem is CanvasItem && allTags.isNotEmpty()) {

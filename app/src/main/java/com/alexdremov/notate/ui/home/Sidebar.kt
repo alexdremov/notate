@@ -24,6 +24,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Circle
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Today
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -52,6 +53,7 @@ fun Sidebar(
     onAddProject: () -> Unit,
     onManageTags: () -> Unit,
     onSettingsClick: () -> Unit,
+    onTodayClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Surface(
@@ -129,6 +131,12 @@ fun Sidebar(
 
             // Bottom Settings Area
             HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+            SidebarItem(
+                text = "Today",
+                icon = Icons.Default.Today,
+                isSelected = false,
+                onClick = onTodayClick,
+            )
             SidebarItem(
                 text = "Settings",
                 icon = Icons.Default.Settings,
