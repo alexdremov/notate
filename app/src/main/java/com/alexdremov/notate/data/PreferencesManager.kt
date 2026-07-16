@@ -6,8 +6,10 @@ import android.content.Context
 import android.content.SharedPreferences
 import android.util.Base64
 import com.alexdremov.notate.model.PenTool
+import com.alexdremov.notate.model.StylusButtonAction
 import com.alexdremov.notate.model.Tag
 import com.alexdremov.notate.model.ToolbarItem
+import com.alexdremov.notate.model.TwoFingerTapAction
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.decodeFromString
@@ -65,6 +67,8 @@ object PreferencesManager {
     private const val KEY_PDF_EXPORT_SCALE = "pdf_export_scale"
     private const val KEY_SYNC_PDF_TYPE = "sync_pdf_type"
     private const val KEY_FIXED_PAGE_CENTER_HORIZONTAL = "fixed_page_center_horizontal"
+    private const val KEY_TWO_FINGER_TAP_ACTION = "two_finger_tap_action"
+    private const val KEY_STYLUS_BUTTON_ACTION = "stylus_button_action"
 
     // Debug Preferences
     private const val KEY_DEBUG_USE_SIMPLE_RENDERER = "debug_use_simple_renderer"
@@ -94,6 +98,38 @@ object PreferencesManager {
         option: SortOption,
     ) {
         getPrefs(context).edit().putString(KEY_SORT_OPTION, option.name).apply()
+    }
+
+    fun getTwoFingerTapAction(context: Context): TwoFingerTapAction {
+        val name = getPrefs(context).getString(KEY_TWO_FINGER_TAP_ACTION, TwoFingerTapAction.UNDO.name)
+        return try {
+            TwoFingerTapAction.valueOf(name ?: TwoFingerTapAction.UNDO.name)
+        } catch (e: Exception) {
+            TwoFingerTapAction.UNDO
+        }
+    }
+
+    fun setTwoFingerTapAction(
+        context: Context,
+        action: TwoFingerTapAction,
+    ) {
+        getPrefs(context).edit().putString(KEY_TWO_FINGER_TAP_ACTION, action.name).apply()
+    }
+
+    fun getStylusButtonAction(context: Context): StylusButtonAction {
+        val name = getPrefs(context).getString(KEY_STYLUS_BUTTON_ACTION, StylusButtonAction.TEMPORARY_ERASER.name)
+        return try {
+            StylusButtonAction.valueOf(name ?: StylusButtonAction.TEMPORARY_ERASER.name)
+        } catch (e: Exception) {
+            StylusButtonAction.TEMPORARY_ERASER
+        }
+    }
+
+    fun setStylusButtonAction(
+        context: Context,
+        action: StylusButtonAction,
+    ) {
+        getPrefs(context).edit().putString(KEY_STYLUS_BUTTON_ACTION, action.name).apply()
     }
 
     fun getPdfExportScale(context: Context): Float = getPrefs(context).getFloat(KEY_PDF_EXPORT_SCALE, 2.0f)

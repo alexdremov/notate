@@ -21,8 +21,10 @@ import com.alexdremov.notate.data.PreferencesManager
 import com.alexdremov.notate.model.InfiniteCanvasModel
 import com.alexdremov.notate.model.PenTool
 import com.alexdremov.notate.model.Stroke
+import com.alexdremov.notate.model.StylusButtonAction
 import com.alexdremov.notate.model.TextItem
 import com.alexdremov.notate.model.ToolType
+import com.alexdremov.notate.model.TwoFingerTapAction
 import com.alexdremov.notate.ui.controller.CanvasControllerImpl
 import com.alexdremov.notate.ui.controller.ViewportController
 import com.alexdremov.notate.ui.input.PenInputHandler
@@ -120,6 +122,12 @@ class OnyxCanvasView
         private var isThreeFingerTapCheck = false
         private val threeFingerStartPts = Array(3) { floatArrayOf(0f, 0f) }
         private val threeFingerPointerIds = intArrayOf(-1, -1, -1)
+
+        @Volatile
+        private var twoFingerTapAction: TwoFingerTapAction = PreferencesManager.getTwoFingerTapAction(context)
+
+        @Volatile
+        private var stylusButtonAction: StylusButtonAction = PreferencesManager.getStylusButtonAction(context)
 
         private var lastStrokeEndTime = 0L
 
@@ -473,7 +481,22 @@ class OnyxCanvasView
                     if (duration < CanvasConfig.TWO_FINGER_TAP_MAX_DELAY) {
                         if (!isTapSlopExceeded(event)) {
                             if (now - lastTwoFingerTapTime < CanvasConfig.TWO_FINGER_TAP_DOUBLE_TIMEOUT) {
-                                viewScope.launch { undo() }
+                                when (twoFingerTapAction) {
+                                    TwoFingerTapAction.UNDO -> viewScope.launch { undo() }
+                                    TwoFingerTapAction.REDO -> viewScope.launch { redo() }
+                                    TwoFingerTapAction.PASTE -> {
+                                        val inv = Matrix()
+                                        matrix.invert(inv)
+                                        val pts =
+                                            floatArrayOf(
+                                                (twoFingerStartPt1[0] + twoFingerStartPt2[0]) / 2f,
+                                                (twoFingerStartPt1[1] + twoFingerStartPt2[1]) / 2f,
+                                            )
+                                        inv.mapPoints(pts)
+                                        viewScope.launch { canvasController.paste(pts[0], pts[1]) }
+                                    }
+                                    TwoFingerTapAction.NONE -> {}
+                                }
                                 lastTwoFingerTapTime = 0L
                             } else {
                                 lastTwoFingerTapTime = now
@@ -565,7 +588,8 @@ class OnyxCanvasView
                 MotionEvent.ACTION_HOVER_MOVE -> {
                     val toolType = event.getToolType(0)
                     val isEraserTail = toolType == MotionEvent.TOOL_TYPE_ERASER
-                    val isStylusButton = (event.buttonState and MotionEvent.BUTTON_STYLUS_PRIMARY) != 0
+                    val isStylusButton = (event.buttonState and MotionEvent.BUTTON_STYLUS_PRIMARY) != 0 &&
+                        stylusButtonAction == StylusButtonAction.TEMPORARY_ERASER
                     if (isEraserTail || isStylusButton) penInputHandler.prepareEraser() else penInputHandler.finishEraser()
                     penInputHandler.onHoverMove(event)
                 }
@@ -788,6 +812,14 @@ class OnyxCanvasView
 
         fun setCursorView(view: CursorView) {
             penInputHandler.setCursorView(view)
+        }
+
+        fun setTwoFingerTapAction(action: TwoFingerTapAction) {
+            twoFingerTapAction = action
+        }
+
+        fun setStylusButtonAction(action: StylusButtonAction) {
+            stylusButtonAction = action
         }
 
         suspend fun setBackgroundStyle(style: com.alexdremov.notate.model.BackgroundStyle) {

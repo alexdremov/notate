@@ -149,9 +149,21 @@ fun SettingsDialog(
                         var axisLocking by remember { mutableStateOf(PreferencesManager.isAxisLockingEnabled(context)) }
                         var shapeDelay by remember { mutableFloatStateOf(PreferencesManager.getShapePerfectionDelay(context).toFloat()) }
                         var palmRejection by remember { mutableStateOf(PreferencesManager.isPalmRejectionEnabled(context)) }
+                        var twoFingerTapAction by remember { mutableStateOf(PreferencesManager.getTwoFingerTapAction(context)) }
+                        var stylusButtonAction by remember { mutableStateOf(PreferencesManager.getStylusButtonAction(context)) }
 
                         InputSettingsPanel(
-                            state = InputSettingsState(scribbleEnabled, shapeEnabled, angleSnapping, axisLocking, shapeDelay, palmRejection),
+                            state =
+                                InputSettingsState(
+                                    scribbleEnabled,
+                                    shapeEnabled,
+                                    angleSnapping,
+                                    axisLocking,
+                                    shapeDelay,
+                                    palmRejection,
+                                    twoFingerTapAction,
+                                    stylusButtonAction,
+                                ),
                             onScribbleChange = {
                                 scribbleEnabled = it
                                 PreferencesManager.setScribbleToEraseEnabled(context, it)
@@ -175,6 +187,14 @@ fun SettingsDialog(
                             onShapeDelayChange = { shapeDelay = it },
                             onShapeDelayFinished = {
                                 PreferencesManager.setShapePerfectionDelay(context, shapeDelay.toLong())
+                            },
+                            onTwoFingerTapChange = {
+                                twoFingerTapAction = it
+                                PreferencesManager.setTwoFingerTapAction(context, it)
+                            },
+                            onStylusButtonChange = {
+                                stylusButtonAction = it
+                                PreferencesManager.setStylusButtonAction(context, it)
                             },
                         )
                     }

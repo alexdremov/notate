@@ -20,6 +20,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
+import com.alexdremov.notate.model.StylusButtonAction
+import com.alexdremov.notate.model.TwoFingerTapAction
 
 data class InputSettingsState(
     val scribbleEnabled: Boolean,
@@ -28,6 +30,8 @@ data class InputSettingsState(
     val axisLocking: Boolean,
     val shapeDelay: Float,
     val palmRejection: Boolean,
+    val twoFingerTapAction: TwoFingerTapAction,
+    val stylusButtonAction: StylusButtonAction,
 )
 
 data class InterfaceSettingsState(
@@ -45,6 +49,8 @@ fun InputSettingsPanel(
     onAxisChange: (Boolean) -> Unit,
     onShapeDelayChange: (Float) -> Unit,
     onShapeDelayFinished: () -> Unit,
+    onTwoFingerTapChange: (TwoFingerTapAction) -> Unit,
+    onStylusButtonChange: (StylusButtonAction) -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
         SettingsToggle(
@@ -98,6 +104,32 @@ fun InputSettingsPanel(
             title = "Axis Locking",
             checked = state.axisLocking,
             onCheckedChange = onAxisChange,
+        )
+
+        HorizontalDivider()
+        SettingsRadioGroup(
+            title = "Two-finger tap",
+            options =
+                listOf(
+                    TwoFingerTapAction.UNDO to "Undo",
+                    TwoFingerTapAction.REDO to "Redo",
+                    TwoFingerTapAction.PASTE to "Paste",
+                    TwoFingerTapAction.NONE to "None",
+                ),
+            selected = state.twoFingerTapAction,
+            onSelect = onTwoFingerTapChange,
+        )
+
+        HorizontalDivider()
+        SettingsRadioGroup(
+            title = "Stylus side button",
+            options =
+                listOf(
+                    StylusButtonAction.TEMPORARY_ERASER to "Temporary eraser",
+                    StylusButtonAction.NONE to "Off",
+                ),
+            selected = state.stylusButtonAction,
+            onSelect = onStylusButtonChange,
         )
     }
 }
@@ -158,6 +190,36 @@ fun SettingsToggle(
             checked = checked,
             onCheckedChange = onCheckedChange,
         )
+    }
+}
+
+@Composable
+private fun <T> SettingsRadioGroup(
+    title: String,
+    options: List<Pair<T, String>>,
+    selected: T,
+    onSelect: (T) -> Unit,
+) {
+    Column {
+        Text(
+            text = title,
+            style = MaterialTheme.typography.bodyLarge,
+        )
+        options.forEach { (value, label) ->
+            Row(
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .clickable { onSelect(value) },
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                RadioButton(
+                    selected = selected == value,
+                    onClick = { onSelect(value) },
+                )
+                Text(label)
+            }
+        }
     }
 }
 

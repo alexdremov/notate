@@ -456,6 +456,12 @@ class CanvasActivity : AppCompatActivity() {
                 onPalmRejectionChanged = { enabled ->
                     binding.canvasView.setPalmRejectionEnabled(enabled)
                 },
+                onTwoFingerTapActionChange = { action ->
+                    binding.canvasView.setTwoFingerTapAction(action)
+                },
+                onStylusButtonActionChange = { action ->
+                    binding.canvasView.setStylusButtonAction(action)
+                },
             )
         binding.canvasView.onStrokeStarted = {
             activePenPopup?.dismiss()
@@ -546,6 +552,12 @@ class CanvasActivity : AppCompatActivity() {
         binding.canvasView.onThreeFingerTap = {
             viewModel.toggleDistractionFree()
         }
+        binding.canvasView.setTwoFingerTapAction(
+            com.alexdremov.notate.data.PreferencesManager.getTwoFingerTapAction(this),
+        )
+        binding.canvasView.setStylusButtonAction(
+            com.alexdremov.notate.data.PreferencesManager.getStylusButtonAction(this),
+        )
 
         // ViewModel observation
         lifecycleScope.launch {
