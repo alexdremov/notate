@@ -116,6 +116,9 @@ class SyncManager(
         }
 
         private fun normalizePath(path: String): String = path.replace("\\", "/")
+
+        private fun remotePathFor(base: String, rel: String): String =
+            "${base.trimEnd('/')}/${normalizePath(rel)}"
     }
 
     suspend fun syncProject(
@@ -206,6 +209,7 @@ class SyncManager(
         // 1. Scan Local
         updateProgress(5, "Scanning local files...")
         val localFiles = scanLocalFiles(projectId)
+            ?: throw IllegalStateException("Project $projectId not found in local projects")
 
         // 2. Load Metadata
         val syncMetadata = SyncPreferencesManager.getProjectSyncMetadata(context, projectId)
@@ -215,37 +219,50 @@ class SyncManager(
         updateProgress(10, "Processing pending deletions...")
         processPendingDeletions(projectId, config, provider, localFiles, fileStates)
 
-        // 4. Scan Remote
+        // 4. Scan Remote (precompute pending deletions set to avoid repeated SharedPrefs reads)
         updateProgress(15, "Scanning remote storage...")
+        val pendingDeletionPaths =
+            SyncPreferencesManager.getPendingDeletions(context)
+                .filter { it.projectId == projectId }
+                .map { normalizePath(it.relativePath) }
+                .toSet()
+
         val allRemoteFiles =
             scanRemoteFilesRecursively(provider, config.remotePath, "")
-                .filterNot { remote ->
-                    SyncPreferencesManager
-                        .getPendingDeletions(context)
-                        .any { it.projectId == projectId && normalizePath(it.relativePath) == normalizePath(remote.relativePath) }
-                }
+                .filterNot { normalizePath(it.relativePath) in pendingDeletionPaths }
 
         Logger.d(TAG, "Found ${localFiles.size} local and ${allRemoteFiles.size} remote files")
 
         // 5. Sync Logic
         val totalSteps = localFiles.size + allRemoteFiles.size
+        if (totalSteps == 0) {
+            // Nothing to sync — finalize immediately
+            SyncPreferencesManager.saveProjectSyncMetadata(context, projectId, syncMetadata.copy(files = fileStates))
+            SyncPreferencesManager.updateProjectSyncConfig(context, config.copy(lastSyncTimestamp = System.currentTimeMillis()))
+            updateProgress(100, "Sync complete")
+            return
+        }
+
         var currentStep = 0
 
         // 5a. Uploads
         for (local in localFiles) {
-            if (SaveStatusManager.isSaving(local.path)) continue
+            if (SaveStatusManager.isSaving(local.path)) {
+                currentStep++
+                continue
+            }
 
             val relPath = normalizePath(local.relativePath)
             val state = fileStates[relPath]
             val remote = allRemoteFiles.find { normalizePath(it.relativePath) == relPath }
 
             if (state == null || local.lastModified > state.lastLocalModified || remote == null) {
-                val progress = 20 + (currentStep * 60 / totalSteps)
-                val stepSize = 60 / totalSteps
+                val progress = 20 + (currentStep * 60.0 / totalSteps).toInt()
+                val stepSize = 60.0 / totalSteps
                 updateProgress(progress, "Uploading ${local.name}...")
 
                 uploadFileWithRetries(local, config, provider, fileStates) { p, m ->
-                    val subProgress = progress + (p * stepSize / 100)
+                    val subProgress = (progress + (p * stepSize / 100)).toInt()
                     updateProgress(subProgress, "${local.name}: $m")
                 }
             }
@@ -272,7 +289,7 @@ class SyncManager(
             }
 
             if (local == null || state == null || remote.lastModified > state.lastRemoteModified) {
-                val progress = 20 + (currentStep * 60 / totalSteps)
+                val progress = 20 + (currentStep * 60.0 / totalSteps).toInt()
                 updateProgress(progress, "Downloading ${remote.name}...")
                 downloadFile(remoteWrap, projectId, provider, fileStates)
             }
@@ -302,16 +319,25 @@ class SyncManager(
                 continue
             }
 
-            val remotePath = "${config.remotePath.trimEnd('/')}/$relPath"
+            val remotePath = remotePathFor(config.remotePath, relPath)
             try {
-                provider.deleteFile(remotePath)
-                if (config.syncPdf && relPath.endsWith(".notate")) {
-                    val pdfPath = relPath.substringBeforeLast(".") + ".pdf"
-                    provider.deleteFile("${config.remotePath.trimEnd('/')}/$pdfPath")
+                if (provider.deleteFile(remotePath)) {
+                    if (config.syncPdf && relPath.endsWith(".notate")) {
+                        val pdfPath = relPath.substringBeforeLast(".") + ".pdf"
+                        try {
+                            provider.deleteFile(remotePathFor(config.remotePath, pdfPath))
+                        } catch (e: Exception) {
+                            if (e is CancellationException) throw e
+                            Logger.w(TAG, "Failed to delete remote PDF for $relPath", e)
+                        }
+                    }
+                    SyncPreferencesManager.removePendingDeletion(context, projectId, deletion.relativePath)
+                    fileStates.remove(relPath)
+                } else {
+                    Logger.w(TAG, "deleteFile returned false for $relPath, will retry next sync")
                 }
-                SyncPreferencesManager.removePendingDeletion(context, projectId, deletion.relativePath)
-                fileStates.remove(relPath)
             } catch (e: java.io.FileNotFoundException) {
+                // Already gone — treat as success
                 SyncPreferencesManager.removePendingDeletion(context, projectId, deletion.relativePath)
                 fileStates.remove(relPath)
             } catch (e: Exception) {
@@ -329,9 +355,17 @@ class SyncManager(
         progressCallback: ((Int, String) -> Unit)? = null,
     ) {
         val relPath = normalizePath(local.relativePath)
-        val remotePath = "${config.remotePath.trimEnd('/')}/$relPath"
+        val remotePath = remotePathFor(config.remotePath, relPath)
+        val parentRemotePath = remotePath.substringBeforeLast('/')
 
-        provider.createDirectory(remotePath.substringBeforeLast('/'))
+        try {
+            if (!provider.createDirectory(parentRemotePath)) {
+                Logger.w(TAG, "createDirectory returned false for $parentRemotePath, attempting upload anyway")
+            }
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
+            Logger.w(TAG, "Failed to ensure parent directory $parentRemotePath", e)
+        }
 
         var success = false
         var lastErr: Exception? = null
@@ -356,7 +390,7 @@ class SyncManager(
 
         // Refresh remote state to get exact remote timestamp
         try {
-            val remoteItems = provider.listFiles(remotePath.substringBeforeLast('/'))
+            val remoteItems = provider.listFiles(parentRemotePath)
             remoteItems.find { it.name == local.name }?.let {
                 fileStates[relPath] =
                     FileSyncState(
@@ -437,8 +471,8 @@ class SyncManager(
         }
     }
 
-    private fun scanLocalFiles(projectId: String): List<LocalFile> {
-        val project = PreferencesManager.getProjects(context).find { it.id == projectId } ?: return emptyList()
+    private fun scanLocalFiles(projectId: String): List<LocalFile>? {
+        val project = PreferencesManager.getProjects(context).find { it.id == projectId } ?: return null
         val result = mutableListOf<LocalFile>()
         if (project.uri.startsWith("content://")) {
             DocumentFile.fromTreeUri(context, Uri.parse(project.uri))?.let {
@@ -457,14 +491,20 @@ class SyncManager(
         relative: String,
     ): List<RemoteFileWithRelativePath> {
         val results = mutableListOf<RemoteFileWithRelativePath>()
-        val items = provider.listFiles(currentPath)
-        for (item in items) {
-            val itemRel = if (relative.isEmpty()) item.name else "$relative/${item.name}"
-            if (item.isDirectory) {
-                results.addAll(scanRemoteFilesRecursively(provider, "$currentPath/${item.name}", itemRel))
-            } else {
-                results.add(RemoteFileWithRelativePath(item, itemRel))
+        try {
+            val items = provider.listFiles(currentPath)
+            for (item in items) {
+                val itemRel = if (relative.isEmpty()) item.name else "$relative/${item.name}"
+                if (item.isDirectory) {
+                    results.addAll(scanRemoteFilesRecursively(provider, "$currentPath/${item.name}", itemRel))
+                } else {
+                    results.add(RemoteFileWithRelativePath(item, itemRel))
+                }
             }
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
+            Logger.w(TAG, "Error scanning remote directory: $currentPath", e)
+            throw e
         }
         return results
     }
@@ -478,10 +518,11 @@ class SyncManager(
         var session: CanvasSession? = null
         try {
             session = canvasRepository.openCanvasSession(local.path) ?: return
+            val openSession = session
             val model =
                 InfiniteCanvasModel().apply {
-                    initializeSession(session!!.regionManager)
-                    loadFromCanvasData(session!!.metadata)
+                    initializeSession(openSession.regionManager)
+                    loadFromCanvasData(openSession.metadata)
                 }
 
             val pdfRelPath = normalizePath(local.relativePath).substringBeforeLast(".") + ".pdf"
@@ -508,14 +549,23 @@ class SyncManager(
             )
 
             val bytes = out.toByteArray()
+            var uploaded = false
             for (attempt in 1..3) {
                 try {
-                    if (provider.uploadFile(remotePdfPath, ByteArrayInputStream(bytes), bytes.size.toLong())) break
+                    if (provider.uploadFile(remotePdfPath, ByteArrayInputStream(bytes), bytes.size.toLong())) {
+                        uploaded = true
+                        break
+                    }
+                    Logger.w(TAG, "PDF upload attempt $attempt returned false for ${local.name}")
+                    delay(1000L * attempt)
                 } catch (e: Exception) {
                     if (e is CancellationException) throw e
-                    if (attempt == 3) Logger.w(TAG, "Failed to upload PDF for ${local.name}", e)
+                    Logger.w(TAG, "PDF upload attempt $attempt failed for ${local.name}", e)
                     delay(1000L * attempt)
                 }
+            }
+            if (!uploaded) {
+                Logger.e(TAG, "Failed to upload PDF for ${local.name} after 3 attempts")
             }
         } catch (e: Exception) {
             if (e is CancellationException) throw e
@@ -531,26 +581,32 @@ class SyncManager(
     ): Boolean =
         withContext(ioDispatcher) {
             globalSyncSemaphore.withPermit {
-                val config = SyncPreferencesManager.getProjectSyncConfig(context, projectId) ?: return@withContext false
-                if (!config.isEnabled) return@withContext false
+                val config = SyncPreferencesManager.getProjectSyncConfig(context, projectId)
+                if (config == null || !config.isEnabled) return@withPermit false
 
                 val storage =
-                    SyncPreferencesManager.getRemoteStorages(context).find { it.id == config.remoteStorageId } ?: return@withContext false
+                    SyncPreferencesManager.getRemoteStorages(context).find { it.id == config.remoteStorageId }
+                        ?: return@withPermit false
                 val password = SyncPreferencesManager.getPassword(context, storage.id) ?: ""
                 val provider = providerFactory(context, storage, password)
 
                 val rel = normalizePath(relativePath)
-                val remotePath = "${config.remotePath.trimEnd('/')}/$rel"
+                val remotePath = remotePathFor(config.remotePath, rel)
 
                 try {
                     if (provider.deleteFile(remotePath)) {
                         if (config.syncPdf && rel.endsWith(".notate")) {
-                            provider.deleteFile("${config.remotePath.trimEnd('/')}/${rel.substringBeforeLast(".")}.pdf")
+                            try {
+                                provider.deleteFile(remotePathFor(config.remotePath, rel.substringBeforeLast(".") + ".pdf"))
+                            } catch (e: Exception) {
+                                if (e is CancellationException) throw e
+                                Logger.w(TAG, "Failed to delete remote PDF for $rel", e)
+                            }
                         }
                         val metadata = SyncPreferencesManager.getProjectSyncMetadata(context, projectId)
                         val newFiles = metadata.files.toMutableMap().apply { remove(rel) }
                         SyncPreferencesManager.saveProjectSyncMetadata(context, projectId, metadata.copy(files = newFiles))
-                        return@withContext true
+                        return@withPermit true
                     }
                 } catch (e: Exception) {
                     if (e is CancellationException) throw e
@@ -565,16 +621,23 @@ class SyncManager(
             val projects = PreferencesManager.getProjects(context)
             for (project in projects) {
                 if (filePath.startsWith("content://") && project.uri.startsWith("content://")) {
-                    if (filePath.contains(project.uri)) return@withContext project.id
+                    if (filePath.contains(project.uri)) {
+                        Logger.d(TAG, "Match found via SAF prefix for $filePath")
+                        return@withContext project.id
+                    }
                 } else if (!filePath.startsWith("content://") && !project.uri.startsWith("content://")) {
                     try {
                         val fileCan = File(filePath).canonicalPath
                         val projCan = File(project.uri).canonicalPath
-                        if (fileCan.startsWith(projCan)) return@withContext project.id
+                        if (fileCan.startsWith(projCan)) {
+                            Logger.d(TAG, "Match found via File path for $filePath")
+                            return@withContext project.id
+                        }
                     } catch (ignored: Exception) {
                     }
                 }
             }
+            Logger.w(TAG, "No matching project found for $filePath")
             null
         }
 
