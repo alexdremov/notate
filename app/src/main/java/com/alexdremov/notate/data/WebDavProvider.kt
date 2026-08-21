@@ -130,7 +130,7 @@ class WebDavProvider(
     ): Boolean =
         withContext(Dispatchers.IO) {
             val url = buildUrl(remotePath)
-            Logger.d("WebDavProvider", "Starting upload to $url (size: $size)")
+            Logger.d("WebDavProvider", "Starting upload for remotePath '$remotePath' -> resolved URL: $url (size: $size bytes)")
 
             val body =
                 object : RequestBody() {
