@@ -71,9 +71,16 @@ class GoogleDriveProvider(
             val fileName = parts.last()
             val folderPath = parts.dropLast(1).joinToString("/")
 
-            val folderId = findOrCreateFolder(folderPath) ?: return@withContext false
+            val folderId = findOrCreateFolder(folderPath) ?: run {
+                Logger.w("GoogleDriveProvider", "Failed to find or create folder for remotePath: '$remotePath' (folderPath: '$folderPath')")
+                return@withContext false
+            }
 
             val existingFile = findFileInFolder(folderId, fileName)
+            Logger.d(
+                "GoogleDriveProvider",
+                "uploadFile: remotePath = '$remotePath', folder = '$folderPath' (id: $folderId), file = '$fileName', existing = ${existingFile != null}",
+            )
 
             val fileMetadata =
                 com.google.api.services.drive.model.File().apply {
@@ -85,8 +92,10 @@ class GoogleDriveProvider(
 
             if (existingFile != null) {
                 service.files().update(existingFile.id, null, mediaContent).execute()
+                Logger.d("GoogleDriveProvider", "Updated file in Google Drive: $fileName (id: ${existingFile.id}) in folder $folderId")
             } else {
-                service.files().create(fileMetadata, mediaContent).execute()
+                val created = service.files().create(fileMetadata, mediaContent).execute()
+                Logger.d("GoogleDriveProvider", "Created file in Google Drive: $fileName (id: ${created.id}) in folder $folderId")
             }
             true
         }

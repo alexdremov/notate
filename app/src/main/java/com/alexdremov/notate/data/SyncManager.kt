@@ -115,10 +115,14 @@ class SyncManager(
             return set
         }
 
-        private fun normalizePath(path: String): String = path.replace("\\", "/")
+        private fun normalizePath(path: String): String =
+            path.replace("\\", "/").trim().trimStart('/')
 
-        private fun remotePathFor(base: String, rel: String): String =
-            "${base.trimEnd('/')}/${normalizePath(rel)}"
+        private fun remotePathFor(base: String, rel: String): String {
+            val cleanBase = base.replace("\\", "/").trim().trim('/')
+            val cleanRel = normalizePath(rel)
+            return if (cleanBase.isEmpty()) cleanRel else "$cleanBase/$cleanRel"
+        }
     }
 
     suspend fun syncProject(
@@ -257,6 +261,11 @@ class SyncManager(
             val remote = allRemoteFiles.find { normalizePath(it.relativePath) == relPath }
 
             if (state == null || local.lastModified > state.lastLocalModified || remote == null) {
+                val remotePath = remotePathFor(config.remotePath, relPath)
+                Logger.d(
+                    TAG,
+                    "Queuing upload: local '${local.path}' (relative: '$relPath', modified: ${local.lastModified}) -> remote '$remotePath'",
+                )
                 val progress = 20 + (currentStep * 60.0 / totalSteps).toInt()
                 val stepSize = 60.0 / totalSteps
                 updateProgress(progress, "Uploading ${local.name}...")
@@ -356,28 +365,42 @@ class SyncManager(
     ) {
         val relPath = normalizePath(local.relativePath)
         val remotePath = remotePathFor(config.remotePath, relPath)
-        val parentRemotePath = remotePath.substringBeforeLast('/')
+        val parentRemotePath = if (remotePath.contains('/')) remotePath.substringBeforeLast('/') else ""
 
-        try {
-            if (!provider.createDirectory(parentRemotePath)) {
-                Logger.w(TAG, "createDirectory returned false for $parentRemotePath, attempting upload anyway")
+        Logger.d(
+            TAG,
+            "uploadFileWithRetries: local path = '${local.path}', size = ${local.size} B -> remote path = '$remotePath' (parent = '$parentRemotePath')",
+        )
+
+        if (parentRemotePath.isNotEmpty()) {
+            try {
+                if (!provider.createDirectory(parentRemotePath)) {
+                    Logger.w(TAG, "createDirectory returned false for $parentRemotePath, attempting upload anyway")
+                }
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                Logger.w(TAG, "Failed to ensure parent directory $parentRemotePath", e)
             }
-        } catch (e: Exception) {
-            if (e is CancellationException) throw e
-            Logger.w(TAG, "Failed to ensure parent directory $parentRemotePath", e)
         }
 
         var success = false
         var lastErr: Exception? = null
         for (attempt in 1..3) {
             try {
+                Logger.d(TAG, "Upload attempt $attempt/3: '${local.path}' -> '$remotePath'")
                 local.openInputStream()?.use { input ->
                     success = provider.uploadFile(remotePath, input, local.size)
                 }
-                if (success) break
+                if (success) {
+                    Logger.d(TAG, "Upload succeeded on attempt $attempt: '${local.path}' -> '$remotePath'")
+                    break
+                }
+                Logger.w(TAG, "Upload attempt $attempt returned false for '${local.path}' -> '$remotePath'")
+                delay(1000L * attempt)
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
                 lastErr = e
+                Logger.w(TAG, "Upload attempt $attempt failed for '${local.path}' -> '$remotePath'", e)
                 delay(1000L * attempt)
             }
         }
@@ -461,13 +484,15 @@ class SyncManager(
         provider: RemoteStorageProvider,
         path: String,
     ) {
+        val cleanPath = path.replace("\\", "/").trim().trim('/')
+        if (cleanPath.isEmpty()) return
         try {
-            provider.listFiles(path)
+            provider.listFiles(cleanPath)
         } catch (e: java.io.FileNotFoundException) {
-            if (!provider.createDirectory(path)) throw IOException("Failed to create remote root: $path")
+            if (!provider.createDirectory(cleanPath)) throw IOException("Failed to create remote root: $cleanPath")
         } catch (e: Exception) {
             if (e is CancellationException) throw e
-            Logger.e(TAG, "Error verifying remote root", e)
+            Logger.e(TAG, "Error verifying remote root: $cleanPath", e)
         }
     }
 
@@ -496,7 +521,8 @@ class SyncManager(
             for (item in items) {
                 val itemRel = if (relative.isEmpty()) item.name else "$relative/${item.name}"
                 if (item.isDirectory) {
-                    results.addAll(scanRemoteFilesRecursively(provider, "$currentPath/${item.name}", itemRel))
+                    val nextRemotePath = if (currentPath.isEmpty()) item.name else "$currentPath/${item.name}"
+                    results.addAll(scanRemoteFilesRecursively(provider, nextRemotePath, itemRel))
                 } else {
                     results.add(RemoteFileWithRelativePath(item, itemRel))
                 }
@@ -526,7 +552,22 @@ class SyncManager(
                 }
 
             val pdfRelPath = normalizePath(local.relativePath).substringBeforeLast(".") + ".pdf"
-            val remotePdfPath = "${remoteDir.trimEnd('/')}/$pdfRelPath"
+            val remotePdfPath = remotePathFor(remoteDir, pdfRelPath)
+            val parentRemotePath = if (remotePdfPath.contains('/')) remotePdfPath.substringBeforeLast('/') else ""
+
+            Logger.d(
+                TAG,
+                "syncPdf: local canvas '${local.path}' -> remote PDF '$remotePdfPath' (parent: '$parentRemotePath')",
+            )
+
+            if (parentRemotePath.isNotEmpty()) {
+                try {
+                    provider.createDirectory(parentRemotePath)
+                } catch (e: Exception) {
+                    if (e is CancellationException) throw e
+                    Logger.w(TAG, "Failed to ensure parent directory for PDF $parentRemotePath", e)
+                }
+            }
 
             val pdfCallback =
                 object : PdfExporter.ProgressCallback {
@@ -549,18 +590,21 @@ class SyncManager(
             )
 
             val bytes = out.toByteArray()
+            Logger.d(TAG, "PDF generated for '${local.path}': ${bytes.size} B. Starting upload to '$remotePdfPath'")
             var uploaded = false
             for (attempt in 1..3) {
                 try {
+                    Logger.d(TAG, "PDF upload attempt $attempt/3: '${local.path}' -> '$remotePdfPath'")
                     if (provider.uploadFile(remotePdfPath, ByteArrayInputStream(bytes), bytes.size.toLong())) {
                         uploaded = true
+                        Logger.d(TAG, "PDF upload succeeded on attempt $attempt: '${local.path}' -> '$remotePdfPath'")
                         break
                     }
-                    Logger.w(TAG, "PDF upload attempt $attempt returned false for ${local.name}")
+                    Logger.w(TAG, "PDF upload attempt $attempt returned false for '${local.path}' -> '$remotePdfPath'")
                     delay(1000L * attempt)
                 } catch (e: Exception) {
                     if (e is CancellationException) throw e
-                    Logger.w(TAG, "PDF upload attempt $attempt failed for ${local.name}", e)
+                    Logger.w(TAG, "PDF upload attempt $attempt failed for '${local.path}' -> '$remotePdfPath'", e)
                     delay(1000L * attempt)
                 }
             }
