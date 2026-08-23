@@ -77,17 +77,16 @@ import kotlin.math.floor
  */
 
 /**
- * TEMPORARY chaos-forensics instrumentation (remove after RenderPipelineChaosTest
- * root-cause is found). A global, bounded event ring buffer plus a divergence
- * latch: the FIRST time a region fails its items↔quadtree audit, the full event
- * history for that region id is dumped to stdout, showing exactly which
- * operation introduced the inconsistency.
+ * Chaos-forensics ring: a bounded event buffer plus a per-region dump API.
+ * The FIRST time a region fails its items↔quadtree audit, the full event
+ * history for that region id can be dumped, showing exactly which operation
+ * introduced the inconsistency. Gated behind [enabled]; zero cost when off.
  */
 
 /**
- * Per-manager forensics ring. Historically a GLOBAL singleton keyed only by
- * region id — two managers running in one JVM (chaos seeds!) interleaved
- * events for the same id string, poisoning every dump analysis. Now each
+ * Note: this was historically a GLOBAL singleton keyed only by region id —
+ * two managers running in one JVM (chaos seeds!) interleaved events for the
+ * same id string, poisoning every dump analysis. Each manager now owns its
  * RegionManager owns an instance; [RegionForensics] remains as a shared
  * default for legacy static callers (RegionModels, RegionStorage, tests).
  */
@@ -104,7 +103,7 @@ open class RegionForensicsRing {
         java.util.concurrent.atomic
             .AtomicInteger(0)
 
-    // TEMP: per-id bounded history — the global ring overflows under
+    // Per-id bounded history: the global ring overflows under
     // query storms and erases exactly the hot-region events we need.
     private val perId = HashMap<String, ArrayDeque<String>>()
 
@@ -123,10 +122,10 @@ open class RegionForensicsRing {
         // history; they remain visible in direct stdout probes.
         val noisy =
             line.startsWith("RET-") ||
-                    line.startsWith("REL-REGION") ||
-                    line.startsWith("REL-SLOT") ||
-                    line.startsWith("PARK ") ||
-                    line.startsWith("SWEEP-DROP")
+                line.startsWith("REL-REGION") ||
+                line.startsWith("REL-SLOT") ||
+                line.startsWith("PARK ") ||
+                line.startsWith("SWEEP-DROP")
         val stamped = "${System.currentTimeMillis() % 100_000} [${Thread.currentThread().name}] $line"
         if (!noisy) {
             synchronized(events) {
@@ -158,9 +157,10 @@ open class RegionForensicsRing {
 }
 
 /**
- * TEMPORARY: walks the region's quadtree and diffs its contents against the
- * items list. Ghosts = in items but not in tree (invisible to queries, but
- * persisted to disk). Phantoms = in tree but not in items (zombie hits).
+ * Debug-only consistency audit: walks the region's quadtree and diffs its
+ * contents against the items list. Ghosts = in items but not in tree
+ * (invisible to queries, but persisted to disk). Phantoms = in tree but not
+ * in items (zombie hits). Early-returns unless forensics are enabled.
  * Must be called while holding the state write lock (or on a quiesced region).
  */
 private fun auditRegion(
@@ -196,18 +196,18 @@ private fun auditRegionLocked(
     val phantoms = treeOrders.filter { it !in itemOrders.toSet() }
     forensics.log(
         "$op id=${region.id} items=${itemOrders.size} tree=${treeOrders.size} " +
-                "ghosts=$ghosts phantoms=$phantoms mod=${region.modCount} gen=${region.generation} " +
-                "dirty=${region.isDirty} refs=${region.hasReferences()}",
+            "ghosts=$ghosts phantoms=$phantoms mod=${region.modCount} gen=${region.generation} " +
+            "dirty=${region.isDirty} refs=${region.hasReferences()}",
     )
     val problem =
         ghosts.isNotEmpty() || phantoms.isNotEmpty() ||
-                (region.quadtree == null && region.items.isNotEmpty())
+            (region.quadtree == null && region.items.isNotEmpty())
     if (problem) {
         RegionForensics.divergenceSeen = true
         if (RegionForensics.dumpsIssued.getAndIncrement() < 5) {
             println(
                 "!!!! DIVERGENCE #" + RegionForensics.dumpsIssued.get() + " op=$op id=${region.id} " +
-                        "ghosts=$ghosts phantoms=$phantoms treeNull=${region.quadtree == null}",
+                    "ghosts=$ghosts phantoms=$phantoms treeNull=${region.quadtree == null}",
             )
             println("---- EVENT HISTORY for ${region.id} ----")
             println(RegionForensics.dumpFor(region.id.toString()))
@@ -265,9 +265,9 @@ class RegionManager(
     val regionSize: Float,
     private val memoryLimitBytes: Long =
         (
-                Runtime.getRuntime().maxMemory() *
-                        com.alexdremov.notate.config.CanvasConfig.REGIONS_CACHE_MEMORY_PERCENT
-                ).toLong(),
+            Runtime.getRuntime().maxMemory() *
+                com.alexdremov.notate.config.CanvasConfig.REGIONS_CACHE_MEMORY_PERCENT
+        ).toLong(),
 ) {
     private val forensics = RegionForensicsRing()
 
@@ -359,7 +359,7 @@ class RegionManager(
     companion object {
         private const val LIMBO_STICKY_MS = 5_000L
 
-        /** TEMP forensics: rescue frequency per region (livelock detector). */
+        /** Diagnostics: rescue frequency per region (reload-churn detector). */
         private val rescueCount = java.util.concurrent.ConcurrentHashMap<RegionId, kotlin.Long>()
 
         /**
@@ -373,10 +373,10 @@ class RegionManager(
          */
         private val liveLineage = java.util.concurrent.ConcurrentHashMap<RegionId, RegionData>()
 
-        /** TEMP forensics: failed caller-side handoffs per region. */
+        /** Diagnostics: failed caller-side handoffs per region. */
         private val loadFailCount = java.util.concurrent.ConcurrentHashMap<RegionId, kotlin.Long>()
 
-        /** TEMP forensics: disk-load frequency per region (reload-churn detector). */
+        /** Diagnostics: disk-load frequency per region. */
         private val loadCount = java.util.concurrent.ConcurrentHashMap<RegionId, kotlin.Long>()
 
         /** Max time a reload waits for an in-flight eviction save (see [pendingSaveIds]). */
@@ -420,7 +420,7 @@ class RegionManager(
                 override fun getStats(): Map<String, String> =
                     mapOf(
                         "Region Cache (MB)" to
-                                "${stateLock.read { regionCache.bytes / 1024 }} / ${stateLock.read { regionCache.maxBytes / 1024 }}",
+                            "${stateLock.read { regionCache.bytes / 1024 }} / ${stateLock.read { regionCache.maxBytes / 1024 }}",
                         "Index" to "${stateLock.read { regionIndex.size }}",
                         "Loading Jobs" to "${loadingJobs.size}",
                     )
@@ -461,7 +461,7 @@ class RegionManager(
         val fromOverflow = ovf === region
         forensics.log(
             "MUT-BEGIN id=$id items=${region.items.size} current=${current?.items?.size} " +
-                    "same=${current === region} fromOverflow=$fromOverflow",
+                "same=${current === region} fromOverflow=$fromOverflow",
         )
         if (current != null) {
             // Detach from the cache WITHOUT dropping the slot ref: removal is
@@ -502,8 +502,8 @@ class RegionManager(
                     // items=1 17ms later → middle strokes vanish). Re-park.
                     val discoverable =
                         regionCache.get(id) === region ||
-                                overflowRegions[id] === region ||
-                                limbo[id] === region
+                            overflowRegions[id] === region ||
+                            limbo[id] === region
                     if (!discoverable && !region.isRecycled) {
                         region.touch()
                         parkInLimbo(id, region)
@@ -513,7 +513,7 @@ class RegionManager(
                     } else {
                         forensics.log(
                             "MUT-APPLIED-IN-EVICTED id=$id items=${region.items.size} " +
-                                    "inLimbo=${limbo[id] === region}",
+                                "inLimbo=${limbo[id] === region}",
                         )
                     }
                 }
@@ -552,7 +552,7 @@ class RegionManager(
                         }
                         forensics.log(
                             "MUT-SELF-EVICT-REPUT id=$id items=${region.items.size} " +
-                                    "inLimbo=${limbo[id] === region}",
+                                "inLimbo=${limbo[id] === region}",
                         )
                     }
                 }
@@ -875,7 +875,7 @@ class RegionManager(
         val rescued = limbo[id]
         if (rescued != null) {
             val n = rescueCount.merge(id, 1L, Long::plus)!!
-            if (forensics.enabled && n % 25L == 0L) println("!!!! RESCUE-CHURN id=$id count=$n")
+            forensics.log("RESCUE-CHURN id=$id count=$n")
         }
         if (rescued != null && !rescued.isRecycled && rescued.retain()) {
             forensics.log("RET-RESCUE id=$id i=${Integer.toHexString(System.identityHashCode(rescued))} c=${rescued.debugRefCount()}")
@@ -951,7 +951,7 @@ class RegionManager(
         if (region.isDirty || pinnedIds.contains(key)) {
             forensics.log(
                 "HANDLE-EVICT id=$key items=${region.items.size} dirty=${region.isDirty} " +
-                        "pinned=${pinnedIds.contains(key)}",
+                    "pinned=${pinnedIds.contains(key)}",
             )
         }
         stateLock.write {
@@ -995,8 +995,8 @@ class RegionManager(
                         displaced.markEvicted()
                         forensics.log(
                             "REL-SLOT-OVF-DISPLACED id=$key " +
-                                    "i=${Integer.toHexString(System.identityHashCode(displaced))} " +
-                                    "c=${displaced.debugRefCount()}",
+                                "i=${Integer.toHexString(System.identityHashCode(displaced))} " +
+                                "c=${displaced.debugRefCount()}",
                         )
                         if (displaced.releaseOwnership()) parkInLimbo(key, displaced)
                     }
@@ -1035,7 +1035,7 @@ class RegionManager(
                 // recycles as "clean" while disk holds older content).
                 forensics.log(
                     "SAVE-PRE id=${region.id} items=${snapshot.size} dirty=${region.isDirty} " +
-                            "mod=${region.modCount} gen=${region.generation} attempt=$attempts",
+                        "mod=${region.modCount} gen=${region.generation} attempt=$attempts",
                 )
                 if (!storage.saveRegion(region.copy(items = snapshot))) return
                 if (region.modCount == modBaseline) {
@@ -1186,7 +1186,7 @@ class RegionManager(
             if (loadFailCount.merge(id, 1L, Long::plus)!! % 10L == 0L) {
                 println(
                     "!!!! HANDOFF-FAIL id=$id recycled=${loaded.isRecycled} " +
-                            "refs=${loaded.debugRefCount()}",
+                        "refs=${loaded.debugRefCount()}",
                 )
             }
             // Dead/recycled result: drop the job entry so the retry below
@@ -1200,7 +1200,7 @@ class RegionManager(
     private suspend fun loadRegionFromDisk(id: RegionId): RegionData {
         try {
             val n = loadCount.merge(id, 1L, Long::plus)!!
-            if (forensics.enabled && n % 10L == 0L) println("!!!! LOAD-CHURN id=$id count=$n")
+            forensics.log("LOAD-CHURN id=$id count=$n")
             var region = storage.loadRegion(id)
             forensics.log(
                 "LOAD-RAW id=$id items=${region?.items?.size} type=${region?.items?.javaClass?.simpleName}",
@@ -1254,8 +1254,8 @@ class RegionManager(
                 val existingProbe = regionCache.get(id)
                 forensics.log(
                     "INSTALL-CHECK id=$id existing=${existingProbe?.items?.size} " +
-                            "existingGen=${existingProbe?.generation} loaderItems=${region?.items?.size} " +
-                            "ovf=${overflowRegions[id]?.items?.size}",
+                        "existingGen=${existingProbe?.generation} loaderItems=${region?.items?.size} " +
+                        "ovf=${overflowRegions[id]?.items?.size}",
                 )
                 val existing = existingProbe ?: overflowRegions[id]
                 var useExisting = false
@@ -1274,8 +1274,8 @@ class RegionManager(
                         // Recycled anomaly: purge and install our fresh copy.
                         forensics.log(
                             "!!!! INSTALL-PURGE id=$id items=${existing.items.size} " +
-                                    "dirty=${existing.isDirty} recycled=${existing.debugIsRecycled()} " +
-                                    "count=${existing.debugRefCount()}",
+                                "dirty=${existing.isDirty} recycled=${existing.debugIsRecycled()} " +
+                                "count=${existing.debugRefCount()}",
                         )
                         regionCache.remove(id)
                         overflowRegions.remove(id)?.let {
@@ -1329,7 +1329,7 @@ class RegionManager(
                     if (indexBounds == null || indexBounds != region.contentBounds) {
                         Logger.i(
                             "RegionManager",
-                            "Self-healing index for region $id: $indexBounds -> ${region.contentBounds}"
+                            "Self-healing index for region $id: $indexBounds -> ${region.contentBounds}",
                         )
                         updateRegionIndex(id, region.contentBounds)
                     }
@@ -1350,17 +1350,6 @@ class RegionManager(
                 // the residency slot → 0-ref resident → negative counts).
                 putResidentAndParkIfSelfEvicted(id, region!!)
                 liveLineage[id] = region!!
-                // TEMP FORK-HUNT: dump every map's view at install time. If a
-                // fork creates lost strokes, some INSTALL here will show an
-                // instance in flight that none of the maps captured.
-                if (forensics.enabled) {
-                    println(
-                        "!!!! INSTALL-SCAN id=$id items=${region.items.size} hadExisting=$useExisting " +
-                                "cache=${regionCache.get(id)?.let { if (it === region) "self" else it.items.size }} " +
-                                "ovf=${overflowRegions[id]?.let { if (it === region) "self" else it.items.size }} " +
-                                "limboSame=${limbo[id] === region} limboItems=${limbo[id]?.items?.size}",
-                    )
-                }
                 forensics.log("LOAD-INSTALL id=$id items=${region.items.size} hadExisting=$useExisting")
                 auditRegion(forensics, region, "LOAD-INSTALL")
 
@@ -2060,7 +2049,7 @@ class RegionManager(
                 val scale =
                     kotlin.math.sqrt(
                         values[android.graphics.Matrix.MSCALE_X] * values[android.graphics.Matrix.MSCALE_X] +
-                                values[android.graphics.Matrix.MSKEW_Y] * values[android.graphics.Matrix.MSKEW_Y],
+                            values[android.graphics.Matrix.MSKEW_Y] * values[android.graphics.Matrix.MSKEW_Y],
                     )
                 item.copy(path = newPath, points = newPoints, bounds = newBounds, width = item.width * scale)
             }
@@ -2431,8 +2420,8 @@ class RegionManager(
                 if (region.items.isEmpty()) {
                     forensics.log(
                         "!!!! SAVEALL-EMPTY-DELETE id=$id dirty=${region.isDirty} " +
-                                "recycled=${region.isRecycled} gen=${region.generation} " +
-                                "fromCache=${regionCache.get(id) === region} fromLimbo=${limbo[id] === region}",
+                            "recycled=${region.isRecycled} gen=${region.generation} " +
+                            "fromCache=${regionCache.get(id) === region} fromLimbo=${limbo[id] === region}",
                     )
                     isEmpty = true
                 } else {
@@ -2566,7 +2555,7 @@ class RegionManager(
         if (regionProxies.size != regionIndex.size) {
             Logger.e(
                 "RegionManager",
-                "Invariant violation: Proxy count ${regionProxies.size} != Index count ${regionIndex.size}"
+                "Invariant violation: Proxy count ${regionProxies.size} != Index count ${regionIndex.size}",
             )
             corrupted = true
         }
@@ -2578,5 +2567,5 @@ class RegionManager(
     }
 }
 
-Let's /** Shared default ring for legacy static callers (see [RegionForensicsRing]). */
+/** Shared default ring for legacy static callers (see [RegionForensicsRing]). */
 object RegionForensics : RegionForensicsRing()

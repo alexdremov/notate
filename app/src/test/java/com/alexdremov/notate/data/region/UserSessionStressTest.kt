@@ -302,30 +302,32 @@ class UserSessionStressTest {
             val missing = expectedLive - actual
             val extra = actual - expectedLive
             if (missing.isNotEmpty() || extra.isNotEmpty()) {
-                // Dump the home region of EACH divergent item (bounds → region).
-                val divergentIds = missing + extra
-                val homes = LinkedHashSet<RegionId>()
-                val dumpFile =
-                    File("/tmp/usrdump_seed.txt").let { f ->
-                        if (!f.exists()) f else File("/tmp/usrdump_seed_${System.nanoTime()}.txt")
+                // Forensic dumps go to files (rings are large) — opt-in via
+                // -DuserSession.dumpForensics=true so normal runs stay quiet.
+                if (System.getProperty("userSession.dumpForensics") == "true") {
+                    val homes = LinkedHashSet<RegionId>()
+                    val dumpFile =
+                        File("build/dumps/usrsession_${id}_${System.nanoTime()}.txt").apply {
+                            parentFile?.mkdirs()
+                        }
+                    all.filter { it.order in missing + extra }.forEach { item ->
+                        val rid =
+                            RegionId(
+                                (item.bounds.centerX() / 1000f).toInt(),
+                                (item.bounds.centerY() / 1000f).toInt(),
+                            )
+                        if (homes.add(rid)) {
+                            dumpFile.appendText(
+                                "--- doc=$id $context home $rid ---\n" +
+                                    rm.dumpForensics(rid.toString()) + "\n",
+                            )
+                        }
                     }
-                all.filter { it.order in divergentIds }.forEach { item ->
-                    val rid =
-                        RegionId(
-                            (item.bounds.centerX() / 1000f).toInt(),
-                            (item.bounds.centerY() / 1000f).toInt(),
-                        )
-                    if (homes.add(rid)) {
-                        dumpFile.appendText(
-                            "--- doc=$id $context home $rid ---\n" +
-                                rm.dumpForensics(rid.toString()) + "\n",
-                        )
-                    }
+                    println(
+                        "!!!! VERIFY-FAIL forensics written to ${dumpFile.path}: " +
+                            "homes=$homes MISSING=${missing.sorted()} EXTRA=${extra.sorted()}",
+                    )
                 }
-                println(
-                    "!!!! VERIFY-FAIL dumped to ${dumpFile.path}: homes=$homes " +
-                        "MISSING=${missing.sorted()} EXTRA=${extra.sorted()}",
-                )
             }
             for (rid in rm.getActiveRegionIds()) {
                 val r = runBlocking { rm.acquireRegion(rid) } ?: continue

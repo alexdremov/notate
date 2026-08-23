@@ -139,8 +139,12 @@ class RegionManagerRefcountChaosTest {
      * structural role: residents own exactly 1 (the cache), demoted copies
      * own 0. Anything else is a leak (stuck reader) or a fork (lineage bug).
      */
+
     /** True when [id] is no longer reachable from any map (concurrent sweep won). */
-    private fun recheck(rm: com.alexdremov.notate.data.region.RegionManager, id: com.alexdremov.notate.data.region.RegionId): Boolean {
+    private fun recheck(
+        rm: com.alexdremov.notate.data.region.RegionManager,
+        id: com.alexdremov.notate.data.region.RegionId,
+    ): Boolean {
         repeat(10) {
             Thread.sleep(50)
             val still =
@@ -214,13 +218,10 @@ class RegionManagerRefcountChaosTest {
         runBlocking {
             val rm = newManager()
             rm.addItem(stroke(500f, 500f, order = 1))
-            println("PROBE after addItem: ${refCountOf(rm.cache.get(RegionId(0, 0))!!)}")
 
             val id = RegionId(0, 0)
             val a = rm.acquireRegion(id)
-            println("PROBE after acquire1: ${refCountOf(a!!)}")
             val b = rm.acquireRegion(id)
-            println("PROBE after acquire2: ${refCountOf(b!!)}")
             assertNotNull(a)
             assertNotNull(b)
             // Same lineage: both acquires must hand out THE SAME live instance.
@@ -433,14 +434,16 @@ class RegionManagerRefcountChaosTest {
             }
 
         val crashed = java.util.concurrent.ConcurrentLinkedQueue<Throwable>()
-        fun guarded(body: () -> Unit): () -> Unit = {
-            try {
-                body()
-            } catch (t: Throwable) {
-                crashed.add(t)
-                throw t
+
+        fun guarded(body: () -> Unit): () -> Unit =
+            {
+                try {
+                    body()
+                } catch (t: Throwable) {
+                    crashed.add(t)
+                    throw t
+                }
             }
-        }
         (writers + readers + savers).forEach { it.start() }
         writers.forEach { it.join(120_000) }
         assertTrue("writers did not finish in time", writers.none { it.isAlive })
@@ -474,21 +477,30 @@ class RegionManagerRefcountChaosTest {
         if (lost.isNotEmpty()) {
             // TEMP forensics: locate every lost order across ALL live copies
             // (cache/overflow/limbo) plus disk — proves fork-vs-save-loss.
-            val byRid = lost.groupBy {
-                val cx = (it % 11) * 1000f + 500f
-                val cy = ((it / 11) % 7) * 1000f + 500f
-                RegionId(Math.floor(cx / 1000f.toDouble()).toInt(), Math.floor(cy / 1000f.toDouble()).toInt())
-            }
+            val byRid =
+                lost.groupBy {
+                    val cx = (it % 11) * 1000f + 500f
+                    val cy = ((it / 11) % 7) * 1000f + 500f
+                    RegionId(Math.floor(cx / 1000f.toDouble()).toInt(), Math.floor(cy / 1000f.toDouble()).toInt())
+                }
             for ((rid, orders) in byRid) {
                 println("!!!! AUDIT $rid missing=${orders.size}")
                 rm.cache.get(rid)?.let {
-                    println("!!!!   cache items=${it.items.size} refs=${refCountOf(it)} evicted=${it.isEvicted} orders=${it.items.mapNotNull { s -> (s as? Stroke)?.order }.sorted()}")
+                    println(
+                        "!!!!   cache items=${it.items.size} refs=${refCountOf(it)} evicted=${it.isEvicted} orders=${it.items.mapNotNull { s ->
+                            (s as? Stroke)?.order
+                        }.sorted()}",
+                    )
                 } ?: println("!!!!   cache=<absent>")
                 rm.overflow[rid]?.let {
                     println("!!!!   overflow items=${it.items.size} orders=${it.items.mapNotNull { s -> (s as? Stroke)?.order }.sorted()}")
                 } ?: println("!!!!   overflow=<absent>")
                 rm.limboMap[rid]?.let {
-                    println("!!!!   limbo items=${it.items.size} dirty=${it.isDirty} recycled=${it.isRecycled} orders=${it.items.mapNotNull { s -> (s as? Stroke)?.order }.sorted()}")
+                    println(
+                        "!!!!   limbo items=${it.items.size} dirty=${it.isDirty} recycled=${it.isRecycled} orders=${it.items.mapNotNull { s ->
+                            (s as? Stroke)?.order
+                        }.sorted()}",
+                    )
                 } ?: println("!!!!   limbo=<absent>")
                 runBlocking {
                     val disk = RegionStorage(chaosDir).apply { init() }.loadRegion(rid)

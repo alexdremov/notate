@@ -182,10 +182,10 @@ data class RegionData(
      */
     fun releaseOwnership(): Boolean = releaseInternal()
 
-    /** TEMP forensics: current raw refcount. */
+    /** Diagnostics: current raw refcount (vestigial; see [retain]). */
     fun debugRefCount(): Int = refCount.get()
 
-    /** TEMP forensics: raw CAS-free peek at recycled flag. */
+    /** Diagnostics: always false since non-destructive eviction (Phase 1). */
     fun debugIsRecycled(): Boolean = isRecycled
 
     /**
@@ -197,24 +197,13 @@ data class RegionData(
     fun release(): Boolean = releaseInternal()
 
     private fun releaseInternal(): Boolean {
-        val before = refCount.get()
         val remaining = refCount.decrementAndGet()
         if (remaining < 0 && com.alexdremov.notate.data.region.RegionForensics.enabled) {
+            // Counts are diagnostic-only (see [retain]), so a negative value
+            // is not a correctness problem — but it signals some path
+            // decrements without a matching grant. Record for forensics.
             com.alexdremov.notate.data.region.RegionForensics.log(
-                "!!!! OVER-RELEASE count $before -> $remaining via " +
-                    Throwable().stackTrace.take(4).joinToString("<-") { it.methodName },
-            )
-            // Direct print: the forensics RING BUFFER may have evicted this
-            // event by dump time; over-release evidence must survive.
-            println(
-                "!!!! OVER-RELEASE id=$id count $before -> $remaining via " +
-                    Throwable().stackTrace.take(12).joinToString("<-") { it.methodName },
-            )
-            // Dump this region's tagged RET/REL history: the second decrement
-            // site will be visible in the events preceding this one.
-            println(
-                com.alexdremov.notate.data.region.RegionForensics
-                    .dumpFor("$id"),
+                "OVER-RELEASE id=$id count -> $remaining",
             )
         }
         return remaining <= 0
