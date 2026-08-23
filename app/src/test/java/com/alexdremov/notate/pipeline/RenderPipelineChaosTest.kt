@@ -14,6 +14,7 @@ import com.alexdremov.notate.model.Stroke
 import com.alexdremov.notate.model.StrokeType
 import com.alexdremov.notate.ui.render.CanvasRenderer
 import com.onyx.android.sdk.data.note.TouchPoint
+import java.io.File
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -270,7 +271,33 @@ class RenderPipelineChaosTest {
         Thread.sleep(8_000)
         stop.set(true)
         threads.forEach { it.join(15_000) }
-        threads.forEach { assertTrue("actor thread did not terminate", !it.isAlive) }
+        val hung = threads.filter { it.isAlive }
+        if (hung.isNotEmpty()) {
+            // Dump the HUNG actor's stack: this is the only way to see which
+            // store operation wedged. Written to a file (rings may be flooded).
+            val dumpFile = File("build/dumps/hung_actors_seed$seed.txt").apply {
+                parentFile?.mkdirs()
+            }
+            hung.forEach { th ->
+                th.stackTrace.forEach { frame ->
+                    dumpFile.appendText("  ${th.name}: $frame\n")
+                }
+                dumpFile.appendText("\n")
+            }
+            // Also dump ALL threads for full context (locks, park reasons).
+            Thread.getAllStackTraces().forEach { (th, frames) ->
+                if (frames.isNotEmpty()) {
+                    dumpFile.appendText("[${th.name}]\n")
+                    frames.take(15).forEach { f -> dumpFile.appendText("  $f\n") }
+                }
+            }
+        }
+        threads.forEach {
+            assertTrue(
+                "actor thread did not terminate (see build/dumps/hung_actors_seed$seed.txt)",
+                !it.isAlive,
+            )
+        }
 
         // ---- Quiescence & verification ----
         runBlocking {
