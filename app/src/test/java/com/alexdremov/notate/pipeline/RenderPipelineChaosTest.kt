@@ -14,7 +14,6 @@ import com.alexdremov.notate.model.Stroke
 import com.alexdremov.notate.model.StrokeType
 import com.alexdremov.notate.ui.render.CanvasRenderer
 import com.onyx.android.sdk.data.note.TouchPoint
-import java.io.File
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -32,6 +31,7 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
+import java.io.File
 import java.util.Random
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.CountDownLatch
@@ -275,9 +275,10 @@ class RenderPipelineChaosTest {
         if (hung.isNotEmpty()) {
             // Dump the HUNG actor's stack: this is the only way to see which
             // store operation wedged. Written to a file (rings may be flooded).
-            val dumpFile = File("build/dumps/hung_actors_seed$seed.txt").apply {
-                parentFile?.mkdirs()
-            }
+            val dumpFile =
+                File("build/dumps/hung_actors_seed$seed.txt").apply {
+                    parentFile?.mkdirs()
+                }
             hung.forEach { th ->
                 th.stackTrace.forEach { frame ->
                     dumpFile.appendText("  ${th.name}: $frame\n")
