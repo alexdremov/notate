@@ -469,7 +469,15 @@ class CanvasRepository(
                 // already been evicted from [activeSessions] and its refCount is
                 // zero, so no new client can retain it while we close.
             }
-        if (shouldClose) session.close() // Releases file lock
+        if (shouldClose) {
+            // close() can block up to OPERATIONS_TIMEOUT_MS draining an
+            // in-flight save — never run that on the caller's (possibly Main)
+            // context. Still outside sessionLock: the session is already
+            // evicted and refCount-zero, so no client can retain it meanwhile.
+            withContext(Dispatchers.IO) {
+                session.close() // Releases file lock
+            }
+        }
     }
 
     /**

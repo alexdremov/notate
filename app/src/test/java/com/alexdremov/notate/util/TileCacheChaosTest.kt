@@ -67,9 +67,14 @@ class TileCacheChaosTest {
             }
         start.countDown()
 
-        for (f in futures) f.get(90, TimeUnit.SECONDS)
-        pool.shutdown()
-        assertTrue(pool.awaitTermination(30, TimeUnit.SECONDS))
+        try {
+            for (f in futures) f.get(90, TimeUnit.SECONDS)
+        } finally {
+            // Ensure the pool always terminates — a worker throwing out of a
+            // task must not leave non-daemon threads hanging the JVM.
+            pool.shutdownNow()
+            assertTrue(pool.awaitTermination(30, TimeUnit.SECONDS))
+        }
 
         // Post-quiescence invariants.
         for ((key, cached) in cache.snapshot()) {

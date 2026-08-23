@@ -447,11 +447,11 @@ class InfiniteCanvasModel {
                 if (recalculateBounds) recalculateContentBounds()
                 _events.tryEmit(ModelEvent.BulkItemsAdded(action.bounds))
 
-                // The stash file has been fully restored into the regions and is
-                // never read again: re-executing this action (redo) only needs
-                // [HistoryAction.RemoveStashed.bounds] and .ids, not the file.
-                // Delete it so undo/redo cycles don't accumulate orphaned files.
-                action.stashFile.delete()
+                // The stash file MUST stay alive: a later redo→undo cycle calls
+                // this again and needs it to restore the items (found by
+                // HistorySemanticsTest-style review; deleting here silently
+                // dropped strokes on the second undo). Cleanup happens when the
+                // action leaves history entirely, via onActionDiscarded above.
             }
         }
     }

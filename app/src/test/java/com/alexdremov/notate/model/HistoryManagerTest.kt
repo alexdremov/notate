@@ -61,38 +61,37 @@ class HistoryManagerTest {
         assertNull(historyManager.redoActionOnly())
     }
 
+    @Test
+    fun `discarded actions are reported via onActionDiscarded`() {
+        val historyManager = HistoryManager()
+        val discarded = mutableListOf<HistoryAction>()
+        historyManager.onActionDiscarded = { discarded.add(it) }
 
-@Test
-fun `discarded actions are reported via onActionDiscarded`() {
-    val historyManager = HistoryManager()
-    val discarded = mutableListOf<HistoryAction>()
-    historyManager.onActionDiscarded = { discarded.add(it) }
+        val stashFile = java.io.File("/tmp/never_touched.bin")
+        val stashedAction = HistoryAction.RemoveStashed(stashFile, RectF(), setOf(1L))
 
-    val stashFile = java.io.File("/tmp/never_touched.bin")
-    val stashedAction = HistoryAction.RemoveStashed(stashFile, RectF(), setOf(1L))
+        // Overflow the undo stack: the 10 oldest entries (including our stash
+        // action, pushed first) must be reported as discarded.
+        historyManager.addToStack(stashedAction)
+        repeat(110) { historyManager.addToStack(HistoryAction.Add(emptyList())) }
 
-    // Overflow the undo stack: the 10 oldest entries (including our stash
-    // action, pushed first) must be reported as discarded.
-    historyManager.addToStack(stashedAction)
-    repeat(110) { historyManager.addToStack(HistoryAction.Add(emptyList())) }
+        assertTrue("Stash action should be reported once it falls off the stack", discarded.contains(stashedAction))
+    }
 
-    assertTrue("Stash action should be reported once it falls off the stack", discarded.contains(stashedAction))
-}
+    @Test
+    fun `clear reports all retained actions as discarded`() {
+        val historyManager = HistoryManager()
+        val discarded = mutableListOf<HistoryAction>()
+        historyManager.onActionDiscarded = { discarded.add(it) }
 
-@Test
-fun `clear reports all retained actions as discarded`() {
-    val historyManager = HistoryManager()
-    val discarded = mutableListOf<HistoryAction>()
-    historyManager.onActionDiscarded = { discarded.add(it) }
+        val stashFile = java.io.File("/tmp/never_touched.bin")
+        val stashedAction = HistoryAction.RemoveStashed(stashFile, RectF(), setOf(1L))
 
-    val stashFile = java.io.File("/tmp/never_touched.bin")
-    val stashedAction = HistoryAction.RemoveStashed(stashFile, RectF(), setOf(1L))
+        historyManager.addToStack(stashedAction)
+        historyManager.undoActionOnly() // now on redo stack
 
-    historyManager.addToStack(stashedAction)
-    historyManager.undoActionOnly() // now on redo stack
+        historyManager.clear()
 
-    historyManager.clear()
-
-    assertTrue("Actions on both stacks must be reported on clear", discarded.contains(stashedAction))
-}
+        assertTrue("Actions on both stacks must be reported on clear", discarded.contains(stashedAction))
+    }
 }

@@ -352,11 +352,6 @@ class RenderPipelineChaosTest {
                 try {
                     val orders = r.items.map { it.order }
                     val extraHere = orders.filter { it !in memOrders }
-                    val missingHere =
-                        (memOrders - diskOrders).filter { o ->
-                            // crude containment probe by bounds
-                            distinct.any { it.order == o && r.items.any { it2 -> false } }
-                        }
                     if (extraHere.isNotEmpty()) {
                         diag
                             .append("memory region ")
