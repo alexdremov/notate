@@ -121,6 +121,13 @@ class Quadtree(
         newRoot.split()
 
         val childIndex =
+            // Position of the OLD root within the new root's children.
+            // MUST match split()'s layout:
+            //   [0]=top-left  [1]=top-right
+            //   [2]=bottom-left [3]=bottom-right
+            // When growing right/bottom, newRoot keeps oldTop/oldLeft, so the
+            // old root sits in the TOP-LEFT quadrant (index 0); growing
+            // left/top shifts old root to the opposite half accordingly.
             when {
                 growRight && growBottom -> 0
                 !growRight && growBottom -> 1

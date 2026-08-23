@@ -59,7 +59,6 @@ class PenInputHandlerTest {
             // Capture the stroke passed to commitStroke
             val strokeSlot = slot<Stroke>()
             coEvery { controller.commitStroke(capture(strokeSlot)) } just Runs
-            every { controller.getItemAtSync(any(), any()) } returns null
 
             // Start
             handler.onBeginRawDrawing(false, TouchPoint(10f, 10f, 0.5f, 1.0f, 0, 0, 1000))
@@ -127,7 +126,6 @@ class PenInputHandlerTest {
 
             val strokeSlot = slot<Stroke>()
             coEvery { controller.commitStroke(capture(strokeSlot)) } just Runs
-            every { controller.getItemAtSync(any(), any()) } returns null
 
             // 1. Start
             handler.onBeginRawDrawing(false, TouchPoint(10f, 10f, 0.5f, 1.0f, 0, 0, 1000))

@@ -206,39 +206,44 @@ object PdfExporter {
             val regionManager = model.getRegionManager()
             if (regionManager != null) {
                 val regions = regionManager.getRegionsInRect(bounds)
-                val totalRegions = regions.size
-                var processedRegions = 0
-                val processedItems = HashSet<Long>()
+                try {
+                    val totalRegions = regions.size
+                    var processedRegions = 0
+                    val processedItems = HashSet<Long>()
 
-                // Cache for Transparency States
-                val alphaCache = HashMap<Int, PDExtendedGraphicsState>()
+                    // Cache for Transparency States
+                    val alphaCache = HashMap<Int, PDExtendedGraphicsState>()
 
-                for (region in regions) {
-                    val items = ArrayList<CanvasItem>()
-                    if (region.quadtree != null) {
-                        region.quadtree?.retrieve(items, bounds)
-                    } else {
-                        // Fallback if quadtree is not initialized for some reason
-                        items.addAll(region.items.filter { RectF.intersects(it.bounds, bounds) })
-                    }
-                    items.sortWith(compareBy<CanvasItem> { it.zIndex }.thenBy { it.order })
+                    for (region in regions) {
+                        val items = ArrayList<CanvasItem>()
+                        if (region.quadtree != null) {
+                            region.quadtree?.retrieve(items, bounds)
+                        } else {
+                            // Fallback if quadtree is not initialized for some reason
+                            items.addAll(region.items.filter { RectF.intersects(it.bounds, bounds) })
+                        }
+                        items.sortWith(compareBy<CanvasItem> { it.zIndex }.thenBy { it.order })
 
-                    for (item in items) {
-                        if (!processedItems.add(item.order)) continue
+                        for (item in items) {
+                            if (!processedItems.add(item.order)) continue
 
-                        when (item) {
-                            is Stroke -> renderStrokeToPdf(contentStream, item, alphaCache, bounds, height)
-                            is TextItem -> renderTextToPdf(document, contentStream, item, context, bounds, height)
-                            is CanvasImage -> renderImageToPdf(document, contentStream, item, context, bounds, height)
+                            when (item) {
+                                is Stroke -> renderStrokeToPdf(contentStream, item, alphaCache, bounds, height)
+                                is TextItem -> renderTextToPdf(document, contentStream, item, context, bounds, height)
+                                is CanvasImage -> renderImageToPdf(document, contentStream, item, context, bounds, height)
+                            }
+                        }
+
+                        processedRegions++
+                        if (processedRegions % 5 == 0 || processedRegions == totalRegions) {
+                            val progress = 20 + ((processedRegions.toFloat() / totalRegions) * 70).toInt()
+                            callback?.onProgress(progress, "Exporting Region $processedRegions/$totalRegions")
+                            currentCoroutineContext().ensureActive()
                         }
                     }
-
-                    processedRegions++
-                    if (processedRegions % 5 == 0 || processedRegions == totalRegions) {
-                        val progress = 20 + ((processedRegions.toFloat() / totalRegions) * 70).toInt()
-                        callback?.onProgress(progress, "Exporting Region $processedRegions/$totalRegions")
-                        currentCoroutineContext().ensureActive()
-                    }
+                } finally {
+                    // Regions are reader-retained (eviction-safe); release when done.
+                    regionManager.releaseRegions(regions)
                 }
             }
 
@@ -895,22 +900,26 @@ object PdfExporter {
     ) {
         val regionManager = model.getRegionManager() ?: return
         val regions = regionManager.getRegionsInRect(bounds)
+        try {
+            for (region in regions) {
+                val regionItems = ArrayList<CanvasItem>()
+                region.quadtree?.retrieve(regionItems, bounds)
+                regionItems.sortWith(compareBy<CanvasItem> { it.zIndex }.thenBy { it.order })
 
-        for (region in regions) {
-            val regionItems = ArrayList<CanvasItem>()
-            region.quadtree?.retrieve(regionItems, bounds)
-            regionItems.sortWith(compareBy<CanvasItem> { it.zIndex }.thenBy { it.order })
-
-            for (item in regionItems) {
-                if (item is Stroke) {
-                    paint.color = item.color
-                    paint.strokeWidth = item.width
-                    StrokeRenderer.drawStroke(canvas, paint, item, forceVector = true)
-                } else {
-                    StrokeRenderer.drawItem(canvas, item, false, paint, context)
+                for (item in regionItems) {
+                    if (item is Stroke) {
+                        paint.color = item.color
+                        paint.strokeWidth = item.width
+                        StrokeRenderer.drawStroke(canvas, paint, item, forceVector = true)
+                    } else {
+                        StrokeRenderer.drawItem(canvas, item, false, paint, context)
+                    }
                 }
+                regionItems.clear()
             }
-            regionItems.clear()
+        } finally {
+            // Regions are reader-retained (eviction-safe); release when done.
+            regionManager.releaseRegions(regions)
         }
     }
 

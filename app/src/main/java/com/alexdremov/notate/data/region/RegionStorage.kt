@@ -17,7 +17,7 @@ import java.io.File
 import java.io.IOException
 import java.util.UUID
 
-class RegionStorage(
+open class RegionStorage(
     private val baseDir: File,
     private val zipSource: File? = null,
 ) {
@@ -32,7 +32,7 @@ class RegionStorage(
         private const val EXT_PNG = ".png"
     }
 
-    fun init() {
+    open fun init() {
         if (!baseDir.exists()) {
             if (!baseDir.mkdirs()) {
                 Logger.e(TAG, "Failed to create session directory: $baseDir")
@@ -99,8 +99,16 @@ class RegionStorage(
         }
     }
 
+    /**
+     * Serializes a region to protobuf bytes WITHOUT any disk IO.
+     *
+     * Split from [saveRegion] so callers can snapshot a region's content while
+     * holding only a read lock (serialization is pure CPU work over the item
+     * list) and then perform the actual file write outside any lock — see
+     * [RegionManager.saveAll].
+     */
     @OptIn(ExperimentalSerializationApi::class)
-    fun saveRegion(data: RegionData): Boolean {
+    fun serializeRegion(data: RegionData): ByteArray {
         val strokeData = ArrayList<StrokeData>()
         val imageData = ArrayList<CanvasImageData>()
         val textData = ArrayList<TextItemData>()
@@ -132,20 +140,43 @@ class RegionStorage(
         }
 
         val proto = RegionProto(data.id.x, data.id.y, strokeData, imageData, textData, linkData)
-        val file = getRegionFile(data.id)
+        return ProtoBuf.encodeToByteArray(RegionProto.serializer(), proto)
+    }
 
-        return try {
-            val bytes = ProtoBuf.encodeToByteArray(RegionProto.serializer(), proto)
-            writeAtomic(file, bytes)
+    /**
+     * Atomically writes pre-serialized region bytes (from [serializeRegion])
+     * to the region's file. Pure IO, no locking assumptions.
+     */
+    open fun saveRegionBytes(
+        id: RegionId,
+        bytes: ByteArray,
+    ): Boolean =
+        try {
+            writeAtomic(getRegionFile(id), bytes)
             true
         } catch (e: Exception) {
-            Logger.e(TAG, "Failed to save region ${data.id}", e)
+            Logger.e(TAG, "Failed to save region $id", e)
             false
         }
+
+    @OptIn(ExperimentalSerializationApi::class)
+    open fun saveRegion(data: RegionData): Boolean {
+        // Serialize may throw on malformed items; keep legacy behavior of
+        // returning false instead of propagating.
+        val bytes =
+            try {
+                serializeRegion(data)
+            } catch (e: Exception) {
+                Logger.e(TAG, "Failed to serialize region ${data.id}", e)
+                return false
+            }
+        return saveRegionBytes(data.id, bytes)
     }
 
     @OptIn(ExperimentalSerializationApi::class)
-    fun loadRegion(id: RegionId): RegionData? {
+    open fun loadRegion(id: RegionId): RegionData? {
+        com.alexdremov.notate.data.region.RegionForensics
+            .log("LOAD-FILE id=$id exists=${getRegionFile(id).exists()}")
         val file = getRegionFile(id)
 
         // JIT Extraction Strategy
@@ -169,12 +200,13 @@ class RegionStorage(
             val bytes = file.readBytes()
             val proto = ProtoBuf.decodeFromByteArray(RegionProto.serializer(), bytes)
 
-            val data = RegionData(id)
+            val loaded = ArrayList<com.alexdremov.notate.model.CanvasItem>()
+            val data = RegionData(id, items = loaded)
 
             // Convert Strokes
             proto.strokes.forEach { sData ->
                 val stroke = CanvasSerializer.fromStrokeData(sData)
-                data.items.add(stroke)
+                loaded.add(stroke)
             }
 
             // Convert Images
@@ -199,19 +231,19 @@ class RegionStorage(
                         rotation = iData.rotation,
                         opacity = iData.opacity,
                     )
-                data.items.add(image)
+                loaded.add(image)
             }
 
             // Convert Text
             proto.texts.forEach { tData ->
                 val textItem = CanvasSerializer.fromTextItemData(tData)
-                data.items.add(textItem)
+                loaded.add(textItem)
             }
 
             // Convert Links
             proto.links.forEach { lData ->
                 val linkItem = CanvasSerializer.fromLinkItemData(lData)
-                data.items.add(linkItem)
+                loaded.add(linkItem)
             }
 
             Logger.d("RegionStorage", "Loaded region $id (${data.items.size} items)")
@@ -222,7 +254,7 @@ class RegionStorage(
         }
     }
 
-    fun deleteRegion(id: RegionId) {
+    open fun deleteRegion(id: RegionId) {
         val file = getRegionFile(id)
         if (file.exists()) {
             if (!file.delete()) {
@@ -231,7 +263,7 @@ class RegionStorage(
         }
     }
 
-    fun listStoredRegions(): List<RegionId> {
+    open fun listStoredRegions(): List<RegionId> {
         val ids = ArrayList<RegionId>()
         val files = baseDir.listFiles() ?: return ids
         val regex = Regex("^${FILE_PREFIX_REGION}(-?\\d+)_(-?\\d+)${Regex.escape(EXT_BIN)}$")
@@ -295,7 +327,7 @@ class RegionStorage(
     }
 
     @OptIn(ExperimentalSerializationApi::class)
-    fun saveIndex(index: Map<RegionId, RectF>): Boolean {
+    open fun saveIndex(index: Map<RegionId, RectF>): Boolean {
         val list =
             index.map { (id, rect) ->
                 RegionBoundsProto(id.x, id.y, rect.left, rect.top, rect.right, rect.bottom)
@@ -313,7 +345,7 @@ class RegionStorage(
     }
 
     @OptIn(ExperimentalSerializationApi::class)
-    fun loadIndex(): Map<RegionId, RectF> {
+    open fun loadIndex(): Map<RegionId, RectF> {
         val file = File(baseDir, FILE_INDEX)
 
         // JIT Extraction for Index

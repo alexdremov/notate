@@ -124,12 +124,31 @@ class TileManager(
     private val tileCache = TileCache(tileSize)
 
     // State Tracking
+    //
+    // LOCK-ORDERING CONTRACT
+    // ----------------------
+    // Two monitors guard the scheduling pipeline:
+    //   PL = [pendingLock]      (job queues, current region cursor)
+    //   GK = [generatingKeys]   (monitor of the synchronized set)
+    //
+    // Whenever both must be held, they MUST be acquired in the order PL -> GK.
+    // The reverse nesting (GK while holding PL is fine; PL while holding GK is
+    // FORBIDDEN) would create an AB-BA deadlock with queueTileGeneration().
+    // clear() and destroy() are the historical offenders: they used to take GK
+    // and PL in two *sequential* blocks (no deadlock, but not atomic — a
+    // concurrent queueTileGeneration could repopulate GK between the phases and
+    // lose its pending job, permanently wedging that tile). They now hold PL
+    // across the whole reset and acquire GK inside, per the contract.
     private val generatingKeys = Collections.synchronizedSet(HashSet<TileCache.TileKey>())
     private val generationJobs = ConcurrentHashMap<TileCache.TileKey, Job>()
 
     // Scheduling State
     private val activeJobCount = AtomicInteger(0)
-    private val maxConcurrentJobs = 128
+
+    // Bound concurrent tile jobs to the CPU count: each job renders a full tile
+    // bitmap (CPU + ~1MB allocation). The old value of 128 oversubscribed every
+    // core and multiplied peak bitmap memory by ~16x for zero throughput gain.
+    private val maxConcurrentJobs = Runtime.getRuntime().availableProcessors().coerceIn(2, 8)
     private val pendingLock = Any()
     private val pendingJobsByRegion = HashMap<RegionId, MutableList<PendingJob>>()
     private val pendingJobsByKey = HashMap<TileCache.TileKey, PendingJob>()
@@ -149,6 +168,17 @@ class TileManager(
     )
 
     private val renderVersion = AtomicInteger(0)
+
+    // Scheduler coalescing: at most ONE drain coroutine runs at a time. The old
+    // implementation did `scope.launch { ... }` per scheduleJobs() call — and it
+    // is called once per queued tile from the render thread, so a cold viewport
+    // could spawn ~100 coroutines per frame that all immediately fought over
+    // [pendingLock]. With the CAS flag below, N insertions produce at most one
+    // scheduling pass; the re-check after the flag is released closes the
+    // lost-signal race (job enqueued between final drain and flag reset).
+    private val schedulerActive =
+        java.util.concurrent.atomic
+            .AtomicBoolean(false)
     private var lastRenderLevel = -1
     private var lastVisibleRect: RectF? = null
     private var lastPrefetchRect: RectF? = null
@@ -264,36 +294,17 @@ class TileManager(
         initJobs +=
             scope.launch {
                 canvasModel.events.collect { event ->
-                    when (event) {
-                        is InfiniteCanvasModel.ModelEvent.ItemsRemoved -> {
-                            hideItemsInCache(event.items)
-                            val bounds = RectF()
-                            event.items.forEach { bounds.union(it.bounds) }
-                            refreshTiles(bounds)
-                        }
-
-                        is InfiniteCanvasModel.ModelEvent.ItemsAdded -> {
-                            // Handle operations like Paste, Undo, Redo, Unstash
-                            updateTilesWithItems(event.items)
-                            val bounds = RectF()
-                            event.items.forEach { bounds.union(it.bounds) }
-                            refreshTiles(bounds)
-                        }
-
-                        is InfiniteCanvasModel.ModelEvent.BulkItemsAdded -> {
-                            refreshTiles(event.bounds)
-                        }
-
-                        is InfiniteCanvasModel.ModelEvent.ContentCleared -> {
-                            clear()
-                            notifyTileReady()
-                        }
-
-                        is InfiniteCanvasModel.ModelEvent.RegionLoaded -> {
-                            regionLoadedChannel.trySend(event.bounds)
-                        }
-
-                        else -> {}
+                    // POISON-PILL GUARD: an exception thrown for one event
+                    // (e.g. a bitmap race during heavy churn) must not kill
+                    // this collector — it is the ONLY path that schedules tile
+                    // regeneration for model mutations. A dead collector means
+                    // every future edit silently never renders.
+                    try {
+                        handleModelEvent(event)
+                    } catch (e: kotlinx.coroutines.CancellationException) {
+                        throw e
+                    } catch (t: Throwable) {
+                        Logger.e("TileManager", "Failed to process model event $event", t)
                     }
                 }
             }
@@ -650,15 +661,26 @@ class TileManager(
 
     private fun scheduleJobs() {
         if (activeJobCount.get() >= maxConcurrentJobs) return
+        if (schedulerActive.getAndSet(true)) return // a drain pass is already running/queued
 
-        // Dispatch a lightweight task to the background to pick and launch jobs
-        // to avoid blocking the render loop with scheduling logic.
         scope.launch(dispatcher) {
-            synchronized(pendingLock) {
-                while (activeJobCount.get() < maxConcurrentJobs && pendingJobsByKey.isNotEmpty()) {
-                    val jobToRun = pickNextJob() ?: break
-                    activeJobCount.incrementAndGet()
-                    launchJob(jobToRun)
+            try {
+                synchronized(pendingLock) {
+                    while (activeJobCount.get() < maxConcurrentJobs && pendingJobsByKey.isNotEmpty()) {
+                        val jobToRun = pickNextJob() ?: break
+                        activeJobCount.incrementAndGet()
+                        launchJob(jobToRun)
+                    }
+                }
+            } finally {
+                schedulerActive.set(false)
+                // Lost-signal race guard: if jobs were enqueued between our last
+                // drain iteration and the flag reset above, no other coroutine
+                // will pick them up — re-arm exactly once.
+                synchronized(pendingLock) {
+                    if (pendingJobsByKey.isNotEmpty() && activeJobCount.get() < maxConcurrentJobs) {
+                        scheduleJobs()
+                    }
                 }
             }
         }
@@ -810,20 +832,16 @@ class TileManager(
 
             val rm = canvasModel.getRegionManager()
 
-            // 1. Identify necessary regions
+            // 1. Identify necessary regions (for logging/affinity only; loading
+            //    itself is handled inside queryItems).
             val regionIds = rm?.getRegionIdsInRect(worldRect) ?: emptyList()
 
-            // 2. Prime the Cache (Async & Cancellable)
-            // We ensure all regions are loaded before asking the model to query items.
-            // This prevents 'queryItems' (synchronous) from triggering 'runBlocking' inside RegionManager,
-            // which avoids thread starvation and deadlocks.
-            regionIds.forEach { id ->
-                if (!coroutineContext.isActive) return@trace null
-                rm?.getRegion(id)
-            }
-
-            // 3. Fetch Data (Lightweight, IO-bound, No Bitmap Allocation)
-            // Query items (Synchronous, but fast now as cache is primed)
+            // 2. Fetch Data.
+            // RegionManager.queryItems loads each needed region one at a time
+            // (incrementally, reader-retained via acquireRegion) before
+            // extracting candidates — safe even when the tile's working set
+            // exceeds the region memory budget. Fully suspending/cancellable:
+            // no runBlocking anywhere.
             val items = canvasModel.queryItems(worldRect)
 
             // 4. Check Cancellation
@@ -1116,35 +1134,121 @@ class TileManager(
         }
     }
 
+    /**
+     * Resets all scheduling and cache state.
+     *
+     * Atomicity matters here: the whole reset happens under [pendingLock] (with
+     * [generatingKeys] acquired inside, per the lock-ordering contract). The
+     * previous two-phase version (GK first, release, then PL) allowed a render-
+     * thread [queueTileGeneration] to slip in between the phases: it would re-add
+     * its key to `generatingKeys` and queue a pending job, which the second phase
+     * then deleted — leaving the key stuck in `generatingKeys` forever. Since
+     * [queueTileGeneration] early-returns for keys already in that set, the tile
+     * could never be regenerated again.
+     *
+     * In-flight generation coroutines are NOT cancelled here: they validate
+     * their result against [renderVersion] before committing, so stale results
+     * are discarded naturally. Callers that need a hard version bump should
+     * combine this with `renderVersion.incrementAndGet()`.
+     */
     fun clear() {
-        synchronized(generatingKeys) {
-            tileCache.clear()
-            generatingKeys.clear()
-            lastVisibleCount = 0
-        }
         synchronized(pendingLock) {
+            // Drop queued work first so no new job can be picked while we reset.
             pendingJobsByKey.clear()
             pendingJobsByRegion.clear()
             currentProcessingRegion = null
+
+            synchronized(generatingKeys) {
+                generatingKeys.clear()
+            }
+            generationJobs.clear()
+
+            tileCache.clear()
+            lastVisibleCount = 0
         }
     }
 
+    /**
+     * Cancels all background work and resets state. Called when the owning
+     * renderer is being torn down; no further [render] calls are expected.
+     */
     fun destroy() {
+        // Stop event collectors before touching state so no model event can
+        // re-enqueue work after the reset below.
         initJobs.forEach { it.cancel() }
         initJobs.clear()
-        generationJobs.values.forEach { it.cancel() }
-        generationJobs.clear()
 
         synchronized(pendingLock) {
+            // Cancel in-flight jobs while holding PL so their completion
+            // handlers (which re-enter scheduleJobs) observe the empty queues.
+            generationJobs.values.forEach { it.cancel() }
+            generationJobs.clear()
+
             pendingJobsByKey.clear()
             pendingJobsByRegion.clear()
+            currentProcessingRegion = null
+
+            synchronized(generatingKeys) {
+                generatingKeys.clear()
+            }
+
+            tileCache.clear()
+            lastVisibleCount = 0
         }
 
         updateChannel.close()
-        clear()
     }
 
     // --- Private Helpers ---
+
+    /**
+     * Routes a model event to tile maintenance. Called on the event-collector
+     * coroutine; must never throw (the collector guards with try/catch, but
+     * keep this method total anyway).
+     */
+    private fun handleModelEvent(event: InfiniteCanvasModel.ModelEvent) {
+        when (event) {
+            is InfiniteCanvasModel.ModelEvent.ItemsRemoved -> {
+                hideItemsInCache(event.items)
+                val bounds = RectF()
+                event.items.forEach { bounds.union(it.bounds) }
+                refreshTiles(bounds)
+            }
+
+            is InfiniteCanvasModel.ModelEvent.ItemsAdded -> {
+                // NOTE: incremental painting (updateTilesWithItems) is
+                // deliberately NOT done here. Every mutation path that emits
+                // this event already paints its items directly
+                // (CanvasControllerImpl does it synchronously on Main for instant
+                // ink feedback). Painting here as well doubled the bitmap work
+                // per stroke — two full tile-copy+redraw passes per committed
+                // stroke. This handler is the consistency net only: queue an
+                // async regeneration of the affected area (anti-blink keeps
+                // stale content until ready).
+                val bounds = RectF()
+                event.items.forEach { bounds.union(it.bounds) }
+                refreshTiles(bounds)
+            }
+
+            is InfiniteCanvasModel.ModelEvent.BulkItemsAdded -> {
+                refreshTiles(event.bounds)
+            }
+
+            is InfiniteCanvasModel.ModelEvent.ContentCleared -> {
+                clear()
+                notifyTileReady()
+            }
+
+            is InfiniteCanvasModel.ModelEvent.RegionLoaded -> {
+                regionLoadedChannel.trySend(event.bounds)
+            }
+
+            is InfiniteCanvasModel.ModelEvent.ItemsUpdated -> {
+                // Direct paint path (controller-driven); tiles are refreshed by
+                // the accompanying bounds-based invalidation at the call site.
+            }
+        }
+    }
 
     private fun calculateLOD(scale: Float): Int {
         val rawLOD = log2(1.0f / scale) + CanvasConfig.LOD_BIAS

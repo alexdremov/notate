@@ -12,6 +12,16 @@ class HistoryManager {
         private const val MAX_HISTORY_SIZE = 100
     }
 
+    /**
+     * Invoked when an action becomes permanently unreachable: it either fell off
+     * the bottom of a full stack or was dropped by [clear]. Used by the model to
+     * release external resources referenced by the action (e.g. stash files of
+     * [HistoryAction.RemoveStashed]), which would otherwise leak on disk.
+     *
+     * Must be cheap and non-suspending; called while the model mutex is held.
+     */
+    var onActionDiscarded: ((HistoryAction) -> Unit)? = null
+
     private val undoStack = ArrayDeque<HistoryAction>()
     private val redoStack = ArrayDeque<HistoryAction>()
 
@@ -76,6 +86,13 @@ class HistoryManager {
     }
 
     fun clear() {
+        // Notify before wiping so resource-bearing actions can release files.
+        val discarded = ArrayList<HistoryAction>(undoStack.size + redoStack.size + currentBatch.size)
+        discarded.addAll(undoStack)
+        discarded.addAll(redoStack)
+        discarded.addAll(currentBatch)
+        discarded.forEach { onActionDiscarded?.invoke(it) }
+
         undoStack.clear()
         redoStack.clear()
         currentBatch.clear()
@@ -84,7 +101,11 @@ class HistoryManager {
 
     private fun limitStackSize(stack: ArrayDeque<HistoryAction>) {
         while (stack.size > MAX_HISTORY_SIZE) {
-            stack.removeLast() // Remove oldest (last in deque, since we use push/addFirst)
+            val oldest = stack.removeLast() // Remove oldest (last in deque, since we use push/addFirst)
+            // The oldest undo entry is unreachable forever. The oldest redo entry
+            // is also unreachable: redoStack is cleared on every new action, and
+            // entries only leave it via redoActionOnly (from the top).
+            onActionDiscarded?.invoke(oldest)
         }
     }
 }

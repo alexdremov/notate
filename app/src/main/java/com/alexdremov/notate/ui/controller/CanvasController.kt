@@ -60,11 +60,6 @@ interface CanvasController {
         y: Float,
     ): com.alexdremov.notate.model.CanvasItem?
 
-    fun getItemAtSync(
-        x: Float,
-        y: Float,
-    ): com.alexdremov.notate.model.CanvasItem?
-
     suspend fun getItemsInRect(rect: android.graphics.RectF): List<com.alexdremov.notate.model.CanvasItem>
 
     suspend fun getItemsInPath(path: android.graphics.Path): List<com.alexdremov.notate.model.CanvasItem>

@@ -66,7 +66,7 @@ class RegionManagerOverflowTest {
             )
 
         val region = RegionData(id)
-        region.items.add(stroke)
+        region.items = region.items + listOf(stroke)
         return region
     }
 
@@ -78,13 +78,13 @@ class RegionManagerOverflowTest {
             val r3 = RegionId(0, 2)
             val r4 = RegionId(0, 3) // Will force eviction of R1
 
-            // 1. Add R1, R2, R3 (fills 3KB / 3KB limit)
+            // 1. Add R1, then PIN IT BEFORE any budget pressure exists.
+            // (Phase-3 raw-byte accounting evicts eldest as soon as the budget
+            // is exceeded — pinning after the fill can be too late.)
             regionManager.addItem(createHeavyRegion(r1).items[0])
+            regionManager.setPinnedRegions(setOf(r1))
             regionManager.addItem(createHeavyRegion(r2).items[0])
             regionManager.addItem(createHeavyRegion(r3).items[0])
-
-            // Pin R1
-            regionManager.setPinnedRegions(setOf(r1))
 
             // 2. Add R4. This exceeds limit. R1 (LRU) should be evicted.
             regionManager.addItem(createHeavyRegion(r4).items[0])

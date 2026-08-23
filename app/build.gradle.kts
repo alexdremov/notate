@@ -72,6 +72,8 @@ android {
             isReturnDefaultValues = true
             all {
                 it.maxHeapSize = "2g"
+                // TEMP forensics: stream test stdout to console so the
+                // stall-watchdog can distinguish a healthy run from a livelock.
             }
         }
     }

@@ -88,7 +88,7 @@ class CanvasImagePersistenceTest {
                 logicalBounds = android.graphics.RectF(0f, 0f, 100f, 100f),
                 bounds = android.graphics.RectF(0f, 0f, 100f, 100f),
             )
-        regionData.items.add(imageItem)
+        regionData.items = regionData.items + listOf(imageItem)
 
         // Act
         storage.saveRegion(regionData)

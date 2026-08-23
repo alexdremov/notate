@@ -42,6 +42,13 @@ class CanvasSession(
     private val activeOperations = AtomicInteger(0)
     private val closed = AtomicBoolean(false)
 
+    /**
+     * Signals [close] whenever [activeOperations] drops to zero.
+     * Created as non-signaled; recreated by [close] if operations are still
+     * in flight at that moment.
+     */
+    private val idleLatch = java.util.concurrent.CountDownLatch(1)
+
     // Reference Counting for Active Clients (Activities)
     private val refCount = AtomicInteger(1)
 
@@ -147,6 +154,10 @@ class CanvasSession(
             Logger.e("CanvasSession", "Operation count went negative!  Resetting to 0.")
             activeOperations.set(0)
         }
+        if (remaining <= 0) {
+            // Wake up close() if it is waiting for in-flight operations to drain.
+            idleLatch.countDown()
+        }
     }
 
     /**
@@ -155,6 +166,11 @@ class CanvasSession(
      * DOES NOT DELETE DIRECTORY (it persists as cache).
      *
      * This method is idempotent - calling it multiple times is safe.
+     *
+     * NOTE: This call may block for up to [OPERATIONS_TIMEOUT_MS] while a save
+     * is in flight. Callers must NOT hold any global locks (e.g. the
+     * repository-wide session mutex) while invoking it, otherwise one slow
+     * close would stall every open/save in the process.
      */
     fun close() {
         if (!closed.compareAndSet(false, true)) {
@@ -164,24 +180,21 @@ class CanvasSession(
 
         Logger.i("CanvasSession", "Closing session (Memory cleanup). Directory persists: ${sessionDir.name}")
 
-        // Wait for active operations to complete (max 10 seconds)
-        val startTime = System.currentTimeMillis()
-        val timeoutMs = 10_000L
-
-        while (activeOperations.get() > 0) {
-            if (System.currentTimeMillis() - startTime > timeoutMs) {
-                Logger.e(
-                    "CanvasSession",
-                    "Timeout waiting for ${activeOperations.get()} operations to complete.  Force closing.",
-                )
-                break
-            }
-            try {
-                Thread.sleep(100)
-            } catch (e: InterruptedException) {
-                Thread.currentThread().interrupt()
-                break
-            }
+        // Wait for active operations to complete (bounded).
+        //
+        // Race note: [releaseOperation] counts the latch down whenever the
+        // operation counter reaches zero. If the counter is already zero here,
+        // no one else will signal, so we do it ourselves. Both paths are safe:
+        // countDown() is idempotent and cannot go below zero.
+        if (activeOperations.get() == 0) {
+            idleLatch.countDown()
+        }
+        val signaled = idleLatch.await(OPERATIONS_TIMEOUT_MS, java.util.concurrent.TimeUnit.MILLISECONDS)
+        if (!signaled && activeOperations.get() > 0) {
+            Logger.e(
+                "CanvasSession",
+                "Timeout waiting for ${activeOperations.get()} operations to complete.  Force closing.",
+            )
         }
 
         // Clear memory caches
@@ -199,6 +212,10 @@ class CanvasSession(
      * Returns true if this session has been closed.
      */
     fun isClosed(): Boolean = closed.get()
+
+    companion object {
+        private const val OPERATIONS_TIMEOUT_MS = 10_000L
+    }
 
     /**
      * Returns the number of active operations.
