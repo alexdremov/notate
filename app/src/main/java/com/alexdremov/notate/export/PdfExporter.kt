@@ -10,6 +10,7 @@ import android.graphics.pdf.PdfDocument
 import android.net.Uri
 import com.alexdremov.notate.config.CanvasConfig
 import com.alexdremov.notate.data.CanvasType
+import com.alexdremov.notate.data.RecognizedTextData
 import com.alexdremov.notate.model.BackgroundStyle
 import com.alexdremov.notate.model.CanvasImage
 import com.alexdremov.notate.model.CanvasItem
@@ -233,6 +234,13 @@ object PdfExporter {
                         }
                     }
 
+                    // Render Recognized Text (OCR)
+                    for (ocr in region.recognizedTexts) {
+                        if (RectF.intersects(RectF(ocr.x, ocr.y, ocr.x + ocr.width, ocr.y + ocr.height), bounds)) {
+                            renderRecognizedTextToPdf(contentStream, ocr, bounds, height)
+                        }
+                    }
+
                     processedRegions++
                     if (processedRegions % 5 == 0 || processedRegions == totalRegions) {
                         val progress = 20 + ((processedRegions.toFloat() / totalRegions) * 70).toInt()
@@ -252,6 +260,64 @@ object PdfExporter {
             throw e
         } finally {
             document.close()
+        }
+    }
+
+    private fun renderRecognizedTextToPdf(
+        stream: PDPageContentStream,
+        item: RecognizedTextData,
+        bounds: RectF,
+        pageHeight: Float,
+    ) {
+        val lines = item.text.split('\n')
+        val lineCount = lines.size.coerceAtLeast(1)
+
+        val totalWidth = item.width
+        val totalHeight = item.height
+        val fontSize = (totalHeight / lineCount).coerceAtLeast(1f)
+
+        val font = PDType1Font.HELVETICA
+
+        var textStarted = false
+        try {
+            stream.beginText()
+            textStarted = true
+            stream.setRenderingMode(RenderingMode.NEITHER)
+            stream.setFont(font, fontSize)
+
+            for (i in lines.indices) {
+                val lineText = lines[i].filter { it.code in 32..126 || it.code in 160..255 }
+                if (lineText.isEmpty()) continue
+
+                val linePdfX = item.x - bounds.left
+                // PDF coordinates are bottom-up. Baseline of line 'i' is:
+                // pageHeight - topOffset - (i + 1) * fontSize
+                val linePdfY = pageHeight - (item.y - bounds.top) - (i + 1) * fontSize
+
+                // stringWidth is in 1/1000 units of the font size
+                val naturalWidth = font.getStringWidth(lineText) / 1000f * fontSize
+
+                if (naturalWidth > 0) {
+                    val hScale = totalWidth / naturalWidth
+                    // Apply horizontal scaling and absolute translation
+                    stream.setTextMatrix(Matrix(hScale, 0f, 0f, 1f, linePdfX, linePdfY))
+                } else {
+                    // Absolute translation without scaling
+                    stream.setTextMatrix(Matrix(1f, 0f, 0f, 1f, linePdfX, linePdfY))
+                }
+
+                stream.showText(lineText)
+            }
+        } catch (e: Exception) {
+            Logger.w("PdfExporter", "Failed to add recognized text layer: ${e.message}")
+        } finally {
+            if (textStarted) {
+                try {
+                    stream.endText()
+                } catch (e: Exception) {
+                    Logger.e("PdfExporter", "Error ending recognized text block", e)
+                }
+            }
         }
     }
 

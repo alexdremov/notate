@@ -131,7 +131,16 @@ class RegionStorage(
             }
         }
 
-        val proto = RegionProto(data.id.x, data.id.y, strokeData, imageData, textData, linkData)
+        val proto =
+            RegionProto(
+                data.id.x,
+                data.id.y,
+                strokeData,
+                imageData,
+                textData,
+                linkData,
+                data.recognizedTexts,
+            )
         val file = getRegionFile(data.id)
 
         return try {
@@ -214,7 +223,10 @@ class RegionStorage(
                 data.items.add(linkItem)
             }
 
-            Logger.d("RegionStorage", "Loaded region $id (${data.items.size} items)")
+            // Restore Recognized Text
+            data.recognizedTexts.addAll(proto.recognizedTexts)
+
+            Logger.d("RegionStorage", "Loaded region $id (${data.items.size} items, ${data.recognizedTexts.size} OCR blocks)")
             data
         } catch (e: Exception) {
             Logger.e(TAG, "Failed to load region $id (File: ${file.absolutePath}, Size: ${file.length()})", e)

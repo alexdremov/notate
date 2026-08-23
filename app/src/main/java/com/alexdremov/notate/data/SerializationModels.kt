@@ -72,6 +72,16 @@ data class LinkItemData(
 )
 
 @Serializable
+data class RecognizedTextData(
+    @ProtoNumber(1) val text: String,
+    @ProtoNumber(2) val x: Float,
+    @ProtoNumber(3) val y: Float,
+    @ProtoNumber(4) val width: Float,
+    @ProtoNumber(5) val height: Float,
+    @ProtoNumber(6) val strokeOrders: List<Long> = emptyList(),
+)
+
+@Serializable
 data class RegionProto(
     @ProtoNumber(1) val idX: Int,
     @ProtoNumber(2) val idY: Int,
@@ -79,6 +89,7 @@ data class RegionProto(
     @ProtoNumber(4) val images: List<CanvasImageData> = emptyList(),
     @ProtoNumber(5) val texts: List<TextItemData> = emptyList(),
     @ProtoNumber(6) val links: List<LinkItemData> = emptyList(),
+    @ProtoNumber(7) val recognizedTexts: List<RecognizedTextData> = emptyList(),
 )
 
 @Serializable

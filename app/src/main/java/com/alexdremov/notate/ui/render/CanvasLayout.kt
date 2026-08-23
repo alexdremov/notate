@@ -84,6 +84,22 @@ class InfiniteLayout : CanvasLayout {
                 canvas.restoreToCount(saveCount)
             }
 
+            // OCR Debug Layer
+            if (visibleRect != null &&
+                com.alexdremov.notate.data.PreferencesManager
+                    .isDebugShowOcrEnabled(renderer.context)
+            ) {
+                renderer.renderOcrDebugLayer(canvas, visibleRect)
+            }
+
+            // Lines Debug Layer
+            if (visibleRect != null &&
+                com.alexdremov.notate.data.PreferencesManager
+                    .isDebugShowLinesEnabled(renderer.context)
+            ) {
+                renderer.renderLinesDebugLayer(canvas, visibleRect)
+            }
+
             canvas.restore()
         }
     }
@@ -184,6 +200,20 @@ class FixedPageLayout(
                     if (useLayer && activeEraser != null) {
                         tileManager.drawEraserOverlay(canvas, activeEraser, zoomLevel)
                         canvas.restoreToCount(saveCount)
+                    }
+
+                    // OCR Debug Layer
+                    if (com.alexdremov.notate.data.PreferencesManager
+                            .isDebugShowOcrEnabled(renderer.context)
+                    ) {
+                        renderer.renderOcrDebugLayer(canvas, visibleRect)
+                    }
+
+                    // Lines Debug Layer
+                    if (com.alexdremov.notate.data.PreferencesManager
+                            .isDebugShowLinesEnabled(renderer.context)
+                    ) {
+                        renderer.renderLinesDebugLayer(canvas, visibleRect)
                     }
 
                     canvas.restore()

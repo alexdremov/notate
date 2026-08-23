@@ -518,6 +518,7 @@ class OnyxCanvasView
         override fun onDetachedFromWindow() {
             super.onDetachedFromWindow()
             viewScope.cancel()
+            canvasController.close()
             minimapDrawer?.detach()
             canvasRenderer.destroy()
         }

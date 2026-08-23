@@ -27,8 +27,13 @@ import com.alexdremov.notate.ui.settings.InputSettingsPanel
 import com.alexdremov.notate.ui.settings.InputSettingsState
 import com.alexdremov.notate.ui.settings.InterfaceSettingsPanel
 import com.alexdremov.notate.ui.settings.InterfaceSettingsState
+import com.alexdremov.notate.ui.settings.OcrSettingsPanel
+import com.alexdremov.notate.ui.settings.OcrSettingsState
 import com.alexdremov.notate.ui.theme.NotateTheme
 import com.alexdremov.notate.vm.DrawingViewModel
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
 class SettingsSidebarController(
@@ -70,6 +75,10 @@ class SettingsSidebarController(
 
         mainMenuView.findViewById<View>(R.id.menu_item_writing).setOnClickListener {
             showWritingMenu()
+        }
+
+        mainMenuView.findViewById<View>(R.id.menu_item_ocr).setOnClickListener {
+            showOcrMenu()
         }
 
         val docMenuItem = mainMenuView.findViewById<View>(R.id.menu_item_document)
@@ -391,6 +400,36 @@ class SettingsSidebarController(
             }
         }
 
+        debugView.findViewById<Switch>(R.id.switch_debug_show_ocr).apply {
+            isChecked =
+                com.alexdremov.notate.data.PreferencesManager
+                    .isDebugShowOcrEnabled(context)
+            setOnCheckedChangeListener { _, isChecked ->
+                com.alexdremov.notate.data.PreferencesManager
+                    .setDebugShowOcrEnabled(context, isChecked)
+                (context as? com.alexdremov.notate.CanvasActivity)
+                    ?.findViewById<com.alexdremov.notate.ui.OnyxCanvasView>(
+                        R.id.canvasView,
+                    )?.getRenderer()
+                    ?.invalidate()
+            }
+        }
+
+        debugView.findViewById<Switch>(R.id.switch_debug_show_lines).apply {
+            isChecked =
+                com.alexdremov.notate.data.PreferencesManager
+                    .isDebugShowLinesEnabled(context)
+            setOnCheckedChangeListener { _, isChecked ->
+                com.alexdremov.notate.data.PreferencesManager
+                    .setDebugShowLinesEnabled(context, isChecked)
+                (context as? com.alexdremov.notate.CanvasActivity)
+                    ?.findViewById<com.alexdremov.notate.ui.OnyxCanvasView>(
+                        R.id.canvasView,
+                    )?.getRenderer()
+                    ?.invalidate()
+            }
+        }
+
         val spinnerLogLevel: Spinner = debugView.findViewById(R.id.spinner_debug_log_level)
         val levels =
             com.alexdremov.notate.util.Logger.Level
@@ -476,6 +515,39 @@ class SettingsSidebarController(
             // Optional: Close sidebar? Or stay to generate more? Let's stay.
             Toast.makeText(context, "Generating pattern...", Toast.LENGTH_SHORT).show()
         }
+    }
+
+    private fun showOcrMenu() {
+        contentFrame.removeAllViews()
+        val composeView =
+            ComposeView(context).apply {
+                setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed)
+                setContent {
+                    NotateTheme {
+                        val isOcrEnabled by viewModel.isOcrEnabled.collectAsState()
+                        val ocrLanguage by viewModel.ocrLanguage.collectAsState()
+                        val isOcrDownloading by viewModel.isOcrDownloading.collectAsState()
+
+                        Column(
+                            modifier =
+                                Modifier
+                                    .fillMaxWidth()
+                                    .padding(16.dp),
+                        ) {
+                            OcrSettingsPanel(
+                                state = OcrSettingsState(isOcrEnabled, ocrLanguage, isOcrDownloading),
+                                onOcrEnabledChange = { viewModel.setOcrEnabled(it) },
+                                onOcrLanguageChange = { viewModel.setOcrLanguage(it) },
+                                onRecognizeAgain = { viewModel.recognizeAll() },
+                            )
+                        }
+                    }
+                }
+            }
+        contentFrame.addView(composeView)
+
+        tvTitle.text = "Handwriting OCR"
+        btnBack.visibility = View.VISIBLE
     }
 
     private fun showBackgroundSettings() {

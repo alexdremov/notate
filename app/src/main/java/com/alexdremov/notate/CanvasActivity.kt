@@ -264,6 +264,8 @@ class CanvasActivity : AppCompatActivity() {
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
+        viewModel.setControllerProvider { binding.canvasView.getController() }
+
         currentCanvasPath = intent.getStringExtra("CANVAS_PATH")
 
         enableImmersiveMode()

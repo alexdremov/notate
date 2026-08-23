@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Slider
@@ -222,6 +223,84 @@ fun PdfSettingsPanel(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+        }
+    }
+}
+
+data class OcrSettingsState(
+    val ocrEnabled: Boolean,
+    val ocrLanguage: String,
+    val isDownloading: Boolean = false,
+)
+
+@Composable
+fun OcrSettingsPanel(
+    state: OcrSettingsState,
+    onOcrEnabledChange: (Boolean) -> Unit,
+    onOcrLanguageChange: (String) -> Unit,
+    onRecognizeAgain: () -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        SettingsToggle(
+            title = "Handwriting Recognition",
+            checked = state.ocrEnabled,
+            onCheckedChange = onOcrEnabledChange,
+        )
+        Text(
+            text = "Converts handwriting into searchable text in PDFs.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+
+        if (state.ocrEnabled) {
+            androidx.compose.material3.Button(
+                onClick = onRecognizeAgain,
+                modifier =
+                    androidx.compose.ui.Modifier
+                        .fillMaxWidth(),
+                enabled = !state.isDownloading,
+            ) {
+                Text("Recognize All Again")
+            }
+        }
+
+        if (state.isDownloading) {
+            Column(Modifier.fillMaxWidth().padding(top = 8.dp)) {
+                Text(
+                    text = "Downloading language model...",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+                LinearProgressIndicator(
+                    modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                )
+            }
+        }
+
+        if (state.ocrEnabled) {
+            HorizontalDivider()
+            Text(
+                text = "Language",
+                style = MaterialTheme.typography.bodyLarge,
+            )
+            val languages = listOf("en-US", "de-DE", "fr-FR", "es-ES", "it-IT")
+            Column {
+                languages.forEach { lang ->
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .clickable { onOcrLanguageChange(lang) }
+                            .padding(vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        RadioButton(
+                            selected = state.ocrLanguage == lang,
+                            onClick = { onOcrLanguageChange(lang) },
+                        )
+                        Text(text = lang, modifier = Modifier.padding(start = 8.dp))
+                    }
+                }
+            }
         }
     }
 }

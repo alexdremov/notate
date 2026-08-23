@@ -153,6 +153,15 @@ interface CanvasController {
     fun setOnContentChangedListener(listener: () -> Unit)
 
     fun setProgressCallback(callback: (isVisible: Boolean, message: String?, progress: Int) -> Unit)
+
+    suspend fun downloadOcrModel(
+        lang: String,
+        onProgress: (Boolean) -> Unit,
+    ): Boolean
+
+    suspend fun recognizeAll()
+
+    fun close()
 }
 
 interface ViewportController {

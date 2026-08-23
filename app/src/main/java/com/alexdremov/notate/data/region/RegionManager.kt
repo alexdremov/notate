@@ -10,6 +10,7 @@ import com.alexdremov.notate.config.CanvasConfig
 import com.alexdremov.notate.data.CanvasImageData
 import com.alexdremov.notate.data.CanvasSerializer
 import com.alexdremov.notate.data.LinkItemData
+import com.alexdremov.notate.data.RecognizedTextData
 import com.alexdremov.notate.data.StrokeData
 import com.alexdremov.notate.model.CanvasImage
 import com.alexdremov.notate.model.CanvasItem
@@ -271,16 +272,72 @@ class RegionManager(
         return deferred.await()
     }
 
+    /**
+     * Injects recognized text metadata into the corresponding spatial region.
+     */
+    suspend fun addRecognizedText(textData: RecognizedTextData) {
+        val rid =
+            RegionId(
+                floor(textData.x / regionSize).toInt(),
+                floor(textData.y / regionSize).toInt(),
+            )
+        val data = getRegion(rid)
+
+        stateLock.write {
+            // Atomic update pattern for LruCache consistency
+            resizingId = rid
+            regionCache.remove(rid)
+            resizingId = null
+
+            data.invalidateSize()
+            data.recognizedTexts.add(textData)
+            data.isDirty = true
+            regionCache.put(rid, data)
+        }
+    }
+
+    /**
+     * Removes recognized text blocks that intersect with the given rectangle.
+     */
+    suspend fun removeRecognizedTextInRect(rect: RectF) {
+        val ids = getRegionIdsInRect(rect)
+        for (id in ids) {
+            val region = getRegion(id)
+            stateLock.write {
+                val toRemove =
+                    region.recognizedTexts.filter {
+                        RectF.intersects(RectF(it.x, it.y, it.x + it.width, it.y + it.height), rect)
+                    }
+                if (toRemove.isNotEmpty()) {
+                    resizingId = id
+                    regionCache.remove(id)
+                    resizingId = null
+
+                    region.recognizedTexts.removeAll(toRemove)
+                    region.isDirty = true
+                    region.invalidateSize()
+                    regionCache.put(id, region)
+                }
+            }
+        }
+    }
+
     private suspend fun loadRegionFromDisk(id: RegionId): RegionData {
         try {
             var region = storage.loadRegion(id)
-            if (region != null && region.items !is CopyOnWriteArrayList) {
-                region = region.copy(items = CopyOnWriteArrayList(region.items))
+            if (region != null) {
+                // Ensure thread-safe implementations
+                if (region.items !is CopyOnWriteArrayList) {
+                    region = region.copy(items = CopyOnWriteArrayList(region.items))
+                }
+                if (region.recognizedTexts !is CopyOnWriteArrayList) {
+                    region = region.copy(recognizedTexts = CopyOnWriteArrayList(region.recognizedTexts))
+                }
                 region.rebuildQuadtree(regionSize)
             }
             if (region == null) {
                 stateLock.write { removeRegionIndex(id) }
-                region = RegionData(id, CopyOnWriteArrayList())
+                region = RegionData(id)
             }
             stateLock.write {
                 val existing = regionCache.get(id) ?: overflowRegions[id]

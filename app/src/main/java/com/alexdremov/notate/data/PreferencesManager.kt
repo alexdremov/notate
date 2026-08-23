@@ -59,6 +59,8 @@ object PreferencesManager {
     private const val KEY_PDF_EXPORT_SCALE = "pdf_export_scale"
     private const val KEY_SYNC_PDF_TYPE = "sync_pdf_type"
     private const val KEY_FIXED_PAGE_CENTER_HORIZONTAL = "fixed_page_center_horizontal"
+    private const val KEY_OCR_ENABLED = "ocr_enabled"
+    private const val KEY_OCR_LANGUAGE = "ocr_language"
 
     // Debug Preferences
     private const val KEY_DEBUG_USE_SIMPLE_RENDERER = "debug_use_simple_renderer"
@@ -67,6 +69,8 @@ object PreferencesManager {
     private const val KEY_DEBUG_SHOW_BOUNDING_BOX = "debug_show_bounding_box"
     private const val KEY_DEBUG_SHOW_REGIONS = "debug_show_regions"
     private const val KEY_DEBUG_ENABLE_PROFILING = "debug_enable_profiling"
+    private const val KEY_DEBUG_SHOW_OCR = "debug_show_ocr"
+    private const val KEY_DEBUG_SHOW_LINES = "debug_show_lines"
 
     private const val KEY_FLOAT_WINDOW_RECT = "float_window_rect"
 
@@ -115,6 +119,24 @@ object PreferencesManager {
         enabled: Boolean,
     ) {
         getPrefs(context).edit().putBoolean(KEY_FIXED_PAGE_CENTER_HORIZONTAL, enabled).apply()
+    }
+
+    fun isOcrEnabled(context: Context): Boolean = getPrefs(context).getBoolean(KEY_OCR_ENABLED, false)
+
+    fun setOcrEnabled(
+        context: Context,
+        enabled: Boolean,
+    ) {
+        getPrefs(context).edit().putBoolean(KEY_OCR_ENABLED, enabled).apply()
+    }
+
+    fun getOcrLanguage(context: Context): String = getPrefs(context).getString(KEY_OCR_LANGUAGE, "en-US") ?: "en-US"
+
+    fun setOcrLanguage(
+        context: Context,
+        lang: String,
+    ) {
+        getPrefs(context).edit().putString(KEY_OCR_LANGUAGE, lang).apply()
     }
 
     fun getMinLogLevel(context: Context): Int = getPrefs(context).getInt(KEY_MIN_LOG_LEVEL, 4) // Default to NONE (4)
@@ -180,6 +202,24 @@ object PreferencesManager {
         enabled: Boolean,
     ) {
         getPrefs(context).edit().putBoolean(KEY_DEBUG_ENABLE_PROFILING, enabled).apply()
+    }
+
+    fun isDebugShowOcrEnabled(context: Context): Boolean = getPrefs(context).getBoolean(KEY_DEBUG_SHOW_OCR, false)
+
+    fun setDebugShowOcrEnabled(
+        context: Context,
+        enabled: Boolean,
+    ) {
+        getPrefs(context).edit().putBoolean(KEY_DEBUG_SHOW_OCR, enabled).apply()
+    }
+
+    fun isDebugShowLinesEnabled(context: Context): Boolean = getPrefs(context).getBoolean(KEY_DEBUG_SHOW_LINES, false)
+
+    fun setDebugShowLinesEnabled(
+        context: Context,
+        enabled: Boolean,
+    ) {
+        getPrefs(context).edit().putBoolean(KEY_DEBUG_SHOW_LINES, enabled).apply()
     }
 
     fun isScribbleToEraseEnabled(context: Context): Boolean = getPrefs(context).getBoolean(KEY_SCRIBBLE_TO_ERASE, true)
