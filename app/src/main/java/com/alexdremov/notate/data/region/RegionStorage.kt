@@ -175,8 +175,12 @@ open class RegionStorage(
 
     @OptIn(ExperimentalSerializationApi::class)
     open fun loadRegion(id: RegionId): RegionData? {
-        com.alexdremov.notate.data.region.RegionForensics
-            .log("LOAD-FILE id=$id exists=${getRegionFile(id).exists()}")
+        if (com.alexdremov.notate.data.region.RegionForensics.enabled) {
+            // Gated BEFORE evaluation: building this string performs a disk
+            // stat (getRegionFile().exists()) — never do that on the hot path.
+            com.alexdremov.notate.data.region.RegionForensics
+                .log("LOAD-FILE id=$id exists=${getRegionFile(id).exists()}")
+        }
         val file = getRegionFile(id)
 
         // JIT Extraction Strategy
@@ -260,6 +264,15 @@ open class RegionStorage(
             if (!file.delete()) {
                 Logger.w(TAG, "Failed to delete region file: $file")
             }
+        }
+    }
+
+    /** Removes the spatial index so a reopen treats the store as wiped,
+     *  not as "index lost, rebuild from whatever files remain". */
+    open fun deleteIndex() {
+        val file = File(baseDir, FILE_INDEX)
+        if (file.exists() && !file.delete()) {
+            Logger.w(TAG, "Failed to delete index file: $file")
         }
     }
 
@@ -399,33 +412,37 @@ open class RegionStorage(
                 throw IOException("Temp file verification failed: expected ${bytes.size} bytes, got ${tmpFile.length()}")
             }
 
-            if (file.exists()) {
-                if (!file.delete()) {
-                    // Delete failed - try overwriting instead
-                    Logger.w(TAG, "Atomic write: Failed to delete existing target $file, attempting overwrite")
-                    file.writeBytes(bytes)
-                    // Verify the overwrite
-                    if (file.length() != bytes.size.toLong()) {
-                        throw IOException("Overwrite verification failed")
-                    }
-                    tmpFile.delete()
-                    return
-                }
-            }
-            if (!tmpFile.renameTo(file)) {
-                // Rename failed - try copy instead
-                Logger.w(TAG, "Atomic write: Failed to rename temp file to $file, attempting copy")
-                tmpFile.inputStream().use { input ->
-                    file.outputStream().use { output ->
-                        input.copyTo(output)
-                    }
-                }
-                // Verify the copy
+            // RENAME FIRST: POSIX rename(2) atomically REPLACES an existing
+            // target, so the previous version stays intact up to the last
+            // instant. The old delete-then-rename order opened a crash window
+            // where NEITHER version existed on disk.
+            if (tmpFile.renameTo(file)) return
+
+            Logger.w(TAG, "Atomic write: rename failed for $file, attempting fallbacks")
+            if (file.exists() && !file.delete()) {
+                // Fallback 1: overwrite in place (non-atomic) and verify.
+                Logger.w(TAG, "Atomic write: Failed to delete existing target $file, attempting overwrite")
+                file.writeBytes(bytes)
+                // Verify the overwrite
                 if (file.length() != bytes.size.toLong()) {
-                    throw IOException("Copy verification failed")
+                    throw IOException("Overwrite verification failed")
                 }
                 tmpFile.delete()
+                return
             }
+            if (tmpFile.renameTo(file)) return
+            // Fallback 2: copy + verify (cross-filesystem safety net).
+            Logger.w(TAG, "Atomic write: Failed to rename temp file to $file, attempting copy")
+            tmpFile.inputStream().use { input ->
+                file.outputStream().use { output ->
+                    input.copyTo(output)
+                }
+            }
+            // Verify the copy
+            if (file.length() != bytes.size.toLong()) {
+                throw IOException("Copy verification failed")
+            }
+            tmpFile.delete()
         } catch (e: Exception) {
             Logger.e(TAG, "Atomic write failed for $file", e)
             if (tmpFile.exists()) tmpFile.delete()

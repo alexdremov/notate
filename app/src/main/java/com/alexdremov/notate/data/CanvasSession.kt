@@ -43,9 +43,8 @@ class CanvasSession(
     private val closed = AtomicBoolean(false)
 
     /**
-     * Signals [close] whenever [activeOperations] drops to zero.
-     * Created as non-signaled; recreated by [close] if operations are still
-     * in flight at that moment.
+     * Signals [close] whenever [activeOperations] drops to zero. Single-use:
+     * [close] is terminal (CAS-guarded), so the latch is never re-armed.
      */
     private val idleLatch = java.util.concurrent.CountDownLatch(1)
 

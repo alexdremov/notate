@@ -36,6 +36,7 @@ class InfiniteCanvasModelTest {
         coEvery { regionManager.addItem(any()) } just Runs
         coEvery { regionManager.removeItems(any()) } just Runs
         coEvery { regionManager.clear() } just Runs
+        coEvery { regionManager.clearAndWipeStorage() } just Runs
 
         mockkObject(StrokeGeometry)
     }
@@ -116,7 +117,9 @@ class InfiniteCanvasModelTest {
             model.clear()
 
             assertThat(model.getContentBounds().isEmpty).isTrue()
-            coVerify { regionManager.clear() }
+            // User-initiated clear wipes PERSISTED strokes too, so a reopen
+            // cannot resurrect them (rebuildIndex has nothing to scan).
+            coVerify { regionManager.clearAndWipeStorage() }
         }
 
     @Test

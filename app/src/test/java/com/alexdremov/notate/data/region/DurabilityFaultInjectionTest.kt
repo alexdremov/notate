@@ -271,8 +271,158 @@ class DurabilityFaultInjectionTest {
             runBlocking { rm.queryItems(RectF(-50000f, -50000f, 50000f, 50000f)) }
         val orders = all.map { it.order }.toSet()
         assertTrue("good region lost!", setOf(1L, 2L).all { it in orders })
-        assertTrue("corrupt data leaked as items", all.none { it.order == 3L && false })
+        assertTrue("corrupt data leaked as items", all.none { it.order == 3L })
         rm.clear()
+    }
+
+    @Test
+    fun `dirty region whose eviction save fails stays discoverable and converges later`() {
+        val dir = tmp.newFolder()
+        val real = RegionStorage(dir).apply { init() }
+        val faulty = FaultyStorage(dir, real)
+        // Tiny budget forces constant eviction → dirty regions parked in limbo
+        // with saves in flight; every save FAILS while the fault is armed.
+        val rm = RegionManager(faulty, regionSize = 1000f, memoryLimitBytes = 8 * 1024L)
+        val expected = LinkedHashSet<Long>()
+
+        faulty.failNextSaves = 10_000
+        runBlocking {
+            repeat(40) { i ->
+                // Spread across many regions (like real handwriting sessions):
+                // a single-region storm would form ONE oversized region, which
+                // is unevictable and would never exercise limbo parking.
+                val s = stroke(i.toLong() + 1)
+                val shifted =
+                    s.copy(
+                        path = android.graphics.Path().apply {
+                            moveTo(s.bounds.left + (i % 5) * 900f, s.bounds.top + (i / 5) * 900f)
+                            lineTo(s.bounds.right + (i % 5) * 900f, s.bounds.bottom + (i / 5) * 900f)
+                        },
+                        bounds = RectF(
+                            s.bounds.left + (i % 5) * 900f,
+                            s.bounds.top + (i / 5) * 900f,
+                            s.bounds.right + (i % 5) * 900f,
+                            s.bounds.bottom + (i / 5) * 900f,
+                        ),
+                    )
+                rm.addItem(shifted)
+                expected.add(i.toLong() + 1)
+            }
+        }
+
+        // Settle: wait for all in-flight save jobs to drain their gates.
+        waitUntil("pending saves to settle") {
+            pendingSaveIds(rm).isEmpty()
+        }
+
+        // INVARIANT (orphan prevention): dirty copies whose persistence FAILED
+        // must remain discoverable — parked in limbo (or resident), never
+        // dropped into no-map. The pre-fix behaviour removed the limbo entry
+        // and handed its bytes to a fire-and-forget save: one IO failure later
+        // the instance sat in NO map, unreachable by saveAll or rescue.
+        // The 8KB budget guarantees evictions happened, so at least one dirty
+        // copy must be parked.
+        assertTrue(
+            "failed-save dirty copies were dropped instead of staying parked",
+            limboOf(rm).isNotEmpty(),
+        )
+
+        // Force sweeps PAST the sticky window. This is the discriminating
+        // moment: pre-fix, the sweeper dropped exactly these entries once the
+        // sticky window expired (their saves had already failed); they must
+        // survive every sweep while persistence keeps failing.
+        Thread.sleep(5_400) // LIMBO_STICKY_MS (5s) + margin
+        val sweep = RegionManager::class.java.getDeclaredMethod("sweepLimbo")
+        sweep.isAccessible = true
+        repeat(3) {
+            sweep.invoke(rm)
+            waitUntil("retry save to drain") { pendingSaveIds(rm).isEmpty() }
+        }
+        assertTrue(
+            "limbo emptied after sticky expiry — failed-save copies are being orphaned",
+            limboOf(rm).isNotEmpty(),
+        )
+
+        // Repair the drive: an explicit flush must converge disk to memory.
+        faulty.failNextSaves = 0
+        runBlocking { rm.saveAll() }
+
+        val probe = RegionManager(RegionStorage(dir).apply { init() }, regionSize = 1000f)
+        val diskOrders =
+            runBlocking { probe.queryItems(RectF(-50000f, -50000f, 50000f, 50000f)) }
+                .map { it.order }.toSet()
+        assertEquals(
+            "missing=${expected - diskOrders} extra=${diskOrders - expected}",
+            expected,
+            diskOrders,
+        )
+        probe.clear()
+        rm.clear()
+    }
+
+    /** Polls [predicate] up to 10s. */
+    private fun waitUntil(
+        what: String,
+        predicate: () -> Boolean,
+    ) {
+        val deadline = System.currentTimeMillis() + 10_000
+        while (!predicate()) {
+            if (System.currentTimeMillis() > deadline) {
+                throw AssertionError("Timed out waiting for $what")
+            }
+            Thread.sleep(25)
+        }
+    }
+
+    private fun pendingSaveIds(rm: RegionManager): Set<RegionId> {
+        val f = RegionManager::class.java.getDeclaredField("pendingSaveIds")
+        f.isAccessible = true
+        @Suppress("UNCHECKED_CAST")
+        return (f.get(rm) as Set<RegionId>).toSet()
+    }
+
+    @Suppress("UNCHECKED_CAST")
+    private fun limboOf(rm: RegionManager): Map<RegionId, RegionData> {
+        val f = RegionManager::class.java.getDeclaredField("limbo")
+        f.isAccessible = true
+        return f.get(rm) as Map<RegionId, RegionData>
+    }
+
+    @Test
+    fun `wipe removes persisted strokes so reopen cannot resurrect them`() {
+        val dir = tmp.newFolder()
+        val rm =
+            RegionManager(RegionStorage(dir).apply { init() }, regionSize = 1000f, memoryLimitBytes = 256 * 1024L)
+
+        runBlocking {
+            repeat(12) { i -> rm.addItem(stroke(i.toLong() + 1)) }
+        }
+        runBlocking { rm.saveAll() }
+
+        // Sanity: content IS persisted before the wipe.
+        val pre = RegionManager(RegionStorage(dir).apply { init() }, regionSize = 1000f)
+        val preOrders =
+            runBlocking { pre.queryItems(RectF(-10000f, -10000f, 10000f, 10000f)) }
+                .map { it.order }.toSet()
+        assertEquals((1L..12L).toSet(), preOrders)
+        pre.clear()
+
+        runBlocking { rm.clearAndWipeStorage() }
+
+        // Nothing left to resurrect: no region files, no index.
+        assertTrue(
+            "region files survived the wipe",
+            dir.listFiles { f -> f.name.startsWith("r_") }.isNullOrEmpty(),
+        )
+        assertTrue("index survived the wipe", !File(dir, "index.bin").exists())
+
+        // Reopen must NOT rebuild content from leftovers (rebuildIndex path).
+        val post = RegionManager(RegionStorage(dir).apply { init() }, regionSize = 1000f)
+        val postOrders =
+            runBlocking { post.queryItems(RectF(-50000f, -50000f, 50000f, 50000f)) }
+                .map { it.order }
+        assertTrue("resurrected strokes: $postOrders", postOrders.isEmpty())
+        post.clear()
     }
 
     private fun <T> runBlocking(block: suspend kotlinx.coroutines.CoroutineScope.() -> T): T =

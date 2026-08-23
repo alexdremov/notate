@@ -497,7 +497,10 @@ class InfiniteCanvasModel {
 
     suspend fun clear() {
         mutex.withLock {
-            regionManager?.clear()
+            // USER-initiated wipe: persisted strokes must not resurrect on
+            // reopen (rebuildIndex scans region files). Plain memory-only
+            // clear stays reserved for internal flows like setLoadedState.
+            regionManager?.clearAndWipeStorage()
             historyManager.clear()
             contentBounds.setEmpty()
             _contentBoundsFlow.value = RectF()
