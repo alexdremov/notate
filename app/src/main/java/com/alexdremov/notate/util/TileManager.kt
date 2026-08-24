@@ -605,7 +605,12 @@ class TileManager(
         val key = TileCache.TileKey(col, row, level)
 
         val rm = canvasModel.getRegionManager()
-        val rSize = rm?.regionSize ?: 2048f // Safe default
+        // Pre-session guard: surfaceCreated can drive render passes before the
+        // model is wired; rasterizing then produces EMPTY tiles that get
+        // cached and must later be cleared (wasted work + a stale-commit
+        // race). Skip until the region store exists.
+        if (rm == null) return
+        val rSize = rm.regionSize
         val tileRect = getTileWorldRect(col, row, worldSize)
         val rx = floor(tileRect.centerX() / rSize).toInt()
         val ry = floor(tileRect.centerY() / rSize).toInt()
@@ -1147,9 +1152,9 @@ class TileManager(
      * could never be regenerated again.
      *
      * In-flight generation coroutines are NOT cancelled here: they validate
-     * their result against [renderVersion] before committing, so stale results
-     * are discarded naturally. Callers that need a hard version bump should
-     * combine this with `renderVersion.incrementAndGet()`.
+     * their result against [renderVersion] before committing, and [clear]
+     * itself bumps the version, so stale results (including pre-wipe EMPTY
+     * tiles) are discarded naturally.
      */
     fun clear() {
         synchronized(pendingLock) {
@@ -1165,6 +1170,10 @@ class TileManager(
 
             tileCache.clear()
             lastVisibleCount = 0
+            // A cache wipe must also invalidate results already in flight —
+            // otherwise a pre-wipe (e.g. pre-session EMPTY) tile can commit
+            // after the clear and linger until the debounced repair pass.
+            renderVersion.incrementAndGet()
         }
     }
 

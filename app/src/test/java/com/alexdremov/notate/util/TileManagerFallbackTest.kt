@@ -3,6 +3,7 @@ package com.alexdremov.notate.util
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.RectF
+import com.alexdremov.notate.data.region.RegionManager
 import com.alexdremov.notate.model.InfiniteCanvasModel
 import com.alexdremov.notate.ui.render.CanvasRenderer
 import io.mockk.every
@@ -37,7 +38,9 @@ class TileManagerFallbackTest {
         mockModel = mockk(relaxed = true)
         mockRenderer = mockk(relaxed = true)
         every { mockModel.events } returns kotlinx.coroutines.flow.MutableSharedFlow()
-        every { mockModel.getRegionManager() } returns null
+        every { mockModel.getRegionManager() } answers {
+            mockk<RegionManager>(relaxed = true).also { every { it.regionSize } returns 2048f }
+        }
         // Mock queryItems to return empty list so generation produces blank tiles quickly
         io.mockk.coEvery { mockModel.queryItems(any()) } returns ArrayList()
 
