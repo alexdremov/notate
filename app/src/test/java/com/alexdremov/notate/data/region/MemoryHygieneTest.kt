@@ -28,7 +28,6 @@ import java.lang.ref.WeakReference
 @RunWith(RobolectricTestRunner::class)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 class MemoryHygieneTest {
-
     @get:Rule
     val tmp = TemporaryFolder()
 
@@ -83,6 +82,7 @@ class MemoryHygieneTest {
             fun add(region: RegionData?) {
                 if (region != null) refs.add(WeakReference(region))
             }
+
             fun field(name: String): Any {
                 val f = RegionManager::class.java.getDeclaredField(name)
                 f.isAccessible = true
@@ -90,6 +90,7 @@ class MemoryHygieneTest {
             }
             val rc = field("regionCache")
             val mmapField = rc.javaClass.getDeclaredField("map").apply { isAccessible = true }
+
             @Suppress("UNCHECKED_CAST")
             val cmap = mmapField.get(rc) as Map<RegionId, RegionData>
             cmap.forEach { (_, v) -> add(v) }
@@ -99,8 +100,8 @@ class MemoryHygieneTest {
             ovf.values.forEach { add(it) }
 
             @Suppress("UNCHECKED_CAST")
-            val limbo = field("limbo") as Map<RegionId, RegionData>
-            limbo.values.forEach { add(it) }
+            val limbo = field("limbo") as Map<RegionId, List<RegionData>>
+            limbo.values.flatten().forEach { add(it) }
 
             @Suppress("UNCHECKED_CAST")
             val lineage = field("liveLineage") as Map<RegionId, RegionData>
@@ -131,9 +132,13 @@ class MemoryHygieneTest {
 
         // Sessions are fully out of scope here. GC must reclaim everything.
         forceGc()
-        val leaked = probes.flatMap { p ->
-            p.refs.withIndex().filter { it.value.get() != null }.map { "${p.hashCode()}#${it.index}" }
-        }
+        val leaked =
+            probes.flatMap { p ->
+                p.refs
+                    .withIndex()
+                    .filter { it.value.get() != null }
+                    .map { "${p.hashCode()}#${it.index}" }
+            }
         assertTrue(
             "closed sessions still hold ${leaked.size} region instances: $leaked",
             leaked.isEmpty(),

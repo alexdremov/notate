@@ -94,18 +94,28 @@ open class RegionForensicsRing {
     @Volatile
     var enabled: Boolean = false
 
+    /**
+     * Per-operation churn logging (every acquire/release/handoff). Off by
+     * default even when [enabled] — its volume multiplies suite runtime.
+     * Enable only for targeted race forensics; decision-level events
+     * (park/demote/save/install/adopt/sweep) stay on [enabled] alone.
+     */
+    @Volatile
+    var verbose: Boolean = false
+
     @Volatile
     var divergenceSeen: Boolean = false
 
     private val CAP = 250_000
+    private val PER_ID_CAP = 40_000
     private val events = ArrayDeque<String>()
+    private val perId = HashMap<String, ArrayDeque<String>>()
+    private val seq =
+        java.util.concurrent.atomic
+            .AtomicLong(0)
     val dumpsIssued =
         java.util.concurrent.atomic
             .AtomicInteger(0)
-
-    // Per-id bounded history: the global ring overflows under
-    // query storms and erases exactly the hot-region events we need.
-    private val perId = HashMap<String, ArrayDeque<String>>()
 
     private fun extractId(line: String): String? {
         val i = line.indexOf("id=")
@@ -116,28 +126,19 @@ open class RegionForensicsRing {
 
     fun log(line: String) {
         if (!enabled) return
-        // High-frequency churn events (RET/REL/PARK/SWEEP during oversized-
-        // region reload storms) flood the per-id ring (CAP=4000) and evict the
-        // crucial fork evidence before a dump. Keep them out of per-id
-        // history; they remain visible in direct stdout probes.
-        val noisy =
-            line.startsWith("RET-") ||
-                line.startsWith("REL-REGION") ||
-                line.startsWith("REL-SLOT") ||
-                line.startsWith("PARK ") ||
-                line.startsWith("SWEEP-DROP")
-        val stamped = "${System.currentTimeMillis() % 100_000} [${Thread.currentThread().name}] $line"
-        if (!noisy) {
-            synchronized(events) {
-                if (events.size >= CAP) events.removeFirst()
-                events.addLast(stamped)
-            }
+        // Monotonic sequence + microsecond stamp: wall-clock millis jumble
+        // under contention; seq guarantees total order, nanoTime gives real
+        // elapsed time. Thread name includes @coroutine#N (kotlinx debug).
+        val stamped =
+            "${seq.incrementAndGet()} t${System.nanoTime() / 1_000 % 100_000_000_000} [${Thread.currentThread().name}] $line"
+        synchronized(events) {
+            if (events.size >= CAP) events.removeFirst()
+            events.addLast(stamped)
         }
         extractId(line)?.let { id ->
-            if (noisy) return@let
             synchronized(perId) {
                 val q = perId.getOrPut(id) { ArrayDeque() }
-                if (q.size >= 4000) q.removeFirst()
+                if (q.size >= PER_ID_CAP) q.removeFirst()
                 q.addLast(stamped)
             }
         }
@@ -154,6 +155,9 @@ open class RegionForensicsRing {
             perId[id]?.joinToString("\n")
                 ?: synchronized(events) { events.filter { "id=$id " in it }.joinToString("\n") }
         }
+
+    /** Last [n] global events — for cross-region causality on failure. */
+    fun dumpRecent(n: Int): String = synchronized(events) { events.takeLast(n).joinToString("\n") }
 }
 
 /**
@@ -285,6 +289,14 @@ class RegionManager(
         if (forensics.enabled) forensics.log(line())
     }
 
+    /** Churn-level logging — see [RegionForensicsRing.verbose]. */
+    private inline fun logVerbose(line: () -> String) {
+        if (forensics.enabled && forensics.verbose) forensics.log(line())
+    }
+
+    /** Stable instance identity for forensics: distinguishes same-id twins. */
+    private fun iid(r: RegionData?): String = if (r == null) "null" else Integer.toHexString(System.identityHashCode(r))
+
     private val RELEASE_SWEEP_INTERVAL_MS = 250L
 
     private val regionCache: RegionCache
@@ -314,6 +326,18 @@ class RegionManager(
     private val maxOverflowBytes = memoryLimitBytes / 2
     private var currentOverflowBytes = 0L
 
+    /**
+     * Overflow byte accounting is DERIVED, never incremental: sizes change
+     * under mutation ([RegionData.invalidateSize] recomputes them between an
+     * add and a subtract), and every incremental scheme drifted negative —
+     * permanently breaking the pinned re-home budget check (proven:
+     * cur=-35272 in chaos forensics). Map truth is the single source.
+     * MUST hold stateLock write.
+     */
+    private fun recomputeOverflowBytes() {
+        currentOverflowBytes = overflowRegions.values.sumOf { it.getSizeCached() }
+    }
+
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     var onRegionLoaded: ((RegionData) -> Unit)? = null
 
@@ -339,9 +363,16 @@ class RegionManager(
      */
     private val pendingSaveIds = java.util.Collections.newSetFromMap(ConcurrentHashMap<RegionId, Boolean>())
 
-    /** Regions whose newer content arrived while a save was in flight; the
-     *  running save re-executes with fresh content before releasing the gate. */
-    private val resaveNeeded = java.util.Collections.newSetFromMap(ConcurrentHashMap<RegionId, Boolean>())
+    /**
+     * Regions whose newer content arrived while a save was in flight, keyed
+     * by id -> the REQUESTING INSTANCE (identity). The running save may only
+     * drain registrations for ITS OWN instance: with transient twins (an
+     * orphan-with-readers plus a fresh load), draining another instance's
+     * request re-snapshots THE RUNNER'S (older) items and regresses disk
+     * past the twin's erase (proven: swizzle EXTRA=[35] on disk).
+     */
+    private val resaveNeeded =
+        ConcurrentHashMap<RegionId, java.util.concurrent.ConcurrentHashMap<RegionData, Boolean>>()
 
     /*
      * Monotonic index version, bumped on every in-memory index mutation (under
@@ -363,7 +394,41 @@ class RegionManager(
      * entirely: there is never a window where a valid instance is unreachable
      * yet unrecyclable.
      */
-    private val limbo = java.util.concurrent.ConcurrentHashMap<RegionId, RegionData>()
+    // LIMBO MULTISET: several live instances of one id can transiently exist
+    // (an orphan-with-readers plus a freshly-loaded twin). A plain map let a
+    // stale twin's park STEAL the slot from the parked live instance, which
+    // then became unreachable and lost its mutations (proven: limbo slot
+    // stolen mid-save; rescue resurrected the stale twin as authority).
+    // Every unreferenced live instance stays listed until swept or rescued.
+    private val limbo = java.util.concurrent.ConcurrentHashMap<RegionId, java.util.concurrent.CopyOnWriteArrayList<RegionData>>()
+
+    /**
+     * PER-ID write generations for loader seqlocks.
+     *
+     * Reading a region file while ITS save lands produces provably-stale
+     * bytes (the old code detected only saves overlapping the pendingSaveIds
+     * CHECK — a whole save fitting between the file READ and that check went
+     * unnoticed, and the stale twin became the resident authority, permanently
+     * diverging memory from disk; proven via forensics: LOAD-INSTALL items=15
+     * over a just-written 1-item file). A reader pairs THIS REGION's
+     * generation before/after its read; a mismatch forces a re-read.
+     *
+     * Per-id (not global): under a multi-region save storm a GLOBAL counter
+     * moves during practically every read, starving loads with pointless
+     * re-reads (proven: IO-storm perf test saturated protobuf decode).
+     */
+    private val diskWriteGens =
+        java.util.concurrent.ConcurrentHashMap<RegionId, java.util.concurrent.atomic.AtomicLong>()
+
+    private fun diskGenOf(id: RegionId): Long = diskWriteGens[id]?.get() ?: 0L
+
+    private fun bumpDiskGen(id: RegionId) {
+        diskWriteGens
+            .computeIfAbsent(id) {
+                java.util.concurrent.atomic
+                    .AtomicLong()
+            }.incrementAndGet()
+    }
 
     private val stateLock = ReentrantReadWriteLock()
 
@@ -482,8 +547,8 @@ class RegionManager(
         if (current != null && current !== region) return null
         if (ovf != null && ovf !== region) return null
         val fromOverflow = ovf === region
-        logForensics {
-            "MUT-BEGIN id=$id items=${region.items.size} current=${current?.items?.size} " +
+        logVerbose {
+            "MUT-BEGIN id=$id i=${iid(region)} items=${region.items.size} current=${iid(current)} " +
                 "same=${current === region} fromOverflow=$fromOverflow"
         }
         if (current != null) {
@@ -526,17 +591,17 @@ class RegionManager(
                     val discoverable =
                         regionCache.get(id) === region ||
                             overflowRegions[id] === region ||
-                            limbo[id] === region
+                            (limbo[id]?.any { it === region } == true)
                     if (!discoverable && !region.isRecycled) {
                         region.touch()
                         parkInLimbo(id, region)
                         logForensics {
-                            "MUT-REPARK id=$id items=${region.items.size}"
+                            "MUT-REPARK id=$id i=${iid(region)} items=${region.items.size} dirty=${region.isDirty}"
                         }
                     } else {
                         logForensics {
-                            "MUT-APPLIED-IN-EVICTED id=$id items=${region.items.size} " +
-                                "inLimbo=${limbo[id] === region}"
+                            "MUT-APPLIED-IN-EVICTED id=$id i=${iid(region)} items=${region.items.size} " +
+                                "inLimbo=${limbo[id]?.any { it === region } == true}"
                         }
                     }
                 }
@@ -547,9 +612,8 @@ class RegionManager(
                     // by this put MUST be demoted — dropping them silently
                     // strands dirty content in NO map where saveAll can never
                     // reach it (proven: RenderPipelineChaos disk divergence).
-                    val removed = overflowRegions.remove(id)
-                    currentOverflowBytes -= removed?.getSizeCached()
-                        ?: region.getSizeCached()
+                    overflowRegions.remove(id)
+                    recomputeOverflowBytes()
                     regionCache
                         .put(id, region)
                         .forEach { demote(it) }
@@ -569,18 +633,18 @@ class RegionManager(
                     // copy stays discoverable; do NOT re-grant (entryRemoved
                     // already balanced the books for the demotion).
                     if (regionCache.get(id) !== region && overflowRegions[id] !== region) {
-                        if (limbo[id] !== region && !region.isRecycled) {
+                        if ((limbo[id]?.none { it === region } == true) && !region.isRecycled) {
                             region.touch()
                             parkInLimbo(id, region)
                         }
                         logForensics {
-                            "MUT-SELF-EVICT-REPUT id=$id items=${region.items.size} " +
-                                "inLimbo=${limbo[id] === region}"
+                            "MUT-SELF-EVICT-REPUT id=$id i=${iid(region)} items=${region.items.size} " +
+                                "inLimbo=${limbo[id]?.any { it === region } == true}"
                         }
                     }
                 }
             }
-            logForensics { "MUT-END id=$id items=${region.items.size}" }
+            logVerbose { "MUT-END id=$id i=${iid(region)} items=${region.items.size}" }
         }
         return result
     }
@@ -592,9 +656,14 @@ class RegionManager(
         // disk (the sweeper would drop a still-dirty copy). Register a resave;
         // the running save picks it up before releasing the gate.
         if (!pendingSaveIds.add(region.id)) {
-            resaveNeeded.add(region.id)
+            logForensics {
+                "SAVE-GATE-BUSY id=${region.id} i=${iid(region)} — registering resave, not launching"
+            }
+            resaveNeeded
+                .computeIfAbsent(region.id) { java.util.concurrent.ConcurrentHashMap() }[region] = true
             return
         }
+        logForensics { "SAVE-GATE-ACQUIRED id=${region.id} i=${iid(region)}" }
         // Snapshot items EAGERLY: the region may be mutated while this job sits
         // queued on IO. Forensics caught an in-flight save serializing stale or
         // cleared content (PARK items=3 → SAVE-PRE items=0 → LOAD-RAW items=0).
@@ -611,6 +680,9 @@ class RegionManager(
             // pre-clear bytes back (resurrection on next open). Later rounds in
             // this loop drain explicit resave registrations and always run.
             val epoch = clearEpoch.get()
+            logForensics {
+                "SAVE-JOB-START id=${region.id} i=${iid(region)} epochOk=${epoch == clearEpoch.get()} snapshotItems=${snapshot.size}"
+            }
             var firstRound = true
             var rounds = 0
             try {
@@ -627,10 +699,15 @@ class RegionManager(
                         }
                     }
                     firstRound = false
-                    // Still holding the gate, so any resaveNeeded.add raced
-                    // against THIS save's old snapshot — drain it here where
-                    // no wakeup can be missed.
-                    if (!resaveNeeded.remove(region.id)) break
+                    // Still holding the gate: drain registrations FOR THIS
+                    // INSTANCE only. Registrations from other (transient twin)
+                    // instances are left queued — their own scheduleSave/sweep
+                    // retry persists THEIR content; draining them here would
+                    // re-snapshot THIS (possibly older) instance and regress
+                    // the file past the twin's mutations.
+                    val myResaves = resaveNeeded[region.id]
+                    val needsResave = myResaves?.remove(region) == true
+                    if (!needsResave) break
                     if (++rounds > 8 || region.isRecycled) break
                     // Instance verified not recycled: live items are valid.
                     // Re-pair mod with the NEW snapshot (mod first!).
@@ -640,6 +717,9 @@ class RegionManager(
                 }
             } finally {
                 pendingSaveIds.remove(region.id)
+                logForensics {
+                    "SAVE-JOB-END id=${region.id} i=${iid(region)} dirtyNow=${region.isDirty} modNow=${region.modCount}"
+                }
                 // The save may have been the last thing keeping this limbo
                 // region un-recyclable — give the sweeper a chance to dispose it.
                 if (limbo.isNotEmpty()) sweepLimbo()
@@ -758,17 +838,28 @@ class RegionManager(
      * (their ownership transfers with them). MUST hold stateLock.
      */
     private fun demote(evictee: RegionData) {
-        if (pinnedIds.contains(evictee.id) &&
+        val wasPinned = pinnedIds.contains(evictee.id)
+        if (wasPinned &&
             handleEviction(evictee.id, evictee)
         ) {
+            logForensics {
+                "DEMOTE-PINNED-HOMED id=${evictee.id} i=${iid(evictee)} items=${evictee.items.size}"
+            }
             return // ownership transferred to the overflow map
         }
         logForensics {
-            "DEMOTE id=${evictee.id} items=${evictee.items.size} dirty=${evictee.isDirty}"
+            "DEMOTE id=${evictee.id} i=${iid(evictee)} items=${evictee.items.size} " +
+                "dirty=${evictee.isDirty} wasPinned=$wasPinned"
         }
         evictee.markEvicted()
-        val consumed = evictee.releaseOwnership()
-        if (consumed) parkInLimbo(evictee.id, evictee)
+        evictee.releaseOwnership()
+        // Park UNCONDITIONALLY (refcounts are diagnostic-only): gating on the
+        // consume result orphaned instances with outstanding readers, where a
+        // racing loader installed stale disk bytes over them (proven fork).
+        // Parked copies double as an L2: a rescued clean copy avoids a disk
+        // round-trip even when residency was lost to budget pressure. The
+        // multiset limbo tolerates concurrent entries per id.
+        parkInLimbo(evictee.id, evictee)
     }
 
     private fun putResidentAndParkIfSelfEvicted(
@@ -780,7 +871,12 @@ class RegionManager(
         // handles it uniformly (pinned → overflow re-home, else limbo) —
         // exactly what entryRemoved used to do.
         regionCache.put(id, region).forEach { demote(it) }
-        if (region.isRecycled || regionCache.get(id) === region) return
+        if (region.isRecycled || regionCache.get(id) === region) {
+            logForensics {
+                "PUTRES-RESIDENT id=$id i=${iid(region)} items=${region.items.size} wasEvicted=$wasEvicted"
+            }
+            return
+        }
         // Self-evicted. entryRemoved already ran: for a fresh install it
         // consumed the slot AND parked the copy (releaseOwnership hit 0);
         // for a rescue-resurrection the reader ref blocked the auto-park.
@@ -789,9 +885,11 @@ class RegionManager(
         // 128K reloads of one region).
         if (!region.isEvicted) region.markEvicted()
         region.touch() // sticky-limbo: protect until a caller claims it
-        // Park UNCONDITIONALLY: refcounts are diagnostic-only now, so
-        // hasReferences() can lie. A self-evicted copy in NO map is the fork
-        // condition; limbo.put is idempotent if a demote path parked it first.
+        // A self-evicted copy in NO map is the fork condition; limbo listing
+        // also keeps it servable (L2) until swept or rescued.
+        logForensics {
+            "PUTRES-SELF-EVICT id=$id i=${iid(region)} items=${region.items.size} dirty=${region.isDirty} — parking"
+        }
         parkInLimbo(id, region)
     }
 
@@ -802,18 +900,79 @@ class RegionManager(
         if (region.isRecycled) {
             logForensics { "!!!! PARK-RECYCLED id=$id — parking a RECYCLED instance!" }
         }
-        limbo[id] = region
+        // computeIfAbsent, NOT getOrPut: getOrPut's check-then-put races two
+        // concurrent parks of one id into SEPARATE buckets, and the losing
+        // bucket's entries vanish from discoverability entirely (silent
+        // orphaning — proven via forensics: parked-dirty copies disappeared
+        // with zero removal events; UserSession missing-word class).
+        val bucket = limbo.computeIfAbsent(id) { java.util.concurrent.CopyOnWriteArrayList() }
+        if (bucket.none { it === region }) bucket.add(region)
+        if (forensics.enabled && limbo.size % 5 == 0) {
+            forensics.log(
+                "PARKMAP-SNAPSHOT map=${System.identityHashCode(limbo)} size=${limbo.size} " +
+                    "mgr=${System.identityHashCode(this@RegionManager)}",
+            )
+        }
         logForensics {
-            "PARK id=$id i=${
-                Integer.toHexString(
-                    System.identityHashCode(region),
-                )
-            } items=${region.items.size} dirty=${region.isDirty} mod=${region.modCount} gen=${region.generation}"
+            "PARK id=$id i=${iid(region)} items=${region.items.size} dirty=${region.isDirty} " +
+                "mod=${region.modCount} gen=${region.generation} bucket=${bucket.size}"
         }
         if (region.isDirty) {
             scheduleSave(region)
         }
         if (limbo.size > LIMBO_SWEEP_THRESHOLD) scheduleSweep()
+    }
+
+    /**
+     * Freshest live parked instance for [id]: mutated (dirty) beats clean,
+     * then most-recently-used, then highest mutation counter. Rescue,
+     * LIMBO-PREFER and lineage adoption MUST all select through this so a
+     * stale sibling can never outrank the live lineage.
+     */
+    private fun freshestInLimbo(id: RegionId): RegionData? {
+        val bucket = limbo[id] ?: return null
+        var best: RegionData? = null
+        for (candidate in bucket) {
+            if (candidate.isRecycled) continue
+            val b = best
+            best =
+                when {
+                    b == null -> {
+                        candidate
+                    }
+
+                    candidate.isDirty != b.isDirty -> {
+                        if (candidate.isDirty) candidate else b
+                    }
+
+                    candidate.lastTouchMs != b.lastTouchMs -> {
+                        if (candidate.lastTouchMs > b.lastTouchMs) candidate else b
+                    }
+
+                    else -> {
+                        if (candidate.modCount > b.modCount) candidate else b
+                    }
+                }
+        }
+        return best
+    }
+
+    /** Removes exactly [region] from [id]'s limbo bucket (identity-based). */
+    private fun removeFromLimbo(
+        id: RegionId,
+        region: RegionData,
+        via: String,
+    ) {
+        limbo[id]?.let { bucket ->
+            val removed = bucket.removeIf { it === region }
+            logForensics {
+                "LIMBO-REMOVE id=$id i=${iid(region)} via=$via removed=$removed bucketLeft=${bucket.size}"
+            }
+            if (bucket.isEmpty()) {
+                forensics.log("LIMBO-KEY-REMOVE id=$id via=$via")
+                limbo.remove(id, bucket)
+            }
+        }
     }
 
     /**
@@ -865,45 +1024,59 @@ class RegionManager(
         // sweeps racing on the same entry could recycle an instance another
         // sweep had already rescheduled for.
         synchronized(this) {
-            val it = limbo.entries.iterator()
-            while (it.hasNext()) {
-                val entry = it.next()
+            val mapIt = limbo.entries.iterator()
+            while (mapIt.hasNext()) {
+                val entry = mapIt.next()
                 val key = entry.key
-                val region = entry.value
-                // NOTE: no hasReferences() gate — refcounts are diagnostic-only.
-                // Durability comes from the dirty-handling below; a reader
-                // holding the instance keeps it valid regardless
-                // (non-destructive eviction).
-                if (pendingSaveIds.contains(key)) continue // bytes still in flight
-                if (!region.isDirty) {
-                    // CLEAN copies must be dropped promptly: callers (e.g.
-                    // EvictionStressTest) rely on prompt dispose-after-release,
-                    // and a clean copy reloads from identical disk bytes anyway.
-                    it.remove()
-                    logForensics {
-                        "SWEEP-DROP id=$key i=${
-                            Integer.toHexString(
-                                System.identityHashCode(region),
-                            )
-                        } items=${region.items.size}"
+                val bucket = entry.value
+                // Bytes for this id still in flight — re-check next pass.
+                if (pendingSaveIds.contains(key)) continue
+                // Snapshot iteration; removal is atomic identity-based
+                // (data-class equals must never decide which twin dies, and
+                // rescue-promotion mutates buckets off the sweep monitor).
+                for (region in bucket.toList()) {
+                    // Atomic identity removal: rescue-promotion paths mutate
+                    // this bucket WITHOUT the sweep monitor, so a snapshot
+                    // index can go stale (proven AIOOBE). removeIf re-checks
+                    // against the live list under COWAL's internal lock.
+                    if (!bucket.removeIf { it === region }) {
+                        continue // another actor removed it first
                     }
-                    if (liveLineage[key] === region) liveLineage.remove(key)
-                    region.tryRecycle()
-                    continue
+                    // NOTE: no hasReferences() gate — refcounts are diagnostic-
+                    // only. A reader holding the instance keeps it valid
+                    // regardless (non-destructive eviction).
+                    if (!region.isDirty) {
+                        // CLEAN copies must be dropped promptly: callers (e.g.
+                        // EvictionStressTest) rely on prompt dispose-after-
+                        // release, and a clean copy reloads from identical
+                        // disk bytes anyway.
+                        logForensics {
+                            "SWEEP-DROP id=$key i=${iid(region)} items=${region.items.size} bucketLeft=${bucket.size}"
+                        }
+                        if (liveLineage[key] === region) {
+                            logForensics { "LINEAGE-UNLINK id=$key old=${iid(liveLineage[key])} via=sweep-clean-drop" }
+                            liveLineage.remove(key)
+                        }
+                        region.tryRecycle()
+                        continue
+                    }
+                    // DIRTY copy — durability rule: it NEVER leaves limbo until
+                    // its content is provably persisted (a failed save must not
+                    // orphan newer-than-disk content). Stays parked; a save is
+                    // (re)scheduled when none is in flight and the sticky
+                    // window expired; touch() spaces persistent-failure retries
+                    // ~LIMBO_STICKY_MS apart. At most ONE dirty entry per id can
+                    // exist (single-authority mutations), so per-id save gates
+                    // stay correct.
+                    if (System.currentTimeMillis() - region.lastTouchMs < LIMBO_STICKY_MS) {
+                        logForensics { "SWEEP-STICKY-SKIP id=$key i=${iid(region)} dirty stays parked" }
+                        continue
+                    }
+                    logForensics { "SWEEP-SCHEDULE-SAVE id=$key i=${iid(region)} dirty ungated — retrying persistence" }
+                    scheduleSave(region)
+                    region.touch()
                 }
-                // DIRTY copy — durability rule: it NEVER leaves limbo until its
-                // content is provably persisted. The old behaviour removed the
-                // entry and handed its bytes to a fire-and-forget save; a single
-                // IO failure later the instance sat in NO map — unreachable by
-                // saveAll or rescue, permanently diverged from disk. Instead it
-                // stays parked; a save is (re)scheduled when none is in flight
-                // and the sticky window has expired. touch() after scheduling
-                // spaces persistent-failure retries ~LIMBO_STICKY_MS apart. The
-                // first clean observation (here or in scheduleSave's completion
-                // sweep) disposes the entry.
-                if (System.currentTimeMillis() - region.lastTouchMs < LIMBO_STICKY_MS) continue
-                scheduleSave(region)
-                region.touch()
+                if (bucket.isEmpty()) mapIt.remove()
             }
         }
     }
@@ -929,56 +1102,72 @@ class RegionManager(
      * carry a dead null-check).
      */
     suspend fun acquireRegion(id: RegionId): RegionData {
-        // 1. Rescue from limbo: the exact live instance may be parked here
-        //    (demoted, unreferenced, possibly mid-save).
-        //
-        // AUTHORITATIVE-INSTANCE RULE: a RESIDENT (cache/overflow) instance
-        // always wins over a limbo rescue. Limbo copies can be stale relative
-        // to a resident instance installed by a later load/mutation cycle;
-        // mutating a rescued stale copy would silently lose the mutation
-        // (caught by RenderPipelineChaosTest: freshly committed strokes
-        // vanished). Only rescue when nothing fresher is resident.
-        // PEEK, not remove: the copy STAYS in limbo while checked out. A
-        // rescue that removed itself from limbo was invisible to concurrent
-        // loaders for the whole checkout window — they installed stale disk
-        // bytes as a forked lineage and mid-test strokes vanished (proven via
-        // AUDIT dumps: final copies hold first+last orders only). The entry
-        // is removed below ONLY when the copy becomes truly resident.
-        val rescued = limbo[id]
-        if (rescued != null) {
-            val n = rescueCount.merge(id, 1L, Long::plus)!!
-            logForensics { "RESCUE-CHURN id=$id count=$n" }
+        // 1. Resident fast path (READ lock): cache, then overflow.
+        var handoff: RegionData? = null
+        var promote = false
+        stateLock.read {
+            regionCache.get(id)?.let { c ->
+                if (!c.isRecycled && c.retain()) {
+                    logVerbose { "RET-FAST id=$id i=${iid(c)}" }
+                    handoff = c
+                }
+            }
+            if (handoff == null) {
+                overflowRegions[id]?.let { o ->
+                    if (!o.isRecycled && o.retain()) {
+                        logVerbose { "RET-OVF id=$id i=${iid(o)}" }
+                        handoff = o
+                        promote = true
+                    }
+                }
+            }
         }
+        val resident = handoff
+        if (resident != null) {
+            logVerbose { "LINEAGE-SET id=$id old=${iid(liveLineage[id])} new=${iid(resident)} via=getRegion-resident" }
+            liveLineage[id] = resident
+            if (promote) {
+                // One write-locked promotion per eviction cycle: after this,
+                // reads serve from cache until the region is evicted again.
+                // (Borrow-without-promote was measured as a borrow-storm:
+                // every read of a parked id repeated limbo scans.)
+                stateLock.write {
+                    overflowRegions.remove(id)
+                    recomputeOverflowBytes()
+                    regionCache.put(id, resident).forEach { demote(it) }
+                }
+            }
+            resident.touch()
+            return resident
+        }
+
+        // 2. Rescue from limbo: the freshest parked instance may be a mutated
+        //    copy whose save is mid-flight — newer than disk BY CONSTRUCTION.
+        //    Multiset-aware ([freshestInLimbo]) so a stale sibling can never
+        //    outrank the live lineage (proven slot-steal fork). PEEK semantics:
+        //    the copy stays listed while checked out; removal happens below
+        //    ONLY when it becomes truly resident.
+        val rescued = if (limbo.containsKey(id)) freshestInLimbo(id) else null
         if (rescued != null && !rescued.isRecycled && rescued.retain()) {
-            logForensics { "RET-RESCUE id=$id i=${Integer.toHexString(System.identityHashCode(rescued))} c=${rescued.debugRefCount()}" }
+            logForensics { "ACQ-BORROW id=$id i=${iid(rescued)} items=${rescued.items.size} dirty=${rescued.isDirty}" }
             var useRescue = false
             stateLock.write {
                 val existing = regionCache.get(id) ?: overflowRegions[id]
                 if (existing == null || existing.isRecycled) {
-                    // Nothing fresher resident — resurrect the rescued copy.
-                    // Grant cache ownership separately from the reader ref so
-                    // a synchronous self-eviction cannot eat the reader's ref.
-                    rescued.retain()
-                    logForensics {
-                        "RET-OWN id=$id i=${Integer.toHexString(
-                            System.identityHashCode(rescued),
-                        )} c=${rescued.debugRefCount()}"
-                    }
+                    rescued.retain() // residency grant (self-eviction cannot eat the reader ref)
                     putResidentAndParkIfSelfEvicted(id, rescued)
                     updateMetadataCache()
                     useRescue = true
-                    // Resident now (cache or overflow): limbo must NOT list it
-                    // (single-residency-location invariant).
                     if (regionCache.get(id) === rescued || overflowRegions[id] === rescued) {
-                        limbo.remove(id)
+                        removeFromLimbo(id, rescued, "rescue-promote")
                     }
                 }
                 // else: resident instance is authoritative; drop the stale
                 // rescue below (releaseRegion re-parks it for the sweeper).
             }
-            logForensics { "RESCUE id=$id used=$useRescue items=${rescued.items.size}" }
             if (useRescue) {
                 rescued.touch()
+                logVerbose { "LINEAGE-SET id=$id old=${iid(liveLineage[id])} new=${iid(rescued)} via=acquire-rescue" }
                 liveLineage[id] = rescued
                 auditRegion(forensics, rescued, "RESCUE")
                 return rescued
@@ -986,8 +1175,7 @@ class RegionManager(
             releaseRegion(rescued)
         }
 
-        // 2. Normal path. getRegion hands off a +1 reference (install-time
-        //    retention) — valid by construction, no race, no retries.
+        // 3. Nothing alive anywhere: deduped disk load installs the authority.
         return getRegion(id)
     }
 
@@ -997,13 +1185,18 @@ class RegionManager(
      */
     fun releaseRegion(region: RegionData) {
         val last = region.release()
-        logForensics {
+        logVerbose {
             "REL-REGION id=${region.id} i=${Integer.toHexString(System.identityHashCode(region))} c=${region.debugRefCount()} last=$last"
         }
         // A rescued-from-limbo region left the limbo map when acquired; if its
         // last reference just dropped while evicted, re-park it so the sweeper
         // can dispose it (otherwise it would leak un-recycled forever).
-        if (last && region.isEvicted && limbo[region.id] !== region) {
+        if (last && region.isEvicted && region.isDirty &&
+            (limbo[region.id]?.none { it === region } == true)
+        ) {
+            logForensics {
+                "REL-REPARK id=${region.id} i=${iid(region)} — last ref on evicted DIRTY region, re-parking"
+            }
             parkInLimbo(region.id, region)
         }
         scheduleSweep()
@@ -1050,7 +1243,6 @@ class RegionManager(
                     val oldestKey = overflowRegions.keys.first()
                     val oldestRegion = overflowRegions.remove(oldestKey)
                     if (oldestRegion != null) {
-                        currentOverflowBytes -= oldestRegion.getSizeCached()
                         // Demote, don't destroy: readers may still hold references.
                         // Same protocol as the LRU entryRemoved callback.
                         oldestRegion.markEvicted()
@@ -1064,6 +1256,7 @@ class RegionManager(
                             } c=${oldestRegion.debugRefCount()}"
                         }
                     }
+                    recomputeOverflowBytes()
                 }
                 if (overflowBytesNow() + size <= maxOverflowBytes) {
                     // OVERWRITE DISCIPLINE: an entry may already exist under
@@ -1073,7 +1266,6 @@ class RegionManager(
                     // sporadic OVER-RELEASEs (proven: REL-SLOT-OVF on c=0).
                     val displaced = overflowRegions.put(key, region)
                     if (displaced != null && displaced !== region) {
-                        currentOverflowBytes -= displaced.getSizeCached()
                         displaced.markEvicted()
                         logForensics {
                             "REL-SLOT-OVF-DISPLACED id=$key " +
@@ -1082,13 +1274,15 @@ class RegionManager(
                         }
                         if (displaced.releaseOwnership()) parkInLimbo(key, displaced)
                     }
-                    currentOverflowBytes += size
+                    recomputeOverflowBytes()
                     logForensics {
-                        "OVERFLOW-ADD id=$key ok=true size=$size cur=$currentOverflowBytes max=$maxOverflowBytes"
+                        "OVERFLOW-ADD id=$key i=${iid(region)} ok=true size=$size cur=$currentOverflowBytes max=$maxOverflowBytes"
                     }
                 } else {
                     logForensics {
-                        "OVERFLOW-ADD id=$key ok=FALSE size=$size cur=$currentOverflowBytes max=$maxOverflowBytes"
+                        "OVERFLOW-ADD id=$key i=${iid(
+                            region,
+                        )} ok=FALSE size=$size cur=$currentOverflowBytes max=$maxOverflowBytes — pinned re-home FAILED, falling to limbo"
                     }
                     return false
                 }
@@ -1125,15 +1319,19 @@ class RegionManager(
                 // dirty, or the change is silently lost forever (the region
                 // recycles as "clean" while disk holds older content).
                 logForensics {
-                    "SAVE-PRE id=${region.id} items=${snapshot.size} dirty=${region.isDirty} " +
+                    "SAVE-PRE id=${region.id} i=${iid(region)} items=${snapshot.size} dirty=${region.isDirty} " +
                         "mod=${region.modCount} gen=${region.generation} attempt=$attempts"
                 }
-                if (!storage.saveRegion(region.copy(items = snapshot))) return
+                val wrote = storage.saveRegion(region.copy(items = snapshot))
+                bumpDiskGen(region.id)
+                if (!wrote) return
                 if (region.modCount == modBaseline) {
                     region.isDirty = false
                     return
                 }
-                logForensics { "SAVE-STALE id=${region.id} baseline=$modBaseline modNow=${region.modCount}" }
+                logForensics {
+                    "SAVE-STALE id=${region.id} i=${iid(region)} baseline=$modBaseline modNow=${region.modCount}"
+                }
                 // Retry immediately with the newer content; after a bounded
                 // number of attempts under continuous mutation, leave dirty —
                 // the next park/saveAll will converge. Never re-snapshot a
@@ -1222,36 +1420,41 @@ class RegionManager(
             }
             val resident = handoff
             if (resident != null) {
+                logVerbose { "LINEAGE-SET id=$id old=${iid(liveLineage[id])} new=${iid(resident)} via=getRegion-resident" }
                 liveLineage[id] = resident
                 if (promote) {
+                    logForensics {
+                        "PROMOTE-BEGIN id=$id i=${iid(
+                            resident,
+                        )} idxHas=${regionIndex.containsKey(id)} ovfIsSame=${overflowRegions[id] === resident}"
+                    }
                     stateLock.write {
                         // Re-validate under the write lock: clear() may have
-                        // wiped the index meanwhile — then drop the stale
-                        // region and fall through to a fresh load.
+                        // wiped the index meanwhile. Even then the instance
+                        // MUST NOT leave residency: removing it from overflow
+                        // WITHOUT re-homing orphaned it into NO map, and the
+                        // next loader installed stale disk bytes over its live
+                        // content (proven fork: chaos 4_1 — erase lost from
+                        // memory, divergence permanent because the stale twin
+                        // was clean and never re-saved). Keep it in overflow;
+                        // a later install/flush still finds and saves it.
                         if (regionIndex.containsKey(id)) {
                             // UNIFORM MODEL — slot TRANSFER overflow→cache:
                             // the instance's single slot simply changes maps.
-                            // If put self-evicts (bigger than the whole budget),
-                            // entryRemoved consumes exactly that slot.
-                            overflowRegions.remove(id)?.let {
-                                currentOverflowBytes -= it.getSizeCached()
-                            }
+                            overflowRegions.remove(id)
+                            recomputeOverflowBytes()
                             regionCache
                                 .put(id, resident)
                                 .forEach { demote(it) }
                         } else {
-                            resident.release()
                             logForensics {
-                                "REL-PROMOTE id=$id c=${resident.debugRefCount()}"
+                                "PROMOTE-KEEP-NOINDEX id=$id items=${resident.items.size}"
                             }
-                            handoff = null
                         }
                     }
-                    if (handoff == null) continue
                 }
                 return resident
             }
-
             // Slow path: load from disk (deduplicated via loadingJobs).
             // NOTE: loadRegionFromDisk's install-time retain IS the caller
             // handoff — do NOT retain again here (that would leak a reference
@@ -1268,6 +1471,7 @@ class RegionManager(
             val loaded = deferred.await()
             if (!loaded.isRecycled && loaded.retain()) {
                 loaded.touch()
+                logVerbose { "LINEAGE-SET id=$id old=${iid(liveLineage[id])} new=${iid(loaded)} via=getRegion-loaded" }
                 liveLineage[id] = loaded
                 logForensics {
                     "RET-HANDOFF id=$id i=${Integer.toHexString(System.identityHashCode(loaded))} c=${loaded.debugRefCount()}"
@@ -1288,11 +1492,32 @@ class RegionManager(
         }
     }
 
+    /**
+     * Seqlock-guarded disk read (see [diskWriteGen]): re-reads until no disk
+     * write overlapped the read window. Without this, an entire save could
+     * fit between the file READ and the pendingSaveIds CHECK, handing the
+     * caller provably-stale bytes that then became the resident authority.
+     */
+    private suspend fun stableLoadFromDisk(id: RegionId): RegionData? {
+        repeat(200) { attempt ->
+            val before = diskGenOf(id)
+            val region = storage.loadRegion(id)
+            val raced = before != diskGenOf(id)
+            if (!raced) return region
+            logForensics {
+                "STABLE-READ-RETRY id=$id attempt=$attempt — write raced read (gen $before -> ${diskGenOf(id)})"
+            }
+            delay(1)
+        }
+        logForensics { "!!!! STABLE-READ-GIVEUP id=$id — accepting bytes after 200 unstable reads" }
+        return storage.loadRegion(id)
+    }
+
     private suspend fun loadRegionFromDisk(id: RegionId): RegionData {
         try {
             val n = loadCount.merge(id, 1L, Long::plus)!!
             logForensics { "LOAD-CHURN id=$id count=$n" }
-            var region = storage.loadRegion(id)
+            var region = stableLoadFromDisk(id)
             logForensics {
                 "LOAD-RAW id=$id items=${region?.items?.size} type=${region?.items?.javaClass?.simpleName}"
             }
@@ -1320,7 +1545,7 @@ class RegionManager(
                         )
                     }
                 }
-                region = storage.loadRegion(id)
+                region = stableLoadFromDisk(id)
                 logForensics { "LOAD-RETRY-AFTER-SAVE id=$id items=${region?.items?.size}" }
             }
             var missedOnDisk = false
@@ -1346,7 +1571,8 @@ class RegionManager(
                 logForensics {
                     "INSTALL-CHECK id=$id existing=${existingProbe?.items?.size} " +
                         "existingGen=${existingProbe?.generation} loaderItems=${region?.items?.size} " +
-                        "ovf=${overflowRegions[id]?.items?.size}"
+                        "ovf=${overflowRegions[id]?.items?.size} lineage=${iid(liveLineage[id])} " +
+                        "limbo=${iid(freshestInLimbo(id))} loader=${iid(region)}"
                 }
                 val existing = existingProbe ?: overflowRegions[id]
                 var useExisting = false
@@ -1369,12 +1595,54 @@ class RegionManager(
                                 "count=${existing.debugRefCount()}"
                         }
                         regionCache.remove(id)
-                        overflowRegions.remove(id)?.let {
-                            currentOverflowBytes -= it.getSizeCached()
-                        }
+                        overflowRegions.remove(id)
+                        recomputeOverflowBytes()
                     }
                 }
                 if (useExisting) return existing!!
+
+                // LINEAGE ADOPTION (fork prevention): the residency maps can
+                // transiently hold NO instance while a LIVE one exists outside
+                // them (rescue checkouts, orphan windows of the overflow↔cache
+                // edges). Such an instance is newer than these disk bytes BY
+                // CONSTRUCTION — it mutated after the last save. Adopt it as
+                // the authority instead of installing a stale twin over it
+                // (proven fork: chaos 4_1 — the stale twin was clean and never
+                // re-saved, making memory/disk divergence permanent).
+                val lineage = liveLineage[id]
+                if (lineage == null || lineage === region || lineage.isRecycled) {
+                    logForensics {
+                        "ADOPT-SKIP id=$id reason=" +
+                            (
+                                if (lineage == null) {
+                                    "no-lineage"
+                                } else if (lineage === region) {
+                                    "lineage==loader"
+                                } else {
+                                    "recycled"
+                                }
+                            ) +
+                            " lineage=${iid(lineage)} loader=${iid(region)}"
+                    }
+                }
+                if (lineage != null && lineage !== region && !lineage.isRecycled) {
+                    putResidentAndParkIfSelfEvicted(id, lineage)
+                    updateMetadataCache()
+                    // Single-residency-location invariant (see acquireRegion).
+                    if (regionCache.get(id) === lineage || overflowRegions[id] === lineage) {
+                        limbo.remove(id)
+                    }
+                    if (!lineage.contentBounds.isEmpty) {
+                        updateRegionIndex(id, RectF(lineage.contentBounds))
+                    }
+                    liveLineage[id] = lineage
+                    logForensics {
+                        "LOAD-ADOPT-LINEAGE id=$id i=${iid(lineage)} items=${lineage.items.size} " +
+                            "dirty=${lineage.isDirty} diskHad=${region?.items?.size}"
+                    }
+                    auditRegion(forensics, lineage, "LOAD-ADOPT-LINEAGE")
+                    return lineage
+                }
 
                 // Only NOW — when we are definitively installing an empty
                 // region because NO live instance exists anywhere — may the
@@ -1393,7 +1661,7 @@ class RegionManager(
                 // it forks the lineage: the stale copy becomes resident, queries
                 // miss recent mutations, and a later save regresses the disk.
                 // Prefer the parked copy and discard our disk bytes.
-                val parked = limbo[id]
+                val parked = freshestInLimbo(id)
                 if (parked != null && !parked.isRecycled && parked.retain()) {
                     logForensics {
                         "RET-LIMBO id=$id i=${Integer.toHexString(System.identityHashCode(parked))} c=${parked.debugRefCount()}"
@@ -1404,7 +1672,7 @@ class RegionManager(
                     updateMetadataCache()
                     // Single-residency-location invariant (see acquireRegion).
                     if (regionCache.get(id) === parked || overflowRegions[id] === parked) {
-                        limbo.remove(id)
+                        removeFromLimbo(id, parked, "limbo-prefer")
                     }
                     logForensics { "LOAD-PREFER-LIMBO id=$id items=${parked.items.size}" }
                     auditRegion(forensics, parked, "LOAD-PREFER-LIMBO")
@@ -1441,21 +1709,24 @@ class RegionManager(
                 // the residency slot → 0-ref resident → negative counts).
                 putResidentAndParkIfSelfEvicted(id, region!!)
                 liveLineage[id] = region!!
-                logForensics { "LOAD-INSTALL id=$id items=${region.items.size} hadExisting=$useExisting" }
+                logForensics {
+                    "LOAD-INSTALL id=$id i=${iid(region)} items=${region.items.size} hadExisting=$useExisting"
+                }
                 auditRegion(forensics, region, "LOAD-INSTALL")
 
                 // DISPLACED-LINEAGE RESTORE: our put may have just displaced a
-                // live DIRTY copy (its entryRemoved parks it into limbo — a
-                // park that did not exist when we checked above). An empty
-                // disk-miss twin must not outrank it: restore the displaced
-                // copy as resident and let our bytes be parked instead.
-                val displaced = limbo[id]
+                // live DIRTY copy (its demotion parks it into limbo — a park
+                // that did not exist when we checked above). An empty disk-miss
+                // twin must not outrank it: restore the displaced copy as
+                // resident and let our bytes be parked instead.
+                val displaced = freshestInLimbo(id)
                 if (displaced != null && displaced !== region && !displaced.isRecycled &&
                     (missedOnDisk || displaced.isDirty) && displaced.retain()
                 ) {
                     displaced.retain() // residency slot (parked copies are slotless)
                     putResidentAndParkIfSelfEvicted(id, displaced) // parks OUR copy via entryRemoved
                     updateMetadataCache()
+                    removeFromLimbo(id, displaced, "restore-displaced")
                     // Our copy's slot was consumed by its own demotion; the
                     // caller takes their handoff on `displaced`.
                     logForensics {
@@ -2439,6 +2710,25 @@ class RegionManager(
 
     fun forensicsReset() = forensics.reset()
 
+    /** Enables churn-level (per-operation) forensics logging. */
+    fun forensicsSetVerbose(v: Boolean) {
+        forensics.verbose = v
+    }
+
+    /** TEMP DEBUG: limbo snapshot straight from the source. */
+    fun debugLimboSnapshot(): Map<String, Int> =
+        limbo.entries.associate { "${it.key.x}_${it.key.y}" to it.value.size }
+
+    /** TEMP DEBUG: identity of the live limbo map. */
+    fun debugLimboIdentity(): Int = System.identityHashCode(limbo)
+
+    /** TEMP DEBUG: residency snapshot straight from the source. */
+    fun debugResidency(): Triple<Set<String>, Set<String>, Int> {
+        val cacheKeys = stateLock.read { regionCache.keySetSnapshot().map { "${it.x}_${it.y}" }.toSet() }
+        val ovfKeys = stateLock.read { overflowRegions.keys.map { "${it.x}_${it.y}" }.toSet() }
+        return Triple(cacheKeys, ovfKeys, limbo.size)
+    }
+
     fun dumpForensics(id: String): String = forensics.dumpFor(id)
 
     fun setPinnedRegions(ids: Set<RegionId>) {
@@ -2447,14 +2737,18 @@ class RegionManager(
             pinnedIds = ids
             unpinned.forEach { id ->
                 overflowRegions.remove(id)?.let {
-                    currentOverflowBytes -= it.getSizeCached()
                     regionCache.put(id, it).forEach { e -> demote(e) }
                 }
             }
+            recomputeOverflowBytes()
         }
     }
 
     fun clear() {
+        if (forensics.enabled) {
+            val caller = Throwable().stackTrace.getOrNull(1)
+            forensics.log("!!!! CLEAR-ENTERED by ${caller ?: "?"}")
+        }
         // Any save queued BEFORE this point carries pre-clear content; when its
         // coroutine eventually starts it will see the epoch mismatch and abort
         // instead of writing cleared data back to disk (see [clearEpoch]).
@@ -2586,7 +2880,7 @@ class RegionManager(
                 // disk (caught by RenderPipelineChaosTest).
                 (regionCache.keySetSnapshot() + overflowRegions.keys + limbo.keys)
                     .filter {
-                        val r = regionCache.get(it) ?: overflowRegions[it] ?: limbo[it]
+                        val r = regionCache.get(it) ?: overflowRegions[it] ?: freshestInLimbo(it)
                         // Recycled husks have cleared items but may retain a
                         // stale dirty flag; treating them as "dirty & empty"
                         // deleted LIVE region files from disk (caught by
@@ -2614,14 +2908,16 @@ class RegionManager(
             var captured = false
 
             stateLock.read {
-                val region = regionCache.get(id) ?: overflowRegions[id] ?: limbo[id] ?: return@read
+                val region =
+                    regionCache.get(id) ?: overflowRegions[id] ?: freshestInLimbo(id)
+                        ?: return@read
                 if (!region.isDirty) return@read
                 modAtSnapshot = region.modCount
                 if (region.items.isEmpty()) {
                     logForensics {
                         "!!!! SAVEALL-EMPTY-DELETE id=$id dirty=${region.isDirty} " +
                             "recycled=${region.isRecycled} gen=${region.generation} " +
-                            "fromCache=${regionCache.get(id) === region} fromLimbo=${limbo[id] === region}"
+                            "fromCache=${regionCache.get(id) === region} fromLimbo=${limbo[id]?.any { it === region } == true}"
                     }
                     isEmpty = true
                 } else {
@@ -2653,11 +2949,13 @@ class RegionManager(
                     Logger.e("RegionManager", "Failed to persist region $id during saveAll", e)
                     false
                 } finally {
+                    bumpDiskGen(id)
                     pendingSaveIds.remove(id)
                 }
 
             if (ok) {
-                val current = regionCache.get(id) ?: overflowRegions[id] ?: limbo[id]
+                val current =
+                    regionCache.get(id) ?: overflowRegions[id] ?: freshestInLimbo(id)
                 if (current != null) {
                     var reschedule = false
                     stateLock.write {

@@ -167,17 +167,16 @@ class RegionManagerOverflowTest {
                 kotlinx.coroutines.delay(100)
             }
 
-            // Verify R1 and R2 are NOT in memory
-            storage.deleteRegion(r1)
-            storage.deleteRegion(r2)
+            // Budget-enforcement contract: R1/R2 are NOT RESIDENT (neither
+            // cache nor overflow). They may still be briefly discoverable via
+            // limbo/lineage (non-destructive eviction keeps held copies
+            // alive), so residency is asserted through tryAcquireRegion —
+            // NOT through getRegion, which legitimately serves live content.
+            assertNull("R1 should not be resident", regionManager.tryAcquireRegion(r1))
+            assertNull("R2 should not be resident", regionManager.tryAcquireRegion(r2))
 
-            val r1Data = regionManager.getRegion(r1)
-            assertTrue("R1 should have been evicted from overflow", r1Data.items.isEmpty())
-
-            val r2Data = regionManager.getRegion(r2)
-            assertTrue("R2 should have been evicted from overflow", r2Data.items.isEmpty())
-
-            // Verify R3 is still in memory (overflow)
+            // Verify R3 is still resident (overflow) and serves content.
+            assertNotNull(regionManager.tryAcquireRegion(r3))
             storage.deleteRegion(r3)
             val r3Data = regionManager.getRegion(r3)
             assertFalse("R3 should still be in overflow", r3Data.items.isEmpty())

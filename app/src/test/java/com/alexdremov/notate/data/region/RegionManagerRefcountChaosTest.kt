@@ -116,13 +116,22 @@ class RegionManagerRefcountChaosTest {
             return f.get(this) as MutableMap<RegionId, RegionData>
         }
 
+    /** Freshest parked instance per id (limbo is a multiset of live copies). */
     @Suppress("UNCHECKED_CAST")
-    private val RegionManager.limboMap: MutableMap<RegionId, RegionData>
+    private val RegionManager.limboMap: MutableMap<RegionId, MutableList<RegionData>>
         get() {
             val f = RegionManager::class.java.getDeclaredField("limbo")
             f.isAccessible = true
-            return f.get(this) as MutableMap<RegionId, RegionData>
+            return f.get(this) as MutableMap<RegionId, MutableList<RegionData>>
         }
+
+    private fun RegionManager.freshestLimbo(id: RegionId): RegionData? =
+        limboMap[id]?.filter { !it.isRecycled }?.maxByOrNull { it.lastTouchMs }
+
+    private fun RegionManager.limboContains(
+        id: RegionId,
+        r: RegionData,
+    ): Boolean = limboMap[id]?.any { it === r } == true
 
     private fun refCountOf(region: RegionData): Int {
         val f = RegionData::class.java.getDeclaredField("refCount")
@@ -148,7 +157,8 @@ class RegionManagerRefcountChaosTest {
         repeat(10) {
             Thread.sleep(50)
             val still =
-                rm.cache.get(id) != null || rm.overflow[id] != null || rm.limboMap[id] != null
+                rm.cache.get(id) != null || rm.overflow[id] != null ||
+                    (rm.limboMap[id]?.any { !it.isRecycled } == true)
             if (!still) return true
         }
         return false
@@ -162,7 +172,9 @@ class RegionManagerRefcountChaosTest {
         for (id in rm.getActiveRegionIds()) {
             rm.cache.get(id)?.let { seen.getOrPut(id) { ArrayList() }.add("cache" to it) }
             rm.overflow[id]?.let { seen.getOrPut(id) { ArrayList() }.add("overflow" to it) }
-            rm.limboMap[id]?.let { seen.getOrPut(id) { ArrayList() }.add("limbo" to it) }
+            rm.limboMap[id]?.forEach { candidate ->
+                if (!candidate.isRecycled) seen.getOrPut(id) { ArrayList() }.add("limbo" to candidate)
+            }
         }
         // Limbo can hold ids that were removed from the index (emptied regions).
         for ((id, copies) in seen) {
@@ -495,12 +507,14 @@ class RegionManagerRefcountChaosTest {
                 rm.overflow[rid]?.let {
                     println("!!!!   overflow items=${it.items.size} orders=${it.items.mapNotNull { s -> (s as? Stroke)?.order }.sorted()}")
                 } ?: println("!!!!   overflow=<absent>")
-                rm.limboMap[rid]?.let {
-                    println(
-                        "!!!!   limbo items=${it.items.size} dirty=${it.isDirty} recycled=${it.isRecycled} orders=${it.items.mapNotNull { s ->
-                            (s as? Stroke)?.order
-                        }.sorted()}",
-                    )
+                rm.limboMap[rid]?.let { bucket ->
+                    bucket.forEach { entry ->
+                        println(
+                            "!!!!   limbo i=${Integer.toHexString(
+                                System.identityHashCode(entry),
+                            )} items=${entry.items.size} dirty=${entry.isDirty} recycled=${entry.isRecycled}",
+                        )
+                    }
                 } ?: println("!!!!   limbo=<absent>")
                 runBlocking {
                     val disk = RegionStorage(chaosDir).apply { init() }.loadRegion(rid)

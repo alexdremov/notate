@@ -93,6 +93,18 @@ class RenderPipelinePerformanceTest {
             }
         }
         rm.saveAll()
+        // TEMP DEBUG
+        run {
+            val f = RegionManager::class.java.getDeclaredField("regionCache")
+            f.isAccessible = true
+            val rc = f.get(rm)
+            val maxF = rc.javaClass.getDeclaredField("maxBytes").apply { isAccessible = true }
+            val bytesF = rc.javaClass.getDeclaredField("bytes").apply { isAccessible = true }
+            println(
+                "!!!! CACHEDEBUG max=${maxF.get(rc)} bytes=${bytesF.get(rc)} " +
+                    "regionCount=$regions",
+            )
+        }
         return rm
     }
 
@@ -230,9 +242,22 @@ class RenderPipelinePerformanceTest {
             return total.get() / elapsedSec
         }
 
-        val single = rateWith(1, millis = 1_200)
+        val singleBefore = rateWith(1, millis = 1_200)
         val parallel = rateWith(cores, millis = 1_500)
+        val singleAfter = rateWith(1, millis = 1_200)
 
+        // Measurement VALIDITY gate: ambient CPU contention (IDE, indexers,
+        // VPN, other builds) shows up as diverging single-thread rates across
+        // the window — the parallel phase then measures scheduler steal, not
+        // lock-freedom. Same rationale as the CI gate above, but portable.
+        val stability = minOf(singleBefore, singleAfter) / maxOf(singleBefore, singleAfter)
+        org.junit.Assume.assumeTrue(
+            "single-thread rate drifted %.0f%%→%.0f q/s (%.0f%% stability) — ambient load voids wall-clock scaling"
+                .format(singleBefore, singleAfter, stability * 100),
+            stability >= 0.7,
+        )
+
+        val single = max(singleBefore, singleAfter)
         val scaling = parallel / single
         println(
             "!!!! SCALING cores=$cores single=%.0f q/s parallel=%.0f q/s scaling=%.2fx"

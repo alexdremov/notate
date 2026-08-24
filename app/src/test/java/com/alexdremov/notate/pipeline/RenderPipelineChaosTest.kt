@@ -400,6 +400,7 @@ class RenderPipelineChaosTest {
         }
         if (memOrders != diskOrders) {
             println("--- DIVERGENCE: mem-only=" + (memOrders - diskOrders) + " disk-only=" + (diskOrders - memOrders))
+            dumpRegionStoreState(rm, dir, memOrders - diskOrders, diskOrders - memOrders)
         }
         assertEquals(
             "disk state did not converge to memory state after 5 flush cycles (seed=$seed)",
@@ -427,6 +428,97 @@ class RenderPipelineChaosTest {
     }
 
     /** High-contrast diagonal stroke inside a single tile-sized area. */
+
+    /**
+     * Failure-time forensics for disk-divergence: per region, where memory
+     * holds the content, what the FILE on disk contains, and the manager's
+     * full event history for divergent ids. Runs only on failure.
+     */
+    private fun dumpRegionStoreState(
+        rm: com.alexdremov.notate.data.region.RegionManager,
+        dir: java.io.File,
+        memOnly: Set<Long>,
+        diskOnly: Set<Long>,
+    ) {
+        fun fld(
+            target: Any,
+            name: String,
+        ): Any {
+            val f = target.javaClass.getDeclaredField(name)
+            f.isAccessible = true
+            return f.get(target)
+        }
+
+        @Suppress("UNCHECKED_CAST")
+        val cache =
+            run {
+                val rc = fld(rm, "regionCache")
+                val mmap = rc.javaClass.getDeclaredField("map").apply { isAccessible = true }
+                (mmap.get(rc) as Map<com.alexdremov.notate.data.region.RegionId, com.alexdremov.notate.data.region.RegionData>)
+            }
+
+        @Suppress("UNCHECKED_CAST")
+        val overflow =
+            fld(rm, "overflowRegions") as Map<com.alexdremov.notate.data.region.RegionId, com.alexdremov.notate.data.region.RegionData>
+
+        @Suppress("UNCHECKED_CAST")
+        val limbo =
+            fld(rm, "limbo") as Map<com.alexdremov.notate.data.region.RegionId, List<com.alexdremov.notate.data.region.RegionData>>
+        val limboFlat = limbo.values.flatten()
+        val diskStorage =
+            com.alexdremov.notate.data.region
+                .RegionStorage(dir)
+
+        println("--- REGION SNAPSHOT (divergent memOnly=$memOnly diskOnly=$diskOnly) ---")
+        println("limboBuckets=${limbo.mapValues { it.value.size }}")
+        val divergentIds = HashSet<com.alexdremov.notate.data.region.RegionId>()
+        for (rid in (cache.keys + overflow.keys + limbo.keys + rm.getActiveRegionIds())) {
+            val inst = cache[rid] ?: overflow[rid] ?: limbo[rid]?.maxByOrNull { it.lastTouchMs }
+            val file = java.io.File(dir, "r_${rid.x}_${rid.y}.bin")
+            val disk = if (file.exists()) diskStorage.loadRegion(rid) else null
+            val diskOrders = disk?.items?.map { it.order }?.toSet() ?: emptySet()
+            val memOrdersHere = inst?.items?.map { it.order }?.toSet() ?: emptySet()
+            val interesting =
+                diskOrders != memOrdersHere || rid in divergentIds ||
+                    (memOnly + diskOnly).any { it in diskOrders || it in memOrdersHere }
+            println(
+                "R$rid file=${file.exists()} memInst=${inst != null} " +
+                    "loc=${if (cache[rid] === inst) {
+                        "cache"
+                    } else if (overflow[rid] === inst) {
+                        "overflow"
+                    } else if (limbo[rid]?.any { it === inst } == true) {
+                        "limbo"
+                    } else {
+                        "-"
+                    }} " +
+                    "dirty=${inst?.isDirty} evicted=${inst?.isEvicted} recycled=${inst?.debugIsRecycled()} " +
+                    "mod=${inst?.modCount} gen=${inst?.generation} refs=${inst?.debugRefCount()}",
+            )
+            println(
+                "   mem(${memOrdersHere.size})=${memOrdersHere.sorted()}\n" +
+                    "   disk(${diskOrders.size})=${diskOrders.sorted()}",
+            )
+            if ((memOrdersHere - diskOrders).isNotEmpty() || (diskOrders - memOrdersHere).isNotEmpty()) {
+                divergentIds.add(rid)
+            }
+        }
+        for (rid in divergentIds) {
+            println("---- FORENSICS HISTORY for $rid ----")
+            println(rm.dumpForensics("${rid.x}_${rid.y}"))
+            println("---- END HISTORY $rid ----")
+        }
+        // Cross-region causality: the last global events before verification.
+        println("---- GLOBAL TAIL (last 400 events) ----")
+        val dumpRecent = RegionManager::class.java.getDeclaredMethod("dumpForensics", String::class.java)
+        runCatching {
+            val ring = RegionManager::class.java.getDeclaredField("forensics").apply { isAccessible = true }.get(rm)
+            val recent = ring.javaClass.getMethod("dumpRecent", Int::class.javaPrimitiveType)
+            println(recent.invoke(ring, 400) as String)
+        }
+        println("---- END GLOBAL TAIL ----")
+    }
+
     private fun sentinelStroke(): Stroke {
         val pts = ArrayList<TouchPoint>()
         val path = Path()

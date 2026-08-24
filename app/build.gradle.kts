@@ -97,6 +97,9 @@ android {
 }
 
 tasks.withType<Test> {
+    // Keep full stacks for frameless fast-throw exceptions (hot-loop
+    // AIOOBE/NPE otherwise arrive with no frames and cannot be located).
+    jvmArgs("-XX:-OmitStackTraceInFastThrow")
     configure<JacocoTaskExtension> {
         isIncludeNoLocationClasses = true
         excludes = listOf("jdk.internal.*")
