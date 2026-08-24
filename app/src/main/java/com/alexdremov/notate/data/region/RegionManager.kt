@@ -925,9 +925,14 @@ class RegionManager(
 
     /**
      * Freshest live parked instance for [id]: mutated (dirty) beats clean,
-     * then most-recently-used, then highest mutation counter. Rescue,
-     * LIMBO-PREFER and lineage adoption MUST all select through this so a
-     * stale sibling can never outrank the live lineage.
+     * then highest mutation counter (content truth — [RegionData.modCount]
+     * advances with every published mutation, while lastTouchMs tracks
+     * scheduling luck: a stale twin merely TOUCHED later must never outrank
+     * a copy whose content is newer — proven CI loss: stroke invisible in
+     * memory because the freshest copy went clean after its save and lost
+     * the recency race against an older sibling). Rescue, LIMBO-PREFER and
+     * lineage adoption MUST all select through this so a stale sibling can
+     * never outrank the live lineage.
      */
     private fun freshestInLimbo(id: RegionId): RegionData? {
         val bucket = limbo[id] ?: return null
@@ -945,12 +950,12 @@ class RegionManager(
                         if (candidate.isDirty) candidate else b
                     }
 
-                    candidate.lastTouchMs != b.lastTouchMs -> {
-                        if (candidate.lastTouchMs > b.lastTouchMs) candidate else b
+                    candidate.modCount != b.modCount -> {
+                        if (candidate.modCount > b.modCount) candidate else b
                     }
 
                     else -> {
-                        if (candidate.modCount > b.modCount) candidate else b
+                        if (candidate.lastTouchMs > b.lastTouchMs) candidate else b
                     }
                 }
         }
