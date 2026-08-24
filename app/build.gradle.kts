@@ -97,6 +97,11 @@ android {
 }
 
 tasks.withType<Test> {
+    // Keep full stacks for frameless fast-throw exceptions (hot-loop
+    // AIOOBE/NPE otherwise arrive with no frames and cannot be located).
+    jvmArgs("-XX:-OmitStackTraceInFastThrow")
+    // TEMP perf forensics: stream test stdout to console (watchdog dumps).
+    testLogging.showStandardStreams = true
     configure<JacocoTaskExtension> {
         isIncludeNoLocationClasses = true
         excludes = listOf("jdk.internal.*")

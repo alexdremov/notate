@@ -36,6 +36,7 @@ class InfiniteCanvasModelTest {
         coEvery { regionManager.addItem(any()) } just Runs
         coEvery { regionManager.removeItems(any()) } just Runs
         coEvery { regionManager.clear() } just Runs
+        coEvery { regionManager.clearAndWipeStorage() } just Runs
 
         mockkObject(StrokeGeometry)
     }
@@ -116,7 +117,9 @@ class InfiniteCanvasModelTest {
             model.clear()
 
             assertThat(model.getContentBounds().isEmpty).isTrue()
-            coVerify { regionManager.clear() }
+            // User-initiated clear wipes PERSISTED strokes too, so a reopen
+            // cannot resurrect them (rebuildIndex has nothing to scan).
+            coVerify { regionManager.clearAndWipeStorage() }
         }
 
     @Test
@@ -125,21 +128,10 @@ class InfiniteCanvasModelTest {
             model.initializeSession(regionManager)
             val stroke = createTestStroke()
 
-            // Use real RegionData and Quadtree
-            val regionId =
-                com.alexdremov.notate.data.region
-                    .RegionId(0, 0)
-            val region =
-                com.alexdremov.notate.data.region
-                    .RegionData(regionId)
-            val quadtree =
-                com.alexdremov.notate.util
-                    .Quadtree(0, RectF(0f, 0f, 100f, 100f))
-            region.quadtree = quadtree
-            quadtree.insert(stroke)
-
-            coEvery { regionManager.getRegionIdsInRect(any()) } returns listOf(regionId)
-            every { regionManager.getRegionReadOnly(any()) } returns region
+            // The model delegates straight to RegionManager.hitTest, which owns
+            // the read-lock-protected quadtree walk. Verify the delegation and
+            // result propagation.
+            coEvery { regionManager.hitTest(15f, 15f, 10f) } returns stroke
 
             val hit = model.hitTest(15f, 15f)
             assertThat(hit).isEqualTo(stroke)

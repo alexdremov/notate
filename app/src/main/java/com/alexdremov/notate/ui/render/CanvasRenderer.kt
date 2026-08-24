@@ -229,9 +229,13 @@ class CanvasRenderer(
         val regionIds = rm.getRegionIdsInRect(queryRect)
 
         for (id in regionIds) {
-            val region = rm.getRegionReadOnly(id) ?: continue
+            val region = rm.tryAcquireRegion(id) ?: continue
             val regionItems = ArrayList<com.alexdremov.notate.model.CanvasItem>()
-            region.quadtree?.retrieve(regionItems, queryRect)
+            try {
+                region.quadtree?.retrieve(regionItems, queryRect)
+            } finally {
+                rm.releaseRegion(region)
+            }
             renderItems(canvas, regionItems, queryRect, quality, viewScale, context, filter)
         }
 
@@ -268,12 +272,16 @@ class CanvasRenderer(
     ) {
         val regionManager = model.getRegionManager() ?: return
         val regions = regionManager.getRegionsInRect(queryRect)
-
-        for (region in regions) {
-            val regionItems = ArrayList<com.alexdremov.notate.model.CanvasItem>()
-            region.quadtree?.retrieve(regionItems, queryRect)
-            renderItems(canvas, regionItems, queryRect, quality, viewScale, context)
-            regionItems.clear()
+        try {
+            for (region in regions) {
+                val regionItems = ArrayList<com.alexdremov.notate.model.CanvasItem>()
+                region.quadtree?.retrieve(regionItems, queryRect)
+                renderItems(canvas, regionItems, queryRect, quality, viewScale, context)
+                regionItems.clear()
+            }
+        } finally {
+            // Regions are reader-retained (eviction-safe); release when done.
+            regionManager.releaseRegions(regions)
         }
     }
 

@@ -95,7 +95,7 @@ class PdfExporterSnapshotTest {
         every { model.getRegionManager() } returns regionManager
 
         val region = RegionData(RegionId(0, 0))
-        region.items.addAll(items)
+        region.items = region.items + items
         region.rebuildQuadtree(1000f) // Larger than bounds
 
         coEvery { regionManager.getRegionsInRect(any()) } returns listOf(region)

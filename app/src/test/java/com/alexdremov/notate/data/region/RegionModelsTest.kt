@@ -53,7 +53,7 @@ class RegionModelsTest {
         // Add a stroke
         val strokePointsCount = 10
         val stroke = createTestStroke(strokePointsCount)
-        region.items.add(stroke)
+        region.items = region.items + listOf(stroke)
 
         // Expected size: Base(128) + StrokeBase(128) + PathBuffer(1024) + Points(10 * 52)
         val expectedSize = 128L + 128L + 1024L + (strokePointsCount * 52L)
@@ -66,7 +66,7 @@ class RegionModelsTest {
                 logicalBounds = RectF(0f, 0f, 100f, 100f),
                 bounds = RectF(0f, 0f, 100f, 100f),
             )
-        region.items.add(image)
+        region.items = region.items + listOf(image)
 
         // Expected size: Previous + Image(144 + length * 2)
         val imageSize = 144L + (image.uri.length * 2L)

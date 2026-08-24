@@ -184,11 +184,6 @@ class CanvasControllerImpl(
         y: Float,
     ): CanvasItem? = model.hitTest(x, y, 20f)
 
-    override fun getItemAtSync(
-        x: Float,
-        y: Float,
-    ): CanvasItem? = model.hitTestSync(x, y, 20f)
-
     override suspend fun getItemsInRect(rect: RectF): List<CanvasItem> =
         withContext(Dispatchers.Default) {
             val result = ArrayList<CanvasItem>()
@@ -1279,11 +1274,19 @@ class CanvasControllerImpl(
                 if (rm != null) {
                     val activeIds = rm.getActiveRegionIds()
                     for (rId in activeIds) {
+                        // getRegion hands off a reference — it must be returned
+                        // via releaseRegion, otherwise the resident accumulates
+                        // a leaked handoff per lookup (exposed by the uniform
+                        // ownership model's balance assertions).
                         val region = rm.getRegion(rId)
-                        val found = region.items.find { it.order == id }
-                        if (found != null) {
-                            item = found
-                            break
+                        try {
+                            val found = region.items.find { it.order == id }
+                            if (found != null) {
+                                item = found
+                                break
+                            }
+                        } finally {
+                            rm.releaseRegion(region)
                         }
                     }
                 }

@@ -86,6 +86,8 @@ class RegionManagerConcurrencyTest {
     @Test
     fun `concurrent addItem operations preserve all items`() =
         runTest {
+            manager.forensicsSetEnabled(true)
+            manager.forensicsReset()
             val threadCount = 10
             val itemsPerThread = 100
 
@@ -108,6 +110,12 @@ class RegionManagerConcurrencyTest {
                     .getRegionsInRect(RectF(-10000f, -10000f, 10000f, 10000f))
                     .flatMap { it.items }
 
+            if (allItems.size != threadCount * itemsPerThread) {
+                println("!!!! CONCURRENCY LOSS: ${allItems.size} of ${threadCount * itemsPerThread}")
+                println(
+                    manager.dumpForensics("0_0"),
+                )
+            }
             assertEquals("All items should be present", threadCount * itemsPerThread, allItems.size)
         }
 

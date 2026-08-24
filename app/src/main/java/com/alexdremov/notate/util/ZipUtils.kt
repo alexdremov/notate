@@ -188,6 +188,41 @@ object ZipUtils {
     }
 
     /**
+     * Writes [input] to [targetFile] atomically: bytes land in a sibling temp
+     * file which is then renamed over the target. Readers either see the old
+     * complete content or the new complete content — never a torn write. This
+     * matters because JIT extraction ([extractFile]) and the background
+     * ([unzipSkippingExisting]) can target the SAME region file concurrently;
+     * both produce identical bytes from the same ZIP entry, so last-rename-
+     * wins is safe, but interleaved in-place writes are not.
+     */
+    private fun atomicWriteEntry(
+        input: InputStream,
+        targetFile: File,
+    ) {
+        targetFile.parentFile?.mkdirs()
+        val tmp =
+            File(
+                targetFile.parentFile,
+                "${targetFile.name}.tmp_${Thread.currentThread().id}_${System.nanoTime()}",
+            )
+        try {
+            BufferedOutputStream(FileOutputStream(tmp)).use { output ->
+                input.copyTo(output)
+            }
+            if (!tmp.renameTo(targetFile)) {
+                java.nio.file.Files.move(
+                    tmp.toPath(),
+                    targetFile.toPath(),
+                    java.nio.file.StandardCopyOption.REPLACE_EXISTING,
+                )
+            }
+        } finally {
+            if (tmp.exists()) tmp.delete()
+        }
+    }
+
+    /**
      * Extracts a specific file from the ZIP archive to the target destination.
      * Returns true if found and extracted, false otherwise.
      */
@@ -201,11 +236,8 @@ object ZipUtils {
         try {
             java.util.zip.ZipFile(zipFile).use { zip ->
                 val entry = findEntry(zip, entryName) ?: return false
-                targetFile.parentFile?.mkdirs()
                 zip.getInputStream(entry).use { input ->
-                    targetFile.outputStream().use { output ->
-                        input.copyTo(output)
-                    }
+                    atomicWriteEntry(input, targetFile)
                 }
                 return true
             }
@@ -289,11 +321,8 @@ object ZipUtils {
                         file.mkdirs()
                     } else {
                         if (!file.exists()) {
-                            file.parentFile?.mkdirs()
                             zip.getInputStream(entry).use { input ->
-                                java.io.BufferedOutputStream(java.io.FileOutputStream(file)).use { output ->
-                                    input.copyTo(output)
-                                }
+                                atomicWriteEntry(input, file)
                             }
                             if (entry.time != -1L) {
                                 file.setLastModified(entry.time)

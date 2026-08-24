@@ -43,6 +43,19 @@ class InfiniteCanvasModel {
     // History Manager
     private val historyManager = HistoryManager()
 
+    init {
+        // Release external resources when history entries become unreachable.
+        // RemoveStashed actions reference a stash file on disk; without this
+        // hook every deleted selection would leak a `del_*.bin` file forever,
+        // even after the entry fell off the 100-deep undo stack or the canvas
+        // was cleared. Runs under the model mutex; File.delete() is cheap.
+        historyManager.onActionDiscarded = { action ->
+            if (action is HistoryAction.RemoveStashed) {
+                action.stashFile.delete()
+            }
+        }
+    }
+
     sealed class ModelEvent {
         data class ItemsAdded(
             val items: List<CanvasItem>,
@@ -78,8 +91,16 @@ class InfiniteCanvasModel {
         private set
 
     // --- Viewport State (Persistence Only) ---
+    // Written from the UI layer (viewport gestures / load) and read during
+    // save/export on background threads. @Volatile guarantees visibility of
+    // the last completed write across threads.
+    @Volatile
     var viewportScale: Float = 1.0f
+
+    @Volatile
     var viewportOffsetX: Float = 0f
+
+    @Volatile
     var viewportOffsetY: Float = 0f
     var toolbarItems: List<ToolbarItem> = emptyList()
     var tagIds: List<String> = emptyList()
@@ -96,6 +117,11 @@ class InfiniteCanvasModel {
             val bounds = manager.getContentBounds()
             contentBounds.set(bounds)
             _contentBoundsFlow.value = RectF(bounds)
+
+            // Resume order assignment: restarting at 0 after a reopen made
+            // new strokes collide with persisted ones (found by
+            // RealWorldSessionTest — new content shared identity with old).
+            nextOrder = manager.maxItemOrder() + 1
 
             manager.onRegionLoaded = { region ->
                 val size = manager.regionSize
@@ -178,112 +204,120 @@ class InfiniteCanvasModel {
             searchBounds.inset(-(eraserStroke.width + 5f), -(eraserStroke.width + 5f))
 
             val regions = rm.getRegionsInRect(searchBounds)
-            val candidates = ArrayList<CanvasItem>()
-            regions.forEach { region ->
-                region.quadtree?.retrieve(candidates, searchBounds)
-            }
-
-            // Deduplicate candidates as items spanning multiple regions will appear multiple times
-            val uniqueCandidates = candidates.distinctBy { it.order }
-
-            if (uniqueCandidates.isEmpty()) return@withLock null
-
-            // Pre-simplify eraser stroke to drastically reduce O(N*M) geometry checks
-            val optimizedEraser =
-                if (eraserStroke.points.size > 20 && type != EraserType.LASSO) {
-                    val simplified = StrokeGeometry.simplifyPoints(eraserStroke.points, 2.0f)
-                    eraserStroke.copy(points = simplified)
-                } else {
-                    eraserStroke
+            try {
+                val candidates = ArrayList<CanvasItem>()
+                regions.forEach { region ->
+                    region.quadtree?.retrieve(candidates, searchBounds)
                 }
 
-            when (type) {
-                EraserType.STROKE -> {
-                    uniqueCandidates.forEach { item ->
-                        if (item is Stroke && RectF.intersects(item.bounds, optimizedEraser.bounds) &&
-                            StrokeGeometry.strokeIntersects(item, optimizedEraser)
-                        ) {
-                            toRemove.add(item)
-                        } else if (item is CanvasImage && RectF.intersects(item.bounds, optimizedEraser.bounds) &&
-                            item.bounds.contains(optimizedEraser.bounds.centerX(), optimizedEraser.bounds.centerY())
-                        ) {
-                            toRemove.add(item)
-                        } else if (item is TextItem && RectF.intersects(item.bounds, optimizedEraser.bounds) &&
-                            item.bounds.contains(optimizedEraser.bounds.centerX(), optimizedEraser.bounds.centerY())
-                        ) {
-                            toRemove.add(item)
-                        } else if (item is LinkItem && RectF.intersects(item.bounds, optimizedEraser.bounds) &&
-                            item.bounds.contains(optimizedEraser.bounds.centerX(), optimizedEraser.bounds.centerY())
-                        ) {
-                            toRemove.add(item)
+                // Deduplicate candidates as items spanning multiple regions will appear multiple times
+                val uniqueCandidates = candidates.distinctBy { it.order }
+
+                if (uniqueCandidates.isEmpty()) return@withLock null
+
+                // Pre-simplify eraser stroke to drastically reduce O(N*M) geometry checks
+                val optimizedEraser =
+                    if (eraserStroke.points.size > 20 && type != EraserType.LASSO) {
+                        val simplified = StrokeGeometry.simplifyPoints(eraserStroke.points, 2.0f)
+                        eraserStroke.copy(points = simplified)
+                    } else {
+                        eraserStroke
+                    }
+
+                when (type) {
+                    EraserType.STROKE -> {
+                        uniqueCandidates.forEach { item ->
+                            if (item is Stroke && RectF.intersects(item.bounds, optimizedEraser.bounds) &&
+                                StrokeGeometry.strokeIntersects(item, optimizedEraser)
+                            ) {
+                                toRemove.add(item)
+                            } else if (item is CanvasImage && RectF.intersects(item.bounds, optimizedEraser.bounds) &&
+                                item.bounds.contains(optimizedEraser.bounds.centerX(), optimizedEraser.bounds.centerY())
+                            ) {
+                                toRemove.add(item)
+                            } else if (item is TextItem && RectF.intersects(item.bounds, optimizedEraser.bounds) &&
+                                item.bounds.contains(optimizedEraser.bounds.centerX(), optimizedEraser.bounds.centerY())
+                            ) {
+                                toRemove.add(item)
+                            } else if (item is LinkItem && RectF.intersects(item.bounds, optimizedEraser.bounds) &&
+                                item.bounds.contains(optimizedEraser.bounds.centerX(), optimizedEraser.bounds.centerY())
+                            ) {
+                                toRemove.add(item)
+                            }
                         }
                     }
-                }
 
-                EraserType.LASSO -> {
-                    val simplifiedLasso = StrokeGeometry.simplifyPoints(eraserStroke.points, 3.0f)
-                    uniqueCandidates.forEach { item ->
-                        if (!eraserStroke.bounds.contains(item.bounds)) return@forEach
+                    EraserType.LASSO -> {
+                        val simplifiedLasso = StrokeGeometry.simplifyPoints(eraserStroke.points, 3.0f)
+                        uniqueCandidates.forEach { item ->
+                            if (!eraserStroke.bounds.contains(item.bounds)) return@forEach
 
-                        val isContained =
-                            if (StrokeGeometry.isRectFullyInPolygon(item.bounds, simplifiedLasso)) {
-                                true
-                            } else if (item is Stroke) {
-                                item.points.all { p ->
-                                    StrokeGeometry.isPointInPolygon(p.x, p.y, simplifiedLasso)
+                            val isContained =
+                                if (StrokeGeometry.isRectFullyInPolygon(item.bounds, simplifiedLasso)) {
+                                    true
+                                } else if (item is Stroke) {
+                                    item.points.all { p ->
+                                        StrokeGeometry.isPointInPolygon(p.x, p.y, simplifiedLasso)
+                                    }
+                                } else {
+                                    val b = item.bounds
+                                    StrokeGeometry.isPointInPolygon(b.left, b.top, simplifiedLasso) &&
+                                        StrokeGeometry.isPointInPolygon(b.right, b.top, simplifiedLasso) &&
+                                        StrokeGeometry.isPointInPolygon(b.right, b.bottom, simplifiedLasso) &&
+                                        StrokeGeometry.isPointInPolygon(b.left, b.bottom, simplifiedLasso)
                                 }
-                            } else {
-                                val b = item.bounds
-                                StrokeGeometry.isPointInPolygon(b.left, b.top, simplifiedLasso) &&
-                                    StrokeGeometry.isPointInPolygon(b.right, b.top, simplifiedLasso) &&
-                                    StrokeGeometry.isPointInPolygon(b.right, b.bottom, simplifiedLasso) &&
-                                    StrokeGeometry.isPointInPolygon(b.left, b.bottom, simplifiedLasso)
-                            }
 
-                        if (isContained) {
-                            toRemove.add(item)
+                            if (isContained) {
+                                toRemove.add(item)
+                            }
                         }
                     }
-                }
 
-                EraserType.STANDARD -> {
-                    uniqueCandidates.filterIsInstance<Stroke>().forEach { target ->
-                        if (RectF.intersects(target.bounds, optimizedEraser.bounds)) {
-                            val newParts = StrokeGeometry.splitStroke(target, optimizedEraser)
-                            if (newParts.size != 1 || newParts[0] !== target) {
-                                pendingReplacements.add(target to newParts)
+                    EraserType.STANDARD -> {
+                        uniqueCandidates.filterIsInstance<Stroke>().forEach { target ->
+                            if (RectF.intersects(target.bounds, optimizedEraser.bounds)) {
+                                val newParts = StrokeGeometry.splitStroke(target, optimizedEraser)
+                                if (newParts.size != 1 || newParts[0] !== target) {
+                                    pendingReplacements.add(target to newParts)
+                                }
                             }
                         }
                     }
                 }
-            }
 
-            if (toRemove.isNotEmpty() || pendingReplacements.isNotEmpty()) {
-                if (toRemove.isNotEmpty()) {
-                    val action = HistoryAction.Remove(toRemove)
-                    executeAction(action)
-                    historyManager.addToStack(action)
-                    boundsToInvalidate.union(calculateBounds(toRemove))
+                if (toRemove.isNotEmpty() || pendingReplacements.isNotEmpty()) {
+                    if (toRemove.isNotEmpty()) {
+                        val action = HistoryAction.Remove(toRemove)
+                        executeAction(action)
+                        historyManager.addToStack(action)
+                        boundsToInvalidate.union(calculateBounds(toRemove))
+                    }
+
+                    if (pendingReplacements.isNotEmpty()) {
+                        val finalRemoved = pendingReplacements.map { it.first }
+                        val finalAdded = pendingReplacements.flatMap { it.second }
+
+                        val orderedAdded =
+                            finalAdded.map { item ->
+                                if (item is Stroke) item.copy(strokeOrder = nextOrder++) else item
+                            }
+
+                        val action = HistoryAction.Replace(finalRemoved, orderedAdded)
+                        executeAction(action)
+                        historyManager.addToStack(action)
+
+                        boundsToInvalidate.union(calculateBounds(finalRemoved))
+                        boundsToInvalidate.union(calculateBounds(orderedAdded))
+                    }
+
+                    invalidatedBounds = boundsToInvalidate
                 }
-
-                if (pendingReplacements.isNotEmpty()) {
-                    val finalRemoved = pendingReplacements.map { it.first }
-                    val finalAdded = pendingReplacements.flatMap { it.second }
-
-                    val orderedAdded =
-                        finalAdded.map { item ->
-                            if (item is Stroke) item.copy(strokeOrder = nextOrder++) else item
-                        }
-
-                    val action = HistoryAction.Replace(finalRemoved, orderedAdded)
-                    executeAction(action)
-                    historyManager.addToStack(action)
-
-                    boundsToInvalidate.union(calculateBounds(finalRemoved))
-                    boundsToInvalidate.union(calculateBounds(orderedAdded))
-                }
-
-                invalidatedBounds = boundsToInvalidate
+            } finally {
+                // getRegionsInRect returns reader-retained regions (safe under
+                // concurrent eviction); drop the references once candidate
+                // extraction and mutation planning are done. The item objects
+                // themselves stay valid: history actions re-load by id on undo.
+                rm.releaseRegions(regions)
             }
         }
         return invalidatedBounds
@@ -412,6 +446,12 @@ class InfiniteCanvasModel {
                 val (_, _) = rm.unstashItems(action.stashFile, android.graphics.Matrix())
                 if (recalculateBounds) recalculateContentBounds()
                 _events.tryEmit(ModelEvent.BulkItemsAdded(action.bounds))
+
+                // The stash file MUST stay alive: a later redo→undo cycle calls
+                // this again and needs it to restore the items (found by
+                // HistorySemanticsTest-style review; deleting here silently
+                // dropped strokes on the second undo). Cleanup happens when the
+                // action leaves history entirely, via onActionDiscarded above.
             }
         }
     }
@@ -457,7 +497,10 @@ class InfiniteCanvasModel {
 
     suspend fun clear() {
         mutex.withLock {
-            regionManager?.clear()
+            // USER-initiated wipe: persisted strokes must not resurrect on
+            // reopen (rebuildIndex scans region files). Plain memory-only
+            // clear stays reserved for internal flows like setLoadedState.
+            regionManager?.clearAndWipeStorage()
             historyManager.clear()
             contentBounds.setEmpty()
             _contentBoundsFlow.value = RectF()
@@ -472,16 +515,20 @@ class InfiniteCanvasModel {
         return RectF(_contentBoundsFlow.value)
     }
 
+    /**
+     * Queries items intersecting [rect].
+     *
+     * Deliberately does NOT hold the model mutex: this is on the tile-generation
+     * hot path and must not serialize behind long mutations (erase geometry,
+     * undo/redo, stash). Consistency is delegated to [RegionManager.queryItems],
+     * which gathers candidates under its read lock — quadtrees are persistent,
+     * so each region yields a consistent snapshot. Callers needing an atomic
+     * view across a multi-step mutation (eraser split, replace) must keep those
+     * steps inside the model mutex themselves, as [erase] does.
+     */
     suspend fun queryItems(rect: RectF): ArrayList<CanvasItem> {
-        val result = ArrayList<CanvasItem>()
-        mutex.withLock {
-            val rm = regionManager ?: return@withLock
-            val regions = rm.getRegionsInRect(rect)
-            regions.forEach { region ->
-                region.quadtree?.retrieve(result, rect)
-            }
-        }
-        return result
+        val rm = regionManager ?: return ArrayList()
+        return rm.queryItems(rect)
     }
 
     suspend fun visitItemsInRect(
@@ -659,39 +706,20 @@ class InfiniteCanvasModel {
         return RectF(0f, top, pageWidth, top + pageHeight)
     }
 
-    fun hitTestSync(
-        x: Float,
-        y: Float,
-        tolerance: Float = 10f,
-    ): CanvasItem? {
-        val rm = regionManager ?: return null
-        val searchRect = RectF(x - tolerance, y - tolerance, x + tolerance, y + tolerance)
-        val regionIds = rm.getRegionIdsInRect(searchRect)
-
-        var hit: CanvasItem? = null
-        val candidates = ArrayList<CanvasItem>()
-
-        for (id in regionIds) {
-            val region = rm.getRegionReadOnly(id) ?: continue
-            region.quadtree?.retrieve(candidates, searchRect)
-        }
-
-        candidates.sortByDescending { it.order }
-
-        for (item in candidates) {
-            if (item.distanceToPoint(x, y) < tolerance) {
-                hit = item
-                break
-            }
-        }
-        return hit
-    }
-
+    /**
+     * Hit test against the canvas content.
+     *
+     * Delegates to [RegionManager.hitTest], which loads all intersecting
+     * regions (lazily deserialized from disk) and collects candidates under the
+     * region read lock — required because quadtrees are concurrently mutated by
+     * background stroke commits and evicted regions are recycled. The model
+     * mutex additionally serializes this against other model mutations.
+     */
     suspend fun hitTest(
         x: Float,
         y: Float,
         tolerance: Float = 10f,
-    ): CanvasItem? = mutex.withLock { hitTestSync(x, y, tolerance) }
+    ): CanvasItem? = mutex.withLock { regionManager?.hitTest(x, y, tolerance) }
 
     suspend fun flush() {
         regionManager?.saveAll()

@@ -449,20 +449,36 @@ class CanvasRepository(
             }
         }
 
-    suspend fun releaseCanvasSession(session: CanvasSession) =
-        withContext(Dispatchers.IO) {
-            sessionLock.withLock {
-                val lastClient = session.release()
-                if (lastClient) {
-                    val name = session.sessionDir.name
-                    activeSessions.remove(name)
-                    session.close() // Releases lock
-                    Logger.i("CanvasRepository", "Session released and closed: $name")
-                } else {
-                    Logger.i("CanvasRepository", "Session released (retained by other clients)")
+    suspend fun releaseCanvasSession(session: CanvasSession) {
+        val shouldClose =
+            withContext(Dispatchers.IO) {
+                sessionLock.withLock {
+                    val lastClient = session.release()
+                    if (lastClient) {
+                        activeSessions.remove(session.sessionDir.name)
+                        Logger.i("CanvasRepository", "Session released and closed: ${session.sessionDir.name}")
+                    } else {
+                        Logger.i("CanvasRepository", "Session released (retained by other clients)")
+                    }
+                    lastClient
                 }
+                // Close OUTSIDE the global session lock: close() may block up to
+                // OPERATIONS_TIMEOUT_MS waiting for an in-flight save to drain,
+                // and holding the process-wide mutex during that wait would stall
+                // every concurrent open/save. This is safe because the session has
+                // already been evicted from [activeSessions] and its refCount is
+                // zero, so no new client can retain it while we close.
+            }
+        if (shouldClose) {
+            // close() can block up to OPERATIONS_TIMEOUT_MS draining an
+            // in-flight save — never run that on the caller's (possibly Main)
+            // context. Still outside sessionLock: the session is already
+            // evicted and refCount-zero, so no client can retain it meanwhile.
+            withContext(Dispatchers.IO) {
+                session.close() // Releases file lock
             }
         }
+    }
 
     /**
      * Imports an external file into the session's assets directory.
@@ -529,6 +545,8 @@ class CanvasRepository(
         session: CanvasSession,
     ): Unit =
         withContext(Dispatchers.IO) {
+            // Whether close() must run after sessionLock is released (see below).
+            var closeAfterUnlock = false
             sessionLock.withLock {
                 val lastClient = session.release()
                 if (lastClient) {
@@ -557,27 +575,36 @@ class CanvasRepository(
                                 .setBackoffCriteria(BackoffPolicy.LINEAR, 10, TimeUnit.SECONDS)
                                 .build()
 
+                        // KEEP, not REPLACE: REPLACE would cancel a commit that is
+                        // already mid-zip when a second close enqueues for the same
+                        // session (e.g. quick close -> reopen -> close). The session
+                        // directory is fully flushed at this point and immutable once
+                        // closed, so letting the running worker finish is always correct.
                         WorkManager
                             .getInstance(context)
                             .enqueueUniqueWork(
                                 "SaveWorker_$name",
-                                ExistingWorkPolicy.REPLACE,
+                                ExistingWorkPolicy.KEEP,
                                 workRequest,
                             )
                     } catch (e: Exception) {
                         Logger.e("CanvasRepository", "Failed to prepare background save for $path", e)
                     } finally {
-                        // 3. Close Session (Release memory and FileLock)
-                        // The Worker will re-acquire a lock if possible/needed, or write regardless.
-                        session.close()
+                        // 3. Close Session (Release memory and FileLock).
+                        // Done below, OUTSIDE the session lock (see comment above):
+                        // close() can block waiting for in-flight saves.
                         Logger.i("CanvasRepository", "Session flushed and closed, worker enqueued: $name")
+                        closeAfterUnlock = true
                     }
                 } else {
                     Logger.i("CanvasRepository", "saveAndCloseSession: Session retained by other clients, performing standard save.")
                     saveCanvasSession(path, session, commitToZip = true)
-                    Unit
                 }
             }
+            // Close OUTSIDE the global session lock — see releaseCanvasSession().
+            // Only done when we were the last client; the worker re-opens nothing,
+            // it writes the already-flushed directory directly.
+            if (closeAfterUnlock) session.close()
         }
 
     @OptIn(ExperimentalSerializationApi::class)

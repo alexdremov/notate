@@ -29,9 +29,12 @@ class TileCache(
         val version: Int,
     )
 
-    // Bitmap Pool to reduce GC churn
-    // Guarded by this TileCache instance lock
-    private val bitmapPool = ArrayList<Bitmap>()
+    // Bitmap Pool to reduce GC churn.
+    // Lock-free: entryRemoved() runs while the LruCache holds its internal lock,
+    // so a monitor-based pool there would nest the LruCache lock with a second
+    // monitor on every eviction. A concurrent queue keeps that path allocation-
+    // and contention-free.
+    private val bitmapPool = java.util.concurrent.ConcurrentLinkedQueue<Bitmap>()
     private val MAX_POOL_SIZE = 32 // Cap pool to prevent OOM
 
     // Bytes per tile (512*512*4 for ARGB_8888)
@@ -81,21 +84,29 @@ class TileCache(
                     // Since all those operations are triggered by methods synchronized on 'this' TileCache instance,
                     // we hold the lock and can safely access bitmapPool.
                     if (evicted && oldBitmap != null && oldBitmap != errorBitmap && oldBitmap != newBitmap && !oldBitmap.isRecycled) {
+                        // size() is O(n) but n <= MAX_POOL_SIZE (tiny).
                         if (bitmapPool.size < MAX_POOL_SIZE) {
-                            bitmapPool.add(oldBitmap)
+                            bitmapPool.offer(oldBitmap)
                         }
                     }
                 }
             }
     }
 
-    @Synchronized
+    //
+    // LOCKING NOTE
+    // ------------
+    // Android's LruCache synchronizes every public method internally, so the
+    // outer @Synchronized wrappers that used to guard get/put/snapshot/... gave
+    // TWO monitor acquisitions per operation and serialized the render thread
+    // (~30-110 gets per frame) against all background workers on one coarse
+    // lock. They are gone; per-method internal synchronization is sufficient.
+    // The bitmap pool is its own concurrent structure (see above).
+
     fun get(key: TileKey): Bitmap? = memoryCache.get(key)?.bitmap
 
-    @Synchronized
     fun getVersion(key: TileKey): Int = memoryCache.get(key)?.version ?: -1
 
-    @Synchronized
     fun put(
         key: TileKey,
         bitmap: Bitmap,
@@ -104,30 +115,18 @@ class TileCache(
         memoryCache.put(key, CachedTile(bitmap, version))
     }
 
-    @Synchronized
     fun remove(key: TileKey) {
         memoryCache.remove(key)
     }
 
-    @Synchronized
     fun clear() {
         memoryCache.evictAll()
         bitmapPool.clear()
     }
 
     fun obtainBitmap(): Bitmap {
-        var bitmap: Bitmap? = null
-        synchronized(this) {
-            if (bitmapPool.isNotEmpty()) {
-                bitmap = bitmapPool.removeAt(bitmapPool.size - 1)
-            }
-        }
-
-        if (bitmap == null) {
-            bitmap = Bitmap.createBitmap(tileSize, tileSize, Bitmap.Config.ARGB_8888)
-        }
-
-        bitmap = bitmap ?: throw OutOfMemoryError("Failed to allocate tile bitmap")
+        val pooled = bitmapPool.poll()
+        val bitmap = pooled ?: Bitmap.createBitmap(tileSize, tileSize, Bitmap.Config.ARGB_8888)
         bitmap.eraseColor(android.graphics.Color.TRANSPARENT)
         return bitmap
     }
@@ -136,7 +135,6 @@ class TileCache(
      * Checks if we have enough budget to cache a new tile.
      * Can trigger a resize if needed.
      */
-    @Synchronized
     fun checkBudgetAndResizeIfNeeded(generatingCount: Int) {
         val currentUsage = memoryCache.size()
         val anticipatedUsage = generatingCount * tileByteCount
@@ -153,7 +151,6 @@ class TileCache(
         }
     }
 
-    @Synchronized
     fun isFull(
         generatingCount: Int,
         thresholdPercent: Double = 0.85,
@@ -164,10 +161,8 @@ class TileCache(
         return (currentUsage + anticipatedUsage) > threshold
     }
 
-    @Synchronized
     fun snapshot(): Map<TileKey, CachedTile> = memoryCache.snapshot()
 
-    @Synchronized
     fun getStats(): Map<String, String> {
         val sizeMb = memoryCache.size() / (1024 * 1024)
         val maxMb = memoryCache.maxSize() / (1024 * 1024)
