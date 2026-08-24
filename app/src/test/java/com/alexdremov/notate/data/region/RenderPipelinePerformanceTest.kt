@@ -315,4 +315,326 @@ class RenderPipelinePerformanceTest {
             p95 < 25_000.0,
         )
     }
+
+    // ------------------------------------------------------------------
+    // 4. Real-use-case churn: pan/zoom across cold regions while strokes
+    //    are committed and autosaved. Two starvation modes remain possible
+    //    even with lock-free reads:
+    //    (a) loader machinery stalling queries — pendingSaveIds gate-waits,
+    //        install sections serializing behind mutations;
+    //    (b) RW-lock writer barriers — saveAll holds the READ lock for
+    //        CPU-bound serialization while addItem grabs WRITE; a waiting
+    //        writer makes NEW readers queue, so a steady mutation stream
+    //        can structurally starve queries.
+    //    Both tests self-calibrate (quiet vs loaded phase in the SAME run),
+    //    so ambient machine load shifts both phases together instead of
+    //    faking or masking a regression.
+    // ------------------------------------------------------------------
+
+    /** Grid canvas: cols×rows regions of [perRegion] strokes each, flushed to disk. */
+    private fun buildGrid(
+        dir: File,
+        cols: Int,
+        rows: Int,
+        perRegion: Int,
+        budgetBytes: Long,
+    ): RegionManager =
+        RegionManager(RegionStorage(dir).apply { init() }, regionSize = 1000f, memoryLimitBytes = budgetBytes).also { rm ->
+            runBlocking {
+                var order = 0L
+                for (row in 0 until rows) {
+                    for (col in 0 until cols) {
+                        repeat(perRegion) { j ->
+                            rm.addItem(stroke(order++, col * 1000f + 40f, row * 1000f + 40f + j * 22f))
+                        }
+                    }
+                }
+            }
+            rm.saveAll()
+        }
+
+    /**
+     * Pan sweep: viewport (~1.6 region wide/tall) steps across the grid like
+     * a user dragging the canvas, forcing cold-region loads every step.
+     * Records per-query latency and returns the op count.
+     */
+    private fun sweep(
+        rm: RegionManager,
+        millis: Long,
+        cols: Int,
+        rows: Int,
+        sink: ArrayList<Long>,
+    ): Int {
+        var ops = 0
+        var step = 0
+        val deadline = System.currentTimeMillis() + millis
+        while (System.currentTimeMillis() < deadline) {
+            val col = (step / 4) % cols
+            val row = (step / (4 * cols)) % rows
+            val vp =
+                RectF(
+                    col * 1000f - 200f,
+                    row * 1000f - 200f,
+                    col * 1000f + 1600f,
+                    row * 1000f + 1600f,
+                )
+            val t0 = System.nanoTime()
+            runBlocking { rm.queryItems(vp) }
+            sink.add(System.nanoTime() - t0)
+            ops++
+            step++
+        }
+        return ops
+    }
+
+    @Test
+    fun `pan sweep keeps loading cold regions without stalling reads`() {
+        val dir = tmp.newFolder()
+        // Budget far below canvas size (~24 regions × ~45KB): every pan step
+        // must evict residents and load cold regions from disk.
+        val rm = buildGrid(dir, cols = 6, rows = 4, perRegion = 30, budgetBytes = 192 * 1024L)
+
+        repeat(20) { runBlocking { rm.queryItems(RectF(0f, 0f, 1600f, 1600f)) } }
+
+        val quietLat = ArrayList<Long>()
+        val quietOps = sweep(rm, millis = 2_000, cols = 6, rows = 4, sink = quietLat)
+
+        var stop = false
+        val currentOpStart =
+            java.util.concurrent.atomic
+                .AtomicLong(0)
+        val watchdog =
+            Thread {
+                while (!stop) {
+                    Thread.sleep(1_000)
+                    val startedAt = currentOpStart.get()
+                    val heldForMs = (System.nanoTime() - startedAt) / 1_000_000
+                    if (startedAt > 0 && heldForMs > 5_000) {
+                        println("!!!! WATCHDOG query blocked ${heldForMs}ms — dumping stacks")
+                        Thread.getAllStackTraces().forEach { (th, frames) ->
+                            if (frames.isNotEmpty()) {
+                                println("!!!! THREAD ${th.name} state=${th.state}")
+                                frames.take(14).forEach { println("!!!!   $it") }
+                            }
+                        }
+                    }
+                }
+            }.apply { isDaemon = true }
+        watchdog.start()
+
+        val writers =
+            (0 until 3).map {
+                Thread {
+                    runBlocking {
+                        var n = 500_000L
+                        while (!stop) {
+                            // Spread commits across the WHOLE grid so writers
+                            // dirty exactly the regions the panner reloads.
+                            rm.addItem(stroke(n++, (n % 6) * 1000f + 300f, ((n / 6) % 4) * 1000f + 300f))
+                            // Pace like real handwriting: user input arrives
+                            // in events, not an infinite tight loop. A pure
+                            // busy-spin starves the manager's OWN dispatcher
+                            // threads (loader continuations queue behind the
+                            // spinning threads) and fakes reader stalls.
+                            Thread.sleep(2)
+                        }
+                    }
+                }.apply { isDaemon = true }
+            }
+        val saver =
+            Thread {
+                while (!stop) {
+                    rm.saveAll()
+                    Thread.sleep(15)
+                }
+            }.apply { isDaemon = true }
+        writers.forEach { it.start() }
+        saver.start()
+
+        // Per-op GC attribution: a stop-the-world pause freezes EVERYTHING —
+        // including the watchdog, which then resumes after the op finished and
+        // never samples the block. Under 70k queries/s the JVM heap-churns hard
+        // enough for multi-second STW episodes (measured: 12s outlier with all
+        // other latencies <40µs). Only NON-GC stall time indicates read-path
+        // starvation; GC time is reported separately.
+        // java.lang.management is absent from android.jar compile stubs — reflect.
+        val mgmt = Class.forName("java.lang.management.ManagementFactory")
+        val getBeans = mgmt.getMethod("getGarbageCollectorMXBeans")
+        val collectionTime =
+            Class
+                .forName("java.lang.management.GarbageCollectorMXBean")
+                .getMethod("getCollectionTime")
+
+        fun gcMs(): Long = (getBeans.invoke(null) as List<*>).sumOf { (collectionTime.invoke(it) as? Long) ?: 0L }
+
+        val loadLat = ArrayList<Long>()
+        val loadGc = ArrayList<Long>()
+        val loadOps: Int
+        try {
+            var ops = 0
+            var step = 0
+            val deadline = System.currentTimeMillis() + 3_000
+            while (System.currentTimeMillis() < deadline) {
+                val col = (step / 4) % 6
+                val row = (step / 24) % 4
+                val vp =
+                    RectF(
+                        col * 1000f - 200f,
+                        row * 1000f - 200f,
+                        col * 1000f + 1600f,
+                        row * 1000f + 1600f,
+                    )
+                currentOpStart.set(System.nanoTime())
+                val g0 = gcMs()
+                val t0 = System.nanoTime()
+                runBlocking { rm.queryItems(vp) }
+                val gcDeltaMs = gcMs() - g0
+                currentOpStart.set(0)
+                loadLat.add(System.nanoTime() - t0)
+                loadGc.add(gcDeltaMs)
+                ops++
+                step++
+            }
+            loadOps = ops
+        } finally {
+            stop = true
+            writers.forEach { it.join(15_000) }
+            saver.join(15_000)
+        }
+
+        val quietMedian = percentile(quietLat, 0.5)
+        val loadMedian = percentile(loadLat, 0.5)
+        val loadP99 = percentile(loadLat, 0.99)
+        val maxStallMs = loadLat.max() / 1_000_000.0
+        // Non-GC stall: wall time minus GC collection time within the op.
+        val maxRealStallMs =
+            loadLat.indices.maxOf { i ->
+                ((loadLat[i] / 1_000_000.0) - loadGc[i]).coerceAtLeast(0.0)
+            }
+        println(
+            "!!!! PAN quiet=%.0fµs loaded=%.0fµs p99=%.0fµs max=%.0fms nonGcMax=%.0fms gcMax=%.0fms ops=%d→%d"
+                .format(
+                    quietMedian,
+                    loadMedian,
+                    loadP99,
+                    maxStallMs,
+                    maxRealStallMs,
+                    loadGc.max().toDouble(),
+                    quietOps,
+                    loadOps,
+                ),
+        )
+
+        assertTrue(
+            "median pan-query latency under churn (${loadMedian}µs) regressed >10× vs quiet " +
+                "(${quietMedian}µs) — loads are stalling the read path",
+            loadMedian < max(quietMedian * 10, 10_000.0),
+        )
+        assertTrue("p99 under churn ${loadP99}µs exceeded the absolute 300ms cap", loadP99 < 300_000.0)
+        assertTrue(
+            "single pan query stalled %.0fms excluding GC (%.0fms raw) — reader starvation episode"
+                .format(maxRealStallMs, maxStallMs),
+            maxRealStallMs < 1_000.0,
+        ) // Loaded ran 1.5× longer: normalize, then require ≥30% throughput retention.
+        assertTrue(
+            "pan throughput collapsed under churn: $loadOps ops vs ${quietOps * 1.5} expected-normalized",
+            loadOps > quietOps * 1.5 * 0.3,
+        )
+    }
+
+    @Test
+    fun `readers keep flowing while writers commit and autosave runs`() {
+        val dir = tmp.newFolder()
+        val rm = buildGrid(dir, cols = 5, rows = 4, perRegion = 25, budgetBytes = 128 * 1024L)
+        val probe = RectF(-500f, -500f, 5500f, 4500f)
+
+        // Interleaved windows: even = quiet (readers alone), odd = loaded
+        // (writers+saver active). Alternation means a machine-wide slowdown
+        // hits BOTH window kinds equally; only structural read-path blocking
+        // skews loaded windows specifically.
+        val windows = 10
+        val windowMillis = 700L
+        val counts =
+            Array(windows) {
+                java.util.concurrent.atomic
+                    .LongAdder()
+            }
+        val windowIdx =
+            java.util.concurrent.atomic
+                .AtomicInteger(0)
+        val done =
+            java.util.concurrent.atomic
+                .AtomicBoolean(false)
+        val readers =
+            (0 until 4).map {
+                Thread {
+                    runBlocking {
+                        while (!done.get()) {
+                            rm.queryItems(probe)
+                            counts[windowIdx.get()].increment()
+                        }
+                    }
+                }.apply { isDaemon = true }
+            }
+
+        repeat(150) { runBlocking { rm.queryItems(probe) } } // warm-up
+        readers.forEach { it.start() }
+
+        var stopWriters = false
+        val writers =
+            (0 until 3).map {
+                Thread {
+                    runBlocking {
+                        var n = 900_000L
+                        while (!stopWriters) {
+                            rm.addItem(stroke(n++, (n % 5) * 1000f + 200f, ((n / 5) % 4) * 1000f + 200f))
+                        }
+                    }
+                }.apply { isDaemon = true }
+            }
+        val saver =
+            Thread {
+                while (!stopWriters) {
+                    rm.saveAll()
+                    Thread.sleep(12)
+                }
+            }.apply { isDaemon = true }
+
+        try {
+            for (w in 0 until windows) {
+                if (w == 1) {
+                    writers.forEach { it.start() }
+                    saver.start()
+                }
+                windowIdx.set(w)
+                Thread.sleep(windowMillis)
+            }
+        } finally {
+            stopWriters = true
+            done.set(true)
+            writers.forEach { it.join(15_000) }
+            saver.join(15_000)
+            readers.forEach { it.join(15_000) }
+        }
+
+        val half = windows / 2
+        val quietPerWindow = counts.filterIndexed { i, _ -> i % 2 == 0 }.sumOf { it.sum() }.toDouble() / half
+        val loadedPerWindow = counts.filterIndexed { i, _ -> i % 2 == 1 }.sumOf { it.sum() }.toDouble() / half
+        val worstLoadedWindow = counts.filterIndexed { i, _ -> i % 2 == 1 }.minOf { it.sum() }
+        val ratio = if (quietPerWindow > 0) loadedPerWindow / quietPerWindow else 0.0
+        println(
+            "!!!! FLOW quiet=%.0f/win loaded=%.0f/win ratio=%.2f worstLoadedWindow=$worstLoadedWindow"
+                .format(quietPerWindow, loadedPerWindow, ratio),
+        )
+
+        assertTrue(
+            "reader throughput collapsed under churn: loaded/quiet=%.2f (floor 0.25)".format(ratio),
+            ratio > 0.25,
+        )
+        assertTrue(
+            "a single loaded window only managed $worstLoadedWindow reads " +
+                "(below 5 percent of quiet rate %.0f) — starvation episode".format(quietPerWindow),
+            worstLoadedWindow > quietPerWindow * 0.05,
+        )
+    }
 }

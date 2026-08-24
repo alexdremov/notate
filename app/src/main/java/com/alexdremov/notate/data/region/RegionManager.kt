@@ -435,8 +435,18 @@ class RegionManager(
     companion object {
         private const val LIMBO_STICKY_MS = 5_000L
 
-        /** Max time a reload waits for an in-flight eviction save (see [pendingSaveIds]). */
-        private const val PENDING_SAVE_WAIT_MS = 5_000L
+        /**
+         * Max time a reload waits for an in-flight eviction save
+         * (see [pendingSaveIds]). Deliberately SHORT: under autosave storms a
+         * new save grabs the gate every few ms, so a waiter that tries to
+         * catch a free window can wait FOREVER in effect — serialized 5s gate
+         * waits produced 59s pan freezes (proven by the pan-sweep perf test).
+         * Correctness does not depend on this wait at all: [stableLoadFromDisk]
+         * re-reads whenever a save lands across the read window (per-id seqlock).
+         * The wait is only an optimization to avoid reading bytes we would
+         * have to re-read once.
+         */
+        private const val PENDING_SAVE_WAIT_MS = 250L
 
         /** Limbo size that triggers a sweep (see [parkInLimbo]). */
         private const val LIMBO_SWEEP_THRESHOLD = 16
@@ -1540,7 +1550,7 @@ class RegionManager(
                 val waitStart = System.currentTimeMillis()
                 val deadline = waitStart + PENDING_SAVE_WAIT_MS
                 while (pendingSaveIds.contains(id) && System.currentTimeMillis() < deadline) {
-                    delay(10)
+                    delay(5)
                 }
                 val waited = System.currentTimeMillis() - waitStart
                 if (waited > 100) {
