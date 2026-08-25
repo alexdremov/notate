@@ -174,7 +174,10 @@ object PdfExporter {
         outputStream: OutputStream,
         callback: ProgressCallback?,
     ) = withContext(Dispatchers.Default) {
-        val document = PDDocument(MemoryUsageSetting.setupTempFileOnly())
+        // Same scratch-file lock rationale as the bitmap path below; the
+        // vector path is single-threaded so this is a pure speed win on
+        // medium documents.
+        val document = PDDocument(MemoryUsageSetting.setupMixed(64L * 1024 * 1024))
 
         try {
             val contentBounds = model.getContentBounds()
@@ -687,7 +690,12 @@ object PdfExporter {
         callback: ProgressCallback?,
         bitmapScale: Float,
     ) = withContext(Dispatchers.IO) {
-        val document = PDDocument(MemoryUsageSetting.setupTempFileOnly())
+        // setupTempFileOnly() backs EVERY COSStream with ONE synchronized
+        // scratch RandomAccessFile — all parallel tile encoders funneled
+        // through that single file lock, capping effective parallelism at ~1
+        // regardless of lane count. Mixed mode keeps the first 64MB of
+        // stream data in RAM (lock-free per buffer) and only spills beyond.
+        val document = PDDocument(MemoryUsageSetting.setupMixed(64L * 1024 * 1024))
 
         try {
             val contentBounds = model.getContentBounds()
@@ -921,10 +929,15 @@ object PdfExporter {
         val completedTiles = AtomicInteger(0)
 
         val mutex = Mutex()
-        // One lane holds one tileSize²·scale ARGB bitmap alive through render
-        // AND lossless encode — bound lanes by CPU count AND a transient
+        // One lane holds one tileSize^2*scale ARGB bitmap alive through render
+        // AND lossless encode - bound lanes by CPU count AND a transient
         // bitmap-memory budget (the old hard-coded 2 starved the other cores).
         val semaphore = kotlinx.coroutines.sync.Semaphore(tileRenderParallelism(bitmapScale))
+
+        // Concurrency observability (test contract: lanes must actually
+        // overlap - see PdfRasterParallelismTest).
+        activeTilesNow.set(0)
+        lastExportPeakLanes = 0
 
         val bgStyle = model.backgroundStyle
 
@@ -943,62 +956,98 @@ object PdfExporter {
             .map { tileRect ->
                 async(Dispatchers.Default) {
                     semaphore.withPermit {
-                        val w = (tileRect.width() * bitmapScale).toInt().coerceAtLeast(1)
-                        val h = (tileRect.height() * bitmapScale).toInt().coerceAtLeast(1)
-
-                        var bitmap: Bitmap? = null
+                        raisePeakLanes(activeTilesNow.incrementAndGet())
                         try {
-                            bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
-                            val canvas = Canvas(bitmap)
-                            canvas.scale(bitmapScale, bitmapScale)
-                            canvas.drawColor(Color.WHITE)
-                            canvas.translate(-tileRect.left, -tileRect.top)
-
-                            // Use 0f offsets for infinite canvas to match UI
-                            BackgroundDrawer.draw(canvas, bgStyle, tileRect, 1.0f, 0f, 0f, forceVector = false)
-
-                            val tileItems = model.queryItems(tileRect)
-                            tileItems.sortWith(compareBy<CanvasItem> { it.zIndex }.thenBy { it.order })
-
-                            val paint =
-                                Paint().apply {
-                                    isAntiAlias = true
-                                    isDither = true
-                                    strokeJoin = Paint.Join.ROUND
-                                    strokeCap = Paint.Cap.ROUND
-                                }
-
-                            for (item in tileItems) {
-                                StrokeRenderer.drawItem(canvas, item, false, paint, context)
-                            }
-
-                            val fixedBitmap = if (isFixNeeded) fixBitmapColors(bitmap) else bitmap
-                            val image = LosslessFactory.createFromImage(doc, fixedBitmap)
-                            if (fixedBitmap !== bitmap) {
-                                fixedBitmap.recycle()
-                            }
-
-                            mutex.withLock {
-                                val pdfX = tileRect.left - bounds.left
-                                val pdfY = bounds.height() - (tileRect.bottom - bounds.top)
-                                contentStream.drawImage(image, pdfX, pdfY, tileRect.width(), tileRect.height())
-                            }
-                        } catch (e: Exception) {
-                            Logger.e("PdfExporter", "Error rendering tile", e)
+                            renderSingleTile(doc, contentStream, model, mutex, tileRect, bounds, bitmapScale, bgStyle, context)
                         } finally {
-                            bitmap?.recycle()
+                            activeTilesNow.decrementAndGet()
+                            val finished = completedTiles.incrementAndGet()
+                            val progress = 10 + ((finished.toFloat() / totalTiles) * 80).toInt()
+                            callback?.onProgress(progress, "Rendering Tile $finished/$totalTiles")
                         }
-
-                        val finished = completedTiles.incrementAndGet()
-                        val progress = 10 + ((finished.toFloat() / totalTiles) * 80).toInt()
-                        callback?.onProgress(progress, "Rendering Tile $finished/$totalTiles")
                     }
                 }
             }.forEach { it.await() }
     }
 
+    /** Diagnostic high-water mark update; benign lost updates only under-report. */
+    private fun raisePeakLanes(active: Int) {
+        val peak = lastExportPeakLanes
+        if (active > peak) lastExportPeakLanes = active
+    }
+
+    private suspend fun renderSingleTile(
+        doc: PDDocument,
+        contentStream: PDPageContentStream,
+        model: InfiniteCanvasModel,
+        mutex: Mutex,
+        tileRect: RectF,
+        bounds: RectF,
+        bitmapScale: Float,
+        bgStyle: com.alexdremov.notate.model.BackgroundStyle,
+        context: android.content.Context,
+    ) {
+        val w = (tileRect.width() * bitmapScale).toInt().coerceAtLeast(1)
+        val h = (tileRect.height() * bitmapScale).toInt().coerceAtLeast(1)
+
+        var bitmap: Bitmap? = null
+        try {
+            bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+            val canvas = Canvas(bitmap)
+            canvas.scale(bitmapScale, bitmapScale)
+            canvas.drawColor(Color.WHITE)
+            canvas.translate(-tileRect.left, -tileRect.top)
+
+            // Use 0f offsets for infinite canvas to match UI
+            BackgroundDrawer.draw(canvas, bgStyle, tileRect, 1.0f, 0f, 0f, forceVector = false)
+
+            val tileItems = model.queryItems(tileRect)
+            tileItems.sortWith(compareBy<CanvasItem> { it.zIndex }.thenBy { it.order })
+
+            val paint =
+                Paint().apply {
+                    isAntiAlias = true
+                    isDither = true
+                    strokeJoin = Paint.Join.ROUND
+                    strokeCap = Paint.Cap.ROUND
+                }
+
+            for (item in tileItems) {
+                StrokeRenderer.drawItem(canvas, item, false, paint, context)
+            }
+
+            val fixedBitmap = if (isFixNeeded) fixBitmapColors(bitmap) else bitmap
+            val image = LosslessFactory.createFromImage(doc, fixedBitmap)
+            if (fixedBitmap !== bitmap) {
+                fixedBitmap.recycle()
+            }
+
+            mutex.withLock {
+                val pdfX = tileRect.left - bounds.left
+                val pdfY = bounds.height() - (tileRect.bottom - bounds.top)
+                contentStream.drawImage(image, pdfX, pdfY, tileRect.width(), tileRect.height())
+            }
+        } catch (e: Exception) {
+            Logger.e("PdfExporter", "Error rendering tile", e)
+        } finally {
+            bitmap?.recycle()
+        }
+    }
+
     /** Raster-export tile edge in pixels (before [bitmapScale]). */
     private const val TILE_SIZE_PX = 2048
+
+    /** Test-only override for [tileRenderParallelism]. Null = hardware-derived. */
+    @JvmField
+    internal var tileParallelismOverride: Int? = null
+
+    private val activeTilesNow =
+        java.util.concurrent.atomic
+            .AtomicInteger(0)
+
+    /** High-water mark of concurrently executing tiles during the LAST raster export. */
+    @JvmField
+    internal var lastExportPeakLanes = 0
 
     /**
      * Lanes for raster tile rendering. Bounded by BOTH cpu count and a
@@ -1007,6 +1056,7 @@ object PdfExporter {
      * render + lossless encode pipeline.
      */
     private fun tileRenderParallelism(scale: Float): Int {
+        tileParallelismOverride?.let { return it.coerceAtLeast(1) }
         val scaled = TILE_SIZE_PX * scale
         val tileBytes = (scaled * scaled * 4).toLong().coerceAtLeast(1)
         val budgetBytes = 96L * 1024 * 1024
