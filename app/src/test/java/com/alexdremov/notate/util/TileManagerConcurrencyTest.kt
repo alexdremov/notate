@@ -2,6 +2,7 @@ package com.alexdremov.notate.util
 
 import android.graphics.Canvas
 import android.graphics.RectF
+import com.alexdremov.notate.data.region.RegionManager
 import com.alexdremov.notate.model.CanvasItem
 import com.alexdremov.notate.model.InfiniteCanvasModel
 import com.alexdremov.notate.ui.render.CanvasRenderer
@@ -55,7 +56,9 @@ class TileManagerConcurrencyTest {
         mockRenderer = mockk(relaxed = true)
         modelEvents = MutableSharedFlow()
         every { mockModel.events } returns modelEvents
-        every { mockModel.getRegionManager() } returns null
+        val sessionManager = mockk<RegionManager>(relaxed = true)
+        every { sessionManager.regionSize } returns 2048f
+        every { mockModel.getRegionManager() } returns sessionManager
 
         tileManager =
             TileManager(
@@ -135,7 +138,9 @@ class TileManagerConcurrencyTest {
             val parallelScope = CoroutineScope(parallelDispatcher + Job())
 
             try {
-                every { mockModel.getRegionManager() } returns null
+                every { mockModel.getRegionManager() } answers {
+                    mockk<RegionManager>(relaxed = true).also { every { it.regionSize } returns 2048f }
+                }
                 val parallelTileManager =
                     TileManager(
                         context = org.robolectric.RuntimeEnvironment.getApplication(),

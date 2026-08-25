@@ -3,6 +3,7 @@ package com.alexdremov.notate.util
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.RectF
+import com.alexdremov.notate.data.region.RegionManager
 import com.alexdremov.notate.model.CanvasItem
 import com.alexdremov.notate.model.InfiniteCanvasModel
 import com.alexdremov.notate.model.Stroke
@@ -39,7 +40,9 @@ class TileManagerTest {
         mockRenderer = mockk(relaxed = true)
         // Ensure events flow is mocked
         every { mockModel.events } returns kotlinx.coroutines.flow.MutableSharedFlow()
-        every { mockModel.getRegionManager() } returns null
+        val sessionManager = mockk<RegionManager>(relaxed = true)
+        every { sessionManager.regionSize } returns 2048f
+        every { mockModel.getRegionManager() } returns sessionManager
 
         tileManager =
             TileManager(

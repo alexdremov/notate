@@ -208,9 +208,25 @@ object CanvasSerializer {
         return items
     }
 
+    /**
+     * Device max pressure, resolved once. [EpdController.getMaxTouchPressure]
+     * was invoked PER STROKE during region decode — on a cold open with
+     * thousands of strokes that multiplied an SDK call across the whole
+     * load path. The value is a hardware constant for the device's
+     * lifetime.
+     */
+    private val cachedMaxPressure: Float by lazy {
+        try {
+            val sys = EpdController.getMaxTouchPressure()
+            if (sys > 0f) sys else 4096f
+        } catch (e: Throwable) {
+            // Non-Onyx environment (Robolectric, other devices)
+            4096f
+        }
+    }
+
     fun fromStrokeData(sData: StrokeData): Stroke {
-        val sysPressure = EpdController.getMaxTouchPressure()
-        val defaultMaxPressure = if (sysPressure > 0f) sysPressure else 4096f
+        val defaultMaxPressure = cachedMaxPressure
         val points = ArrayList<TouchPoint>()
 
         if (sData.pointsPacked != null && sData.timestampsPacked != null) {

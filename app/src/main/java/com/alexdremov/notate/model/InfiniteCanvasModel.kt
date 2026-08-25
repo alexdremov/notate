@@ -111,7 +111,19 @@ class InfiniteCanvasModel {
 
     fun getRegionManager(): RegionManager? = regionManager
 
-    suspend fun initializeSession(manager: RegionManager) {
+    /**
+     * @param persistedNextOrder `nextStrokeOrder` from the container manifest
+     *   when it is present (> 0). AUTHORITATIVE: order assignment continues
+     *   from it with ZERO region loads — the previous unconditional
+     *   [RegionManager.maxItemOrder] scan deserialized every region serially
+     *   before the first frame could paint, dominating time-to-first-render
+     *   on large documents. Legacy containers without the field fall back to
+     *   the scan exactly as before (default 0).
+     */
+    suspend fun initializeSession(
+        manager: RegionManager,
+        persistedNextOrder: Long = 0,
+    ) {
         mutex.withLock {
             regionManager = manager
             val bounds = manager.getContentBounds()
@@ -121,7 +133,12 @@ class InfiniteCanvasModel {
             // Resume order assignment: restarting at 0 after a reopen made
             // new strokes collide with persisted ones (found by
             // RealWorldSessionTest — new content shared identity with old).
-            nextOrder = manager.maxItemOrder() + 1
+            nextOrder =
+                if (persistedNextOrder > 0) {
+                    persistedNextOrder
+                } else {
+                    manager.maxItemOrder() + 1
+                }
 
             manager.onRegionLoaded = { region ->
                 val size = manager.regionSize
@@ -686,7 +703,11 @@ class InfiniteCanvasModel {
             toolbarItems = data.toolbarItems
             tagIds = data.tagIds
             tagDefinitions = data.tagDefinitions
-            nextOrder = data.nextStrokeOrder
+            // Only a REAL persisted value may override the order seed: a
+            // legacy 0 here must not clobber the scan performed by
+            // initializeSession (it is the only nextOrder source for
+            // containers without the field).
+            if (data.nextStrokeOrder > 0) nextOrder = data.nextStrokeOrder
             uuid = data.uuid
         }
     }
