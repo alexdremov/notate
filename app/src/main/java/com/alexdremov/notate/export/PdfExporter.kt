@@ -680,54 +680,6 @@ object PdfExporter {
         stream.restoreGraphicsState()
     }
 
-    private suspend fun renderBackgroundTiledToStream(
-        doc: PDDocument,
-        stream: PDPageContentStream,
-        style: BackgroundStyle,
-        bounds: RectF,
-        pageHeight: Float,
-    ) {
-        val tileSize = 1024
-        val cols = ceil(bounds.width() / tileSize).toInt()
-        val rows = ceil(bounds.height() / tileSize).toInt()
-
-        for (r in 0 until rows) {
-            for (c in 0 until cols) {
-                val left = bounds.left + c * tileSize
-                val top = bounds.top + r * tileSize
-                val right = min(left + tileSize, bounds.right)
-                val bottom = min(top + tileSize, bounds.bottom)
-                val tileRect = RectF(left, top, right, bottom)
-
-                val w = tileRect.width().toInt().coerceAtLeast(1)
-                val h = tileRect.height().toInt().coerceAtLeast(1)
-
-                var bitmap: Bitmap? = null
-                try {
-                    bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
-                    val canvas = Canvas(bitmap)
-                    canvas.drawColor(Color.WHITE)
-                    canvas.translate(-tileRect.left, -tileRect.top)
-                    BackgroundDrawer.draw(canvas, style, tileRect, forceVector = false)
-
-                    val fixedBitmap = fixBitmapColors(bitmap)
-                    val image = LosslessFactory.createFromImage(doc, fixedBitmap)
-                    if (fixedBitmap !== bitmap) {
-                        fixedBitmap.recycle()
-                    }
-
-                    val pdfX = tileRect.left - bounds.left
-                    val pdfY = pageHeight - (tileRect.bottom - bounds.top)
-
-                    stream.drawImage(image, pdfX, pdfY, tileRect.width(), tileRect.height())
-                } catch (e: Exception) {
-                } finally {
-                    bitmap?.recycle()
-                }
-            }
-        }
-    }
-
     private suspend fun exportBitmapStreaming(
         context: android.content.Context,
         model: InfiniteCanvasModel,
@@ -962,14 +914,17 @@ object PdfExporter {
         callback: ProgressCallback?,
         bitmapScale: Float,
     ) = withContext(Dispatchers.Default) {
-        val tileSize = 2048
+        val tileSize = TILE_SIZE_PX
         val cols = ceil(bounds.width() / tileSize).toInt()
         val rows = ceil(bounds.height() / tileSize).toInt()
         val totalTiles = cols * rows
         val completedTiles = AtomicInteger(0)
 
         val mutex = Mutex()
-        val semaphore = kotlinx.coroutines.sync.Semaphore(2)
+        // One lane holds one tileSize²·scale ARGB bitmap alive through render
+        // AND lossless encode — bound lanes by CPU count AND a transient
+        // bitmap-memory budget (the old hard-coded 2 starved the other cores).
+        val semaphore = kotlinx.coroutines.sync.Semaphore(tileRenderParallelism(bitmapScale))
 
         val bgStyle = model.backgroundStyle
 
@@ -1040,6 +995,24 @@ object PdfExporter {
                     }
                 }
             }.forEach { it.await() }
+    }
+
+    /** Raster-export tile edge in pixels (before [bitmapScale]). */
+    private const val TILE_SIZE_PX = 2048
+
+    /**
+     * Lanes for raster tile rendering. Bounded by BOTH cpu count and a
+     * transient bitmap-memory budget: each lane keeps one
+     * TILE_SIZE_PX²·scale ARGB_8888 bitmap (~tileBytes) alive through the
+     * render + lossless encode pipeline.
+     */
+    private fun tileRenderParallelism(scale: Float): Int {
+        val scaled = TILE_SIZE_PX * scale
+        val tileBytes = (scaled * scaled * 4).toLong().coerceAtLeast(1)
+        val budgetBytes = 96L * 1024 * 1024
+        val memCap = (budgetBytes / tileBytes).toInt().coerceIn(1, 8)
+        val cores = Runtime.getRuntime().availableProcessors().coerceAtLeast(1)
+        return cores.coerceAtMost(memCap)
     }
 
     private val isFixNeeded: Boolean by lazy {
