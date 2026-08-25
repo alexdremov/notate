@@ -435,6 +435,9 @@ class RegionManager(
     companion object {
         private const val LIMBO_STICKY_MS = 5_000L
 
+        /** Delay before background orphan adoption begins (see [scheduleOrphanAdoption]). */
+        private const val ORPHAN_ADOPTION_DELAY_MS = 250L
+
         /**
          * Max time a reload waits for an in-flight eviction save
          * (see [pendingSaveIds]). Deliberately SHORT: under autosave storms a
@@ -509,6 +512,8 @@ class RegionManager(
 
         rebuildSkeletonQuadtree()
         updateMetadataCache()
+
+        scheduleOrphanAdoption()
 
         regionCache = RegionCache(memoryLimitBytes)
 
@@ -1362,6 +1367,59 @@ class RegionManager(
             } catch (e: Exception) {
                 Logger.e("RegionManager", "Exception saving region ${region.id}", e)
                 return
+            }
+        }
+    }
+
+    /**
+     * Crash-divergence healing: region bytes can land on disk WITHOUT a
+     * matching index entry — the index save is skipped whenever
+     * [indexVersion] moves during a flush, and a crash after the last region
+     * write loses it entirely. A non-empty persisted index is authoritative
+     * by design, so such orphans are INVISIBLE until an unrelated mutation
+     * re-indexes their region by luck (reported as "strokes invisible after
+     * a crash, then resurrected when I drew there").
+     *
+     * Adoption runs OFF the open critical path: the file listing is cheap,
+     * loads happen one-by-one in the background, each adopted region emits
+     * [onRegionLoaded] so tiles refresh. Aborts if the document is cleared
+     * mid-adoption ([clearEpoch]) so wiped content can never resurrect.
+     */
+    private fun scheduleOrphanAdoption() {
+        scope.launch {
+            // Let the first frame paint before spending IO on healing.
+            delay(ORPHAN_ADOPTION_DELAY_MS)
+            val epochAtStart = clearEpoch.get()
+            val stored =
+                try {
+                    storage.listStoredRegions()
+                } catch (e: Exception) {
+                    Logger.e("RegionManager", "Orphan adoption: listing failed", e)
+                    return@launch
+                }
+            val orphans = stored.filter { id -> stateLock.read { !regionIndex.containsKey(id) } }
+            if (orphans.isEmpty()) return@launch
+            Logger.i("RegionManager", "Orphan adoption: ${orphans.size} region(s) not indexed")
+            for (id in orphans) {
+                if (clearEpoch.get() != epochAtStart) return@launch // cleared mid-flight
+                val region =
+                    try {
+                        getRegion(id)
+                    } catch (e: Exception) {
+                        Logger.e("RegionManager", "Orphan adoption: load failed for $id", e)
+                        continue
+                    }
+                try {
+                    if (clearEpoch.get() != epochAtStart) return@launch
+                    val bounds = stateLock.read { RectF(region.contentBounds) }
+                    if (!bounds.isEmpty) {
+                        updateRegionIndex(id, bounds)
+                        updateMetadataCache()
+                        onRegionLoaded?.invoke(region)
+                    }
+                } finally {
+                    releaseRegion(region)
+                }
             }
         }
     }
@@ -2995,9 +3053,19 @@ class RegionManager(
         // snapshot under read, write outside. The version check prevents an
         // OLDER snapshot from clobbering a NEWER one already written by a
         // concurrent flush (out-of-order last-writer-wins).
-        val captured: Pair<HashMap<RegionId, RectF>, Long> =
+        //
+        // If the index moved DURING the region flush we used to skip saving
+        // entirely — a crash before the NEXT successful index write then left
+        // region files on disk with no index entry (invisible-after-reopen,
+        // resurrected-on-lucky-mutation). One fresh-capture retry closes most
+        // of that window; only sustained mutation pressure defers again.
+        var captured: Pair<HashMap<RegionId, RectF>, Long> =
             stateLock.read { HashMap(regionIndex) to indexVersion.get() }
-        val indexUnchanged = indexVersion.get() == captured.second
+        var indexUnchanged = indexVersion.get() == captured.second
+        if (!indexUnchanged) {
+            captured = stateLock.read { HashMap(regionIndex) to indexVersion.get() }
+            indexUnchanged = indexVersion.get() == captured.second
+        }
         if (indexUnchanged) {
             try {
                 storage.saveIndex(captured.first)
