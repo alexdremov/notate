@@ -31,16 +31,16 @@ class TileManagerFallbackTest {
     private lateinit var mockRenderer: CanvasRenderer
     private val testDispatcher = StandardTestDispatcher()
     private val testScope = TestScope(testDispatcher)
-    private val TILE_SIZE = 256
+    private val tileSize = 256
 
     @Before
     fun setup() {
         mockModel = mockk(relaxed = true)
         mockRenderer = mockk(relaxed = true)
         every { mockModel.events } returns kotlinx.coroutines.flow.MutableSharedFlow()
-        every { mockModel.getRegionManager() } answers {
-            mockk<RegionManager>(relaxed = true).also { every { it.regionSize } returns 2048f }
-        }
+        val sessionManager = mockk<RegionManager>(relaxed = true)
+        every { sessionManager.regionSize } returns 2048f
+        every { mockModel.getRegionManager() } returns sessionManager
         // Mock queryItems to return empty list so generation produces blank tiles quickly
         io.mockk.coEvery { mockModel.queryItems(any()) } returns ArrayList()
 
@@ -49,7 +49,7 @@ class TileManagerFallbackTest {
                 context = org.robolectric.RuntimeEnvironment.getApplication(),
                 canvasModel = mockModel,
                 renderer = mockRenderer,
-                tileSize = TILE_SIZE,
+                tileSize = tileSize,
                 scope = testScope,
                 dispatcher = testDispatcher,
             )
@@ -64,7 +64,7 @@ class TileManagerFallbackTest {
     fun `fallback to parent works for negative coordinates`() =
         runTest(testDispatcher) {
             // Scenario:
-            // We are at Level 0 (Scale 1.0). TILE_SIZE = 256.
+            // We are at Level 0 (Scale 1.0). tileSize = 256.
             // We want to test fallback for Tile (-2, 0) at Level 0.
             // Tile (-2, 0) range: [-512, -256].
             // Parent is Level 1. Parent Tile Size = 512.

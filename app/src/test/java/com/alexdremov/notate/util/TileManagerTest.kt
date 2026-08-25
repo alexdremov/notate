@@ -40,9 +40,9 @@ class TileManagerTest {
         mockRenderer = mockk(relaxed = true)
         // Ensure events flow is mocked
         every { mockModel.events } returns kotlinx.coroutines.flow.MutableSharedFlow()
-        every { mockModel.getRegionManager() } answers {
-            mockk<RegionManager>(relaxed = true).also { every { it.regionSize } returns 2048f }
-        }
+        val sessionManager = mockk<RegionManager>(relaxed = true)
+        every { sessionManager.regionSize } returns 2048f
+        every { mockModel.getRegionManager() } returns sessionManager
 
         tileManager =
             TileManager(

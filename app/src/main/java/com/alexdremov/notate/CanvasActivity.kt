@@ -600,7 +600,9 @@ class CanvasActivity : AppCompatActivity() {
                             withContext(Dispatchers.Main) {
                                 val tUiStart = System.currentTimeMillis()
 
-                                binding.canvasView.getModel().initializeSession(session.regionManager)
+                                binding.canvasView
+                                    .getModel()
+                                    .initializeSession(session.regionManager, session.metadata.nextStrokeOrder)
                                 binding.canvasView.loadMetadata(session.metadata)
 
                                 val isFixed = session.metadata.canvasType == com.alexdremov.notate.data.CanvasType.FIXED_PAGES
@@ -843,7 +845,7 @@ class CanvasActivity : AppCompatActivity() {
             val canvasView = OnyxCanvasView(this)
 
             // Initialize
-            canvasView.getModel().initializeSession(session.regionManager)
+            canvasView.getModel().initializeSession(session.regionManager, session.metadata.nextStrokeOrder)
             canvasView.loadMetadata(session.metadata)
             canvasView.setReadOnly(true)
 

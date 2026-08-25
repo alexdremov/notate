@@ -1049,7 +1049,11 @@ class RegionManager(
                 // Snapshot iteration; removal is atomic identity-based
                 // (data-class equals must never decide which twin dies, and
                 // rescue-promotion mutates buckets off the sweep monitor).
-                for (region in bucket.toList()) {
+                // toArray() copies under COWAL's internal lock — an INDEXED
+                // snapshot here (toList's fast path) raced concurrent removal
+                // and threw AIOOBE from a background sweeper.
+                for (value in bucket.toArray()) {
+                    val region = value as RegionData
                     // Atomic identity removal: rescue-promotion paths mutate
                     // this bucket WITHOUT the sweep monitor, so a snapshot
                     // index can go stale (proven AIOOBE). removeIf re-checks
@@ -2731,8 +2735,7 @@ class RegionManager(
     }
 
     /** TEMP DEBUG: limbo snapshot straight from the source. */
-    fun debugLimboSnapshot(): Map<String, Int> =
-        limbo.entries.associate { "${it.key.x}_${it.key.y}" to it.value.size }
+    fun debugLimboSnapshot(): Map<String, Int> = limbo.entries.associate { "${it.key.x}_${it.key.y}" to it.value.size }
 
     /** TEMP DEBUG: identity of the live limbo map. */
     fun debugLimboIdentity(): Int = System.identityHashCode(limbo)
