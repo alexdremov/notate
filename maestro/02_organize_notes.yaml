@@ -1,0 +1,41 @@
+appId: com.alexdremov.notate
+---
+- launchApp:
+    clearState: true
+- tapOn: "Add Project"
+- inputText: "Local Notes"
+- tapOn: "Create"
+# Handle the Android System File Picker (SAF)
+# Android 11+ prohibits selecting the root directory, so we must create a sub-folder first
+- extendedWaitUntil:
+    visible: "CREATE NEW FOLDER"
+    timeout: 5000
+- tapOn: "CREATE NEW FOLDER"
+- inputText: "NotateTests"
+- tapOn: "OK"
+- extendedWaitUntil:
+    visible: "USE THIS FOLDER"
+    timeout: 5000
+- tapOn: "USE THIS FOLDER"
+- extendedWaitUntil:
+    visible: "Allow"
+    timeout: 5000
+- tapOn: "Allow"
+- tapOn: "Local Notes"
+# Create a folder
+- tapOn: "New Folder"
+- inputText: "Work"
+- tapOn: "Create"
+- assertVisible: "Work"
+# Enter folder and create a note
+- tapOn: "Work"
+- tapOn: "New Canvas"
+- inputText: "My Note"
+- tapOn: "Create"
+- extendedWaitUntil:
+    visible:
+      id: ".*minimapView.*"
+    timeout: 5000
+# Verify back navigation returns to the correct breadcrumb
+- pressKey: back
+- assertVisible: "Work"

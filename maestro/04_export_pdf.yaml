@@ -1,0 +1,37 @@
+appId: com.alexdremov.notate
+---
+- launchApp:
+    clearState: false
+- tapOn: 
+    text: "Local Notes"
+    optional: true
+- tapOn: 
+    text: "Work"
+    optional: true
+- tapOn: "My Note"
+- extendedWaitUntil:
+    visible:
+      id: ".*minimapView.*"
+    timeout: 5000
+
+# Open Settings Sidebar
+- tapOn: "Settings"
+
+# Navigate to Export Menu
+- tapOn: "Export PDF"
+
+# Choose Vector Mode (Optional, but good for testing UI interaction)
+- tapOn: "Vector"
+
+# Trigger Export Action
+- tapOn: "Choose Location & Export"
+
+# Wait for Android's ACTION_CREATE_DOCUMENT File Picker
+# In AOSP, the save button is usually labeled "SAVE"
+- extendedWaitUntil:
+    visible: "SAVE"
+    timeout: 5000
+- tapOn: "SAVE"
+
+# Take a screenshot to prove the UI returned and the flow succeeded
+- takeScreenshot: "pdf_export_success"

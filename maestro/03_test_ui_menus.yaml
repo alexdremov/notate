@@ -1,0 +1,49 @@
+appId: com.alexdremov.notate
+---
+- launchApp:
+    clearState: false
+- tapOn: 
+    text: "Local Notes"
+    optional: true
+- tapOn: 
+    text: "Work"
+    optional: true
+- tapOn: "My Note"
+- extendedWaitUntil:
+    visible:
+      id: ".*minimapView.*"
+    timeout: 5000
+
+# === 1. TEST PEN CONFIGURATION POPUP ===
+- tapOn: "Ballpoint" # Ensure it is selected
+- tapOn: 
+    text: "Ballpoint" # Double tap to open settings popup
+    optional: true
+- assertVisible: "Thickness"
+- assertVisible: "Color"
+- assertVisible: "REMOVE TOOL"
+- pressKey: back # Close popup
+
+# === 2. TEST SETTINGS SIDEBAR (BACKGROUND) ===
+- tapOn: "Settings"
+- assertVisible: "Background"
+- tapOn: "Background"
+- assertVisible: "Lines (Ruled)"
+- tapOn: "Grid"
+- pressKey: back # Close Sidebar
+
+# === 3. TEST SETTINGS SIDEBAR (WRITING) ===
+- tapOn: "Settings"
+- assertVisible: "Writing"
+- tapOn: "Writing"
+- assertVisible: "Shape Perfection"
+- pressKey: back # Close Sidebar
+
+# === 4. TEST EDIT TOOLBAR MODE ===
+- tapOn: "Settings"
+- tapOn: "Edit Toolbar"
+# We should see the Edit Panel popup
+- assertVisible: ".*Collapsible.*"
+- pressKey: back # Close edit mode
+
+- takeScreenshot: "ui_menus_tested"
