@@ -1,0 +1,25 @@
+appId: com.alexdremov.notate
+---
+- launchApp:
+    clearState: false
+# The app might restart at the global root or the project root.
+# Safely navigate back into the folder if needed.
+- tapOn: 
+    text: "Local Notes"
+    optional: true
+- tapOn: 
+    text: "Work"
+    optional: true
+# Open the note that was created in Flow 1!
+- tapOn: "My Note"
+- extendedWaitUntil:
+    visible:
+      id: ".*minimapView.*" # Regex match for resource ID
+    timeout: 5000
+# Simulate drawing a stroke across the screen
+- swipe:
+    start: 20%, 50%
+    end: 80%, 50%
+    duration: 600
+# Go back to the main screen
+- pressKey: back
